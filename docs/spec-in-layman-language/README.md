@@ -477,18 +477,31 @@ This section gives the team a mental map of the database tables, their relations
 │  └──────────────────────┘  └──────────────────────┘  └──────────────────┘   │
 │                                                                             │
 │  ┌──────────────────────┐  ┌──────────────────────┐  ┌──────────────────┐   │
-│  │ slot_cache (S6)      │  │ rollup_aggregate (S7)│  │dependency_index  │   │
-│  │ (grid display)       │  │ (reporting)          │  │(S8, routing)     │   │
+│  │ slot_cache (S6)      │  │trade_interval_cache  │  │dependency_index  │   │
+│  │ (net grid display)   │  │(S6b, per-trade detail│  │(S8, routing)     │   │
 │  │                      │  │                      │  │                  │   │
-│  │ - delivery_point     │  │ - level (hr/day/mo)  │  │ - input_series   │   │
-│  │ - portfolio          │  │ - period             │  │ - cell_id        │   │
-│  │ - interval           │  │ - peak/offpeak       │  │ - active_leaves  │   │
-│  │ - net_mw             │  │ - net_mw / net_mwh   │  │                  │   │
-│  │ - net_mwh            │  │ - settled_value      │  │ "When input X    │   │
-│  │ - version_hash       │  │ - forward_mark_value │  │  changes, which  │   │
+│  │ - delivery_point     │  │ - trade_leg_id       │  │ - input_series   │   │
+│  │ - portfolio          │  │ - interval_start     │  │ - cell_id        │   │
+│  │ - interval           │  │ - resolved_mw        │  │ - active_leaves  │   │
+│  │ - net_mw             │  │ - resolved_mwh       │  │                  │   │
+│  │ - net_mwh            │  │ - multiplier         │  │ "When input X    │   │
+│  │ - version_hash       │  │ - version_hash       │  │  changes, which  │   │
 │  │                      │  │                      │  │  cells to redo?" │   │
-│  │ (rebuildable cache)  │  │ (rebuildable)        │  │ (rebuildable)    │   │
+│  │ (rebuildable cache)  │  │ (opt-in, rebuildable)│  │ (rebuildable)    │   │
 │  └──────────────────────┘  └──────────────────────┘  └──────────────────┘   │
+│                                                                             │
+│  ┌──────────────────────┐                                                   │
+│  │ rollup_aggregate (S7)│   S6 = net across trades (grid)                   │
+│  │ (reporting)          │   S6b = per-trade breakdown (portfolio detail)     │
+│  │                      │                                                   │
+│  │ - level (hr/day/mo)  │                                                   │
+│  │ - period             │                                                   │
+│  │ - peak/offpeak       │                                                   │
+│  │ - net_mw / net_mwh   │                                                   │
+│  │ - settled_value      │                                                   │
+│  │ - forward_mark_value │                                                   │
+│  │ (rebuildable)        │                                                   │
+│  └──────────────────────┘                                                   │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -729,6 +742,46 @@ What traders actually see on screen. Pre-calculated net positions:
 
 **Row count:** Hot window (60 days × 96 slots) × number of distinct (point, portfolio) combos. Typically low millions per tenant. **Entirely rebuildable** from the ledger.
 
+#### Trade Interval Cache (S6b) — Per-Trade Volume Breakdown (Optional)
+
+Where slot_cache (S6) shows the **net** position across all trades, trade_interval_cache breaks it down **per trade**. This is for the portfolio-detail dashboard: "show me each trade's resolved MW at every interval."
+
+| Field | Example | Meaning |
+|---|---|---|
+| `trade_leg_id` | T-7788-LEG-1 | Which trade |
+| `interval_start` | 2026-08-15 18:45 | Time slot |
+| `resolved_mw` | 20.49 | Pre-multiplied: raw volume × multiplier |
+| `resolved_mwh` | 5.1225 | Pre-multiplied energy |
+| `multiplier` | 0.30 | Stored for auditability (can verify: resolved ÷ multiplier = raw) |
+| `series_key` | FCST-WP-NORDSEE | Which volume series was used |
+| `version_hash` | 0x8B2C... | For staleness detection |
+
+**Why this exists (and why it's optional):**
+- **Without S6b:** To see per-trade volumes, you join `position_ledger → volume_reference → volume_interval` and apply the multiplier at query time. This works fine for a handful of trades but slows down when a portfolio dashboard needs to show 200 trades × 2,976 intervals = ~595K rows resolved on the fly.
+- **With S6b:** Single-table scan. Pre-multiplied at write time. The dashboard query becomes:
+
+```sql
+SELECT trade_leg_id, interval_start, resolved_mw
+FROM   trade_interval_cache
+WHERE  trade_leg_id IN (... from position_ledger query ...)
+  AND  interval_start >= '2026-08-15'
+  AND  interval_start <  '2026-08-16'
+ORDER BY trade_leg_id, interval_start
+```
+
+**Rebuild triggers (event-driven):**
+- `VolumePublished` → rebuild intervals for all trades referencing that volume series
+- `VolumeReference` changed (multiplier update, new allocation) → rebuild that trade's intervals
+- Trade amended → rebuild affected trade-leg's intervals
+
+**Key properties:**
+- **Not source of truth.** Entirely rebuildable from volume_reference + volume_interval.
+- **Optional.** Systems that don't need per-trade dashboards can skip this table entirely.
+- **Event-driven.** No batch jobs — rebuilt reactively when inputs change.
+- **Staleness-safe.** `version_hash` lets the UI detect stale rows and show a "refreshing..." indicator.
+
+**Row count:** `(P + T×Bf) × hot_months × D × I` = 5,000 × 2 × 30.4 × 96 = **~29M rows** in the hot window (2 months). Comparable to slot_cache but keyed per trade instead of per (zone, portfolio).
+
 #### Dependency Index (S8) — The "What to Recalculate" Map
 
 Maps inputs to the valuation cells they affect:
@@ -797,7 +850,8 @@ DA Fill T-5500 (SAME pattern, just simpler):
 | Settlement Cells | YES (derived but durable) | Must recompute from ledger + prices + volumes |
 | EOD Struck Marks | YES (frozen snapshot) | Cannot be recreated after the business day passes |
 | Forward Marks | NO (ephemeral) | Just recalculate from current curves. No loss. |
-| Slot Cache | NO (rebuildable) | Rebuild from ledger. Temporary UI outage only. |
+| Slot Cache (S6) | NO (rebuildable) | Rebuild from ledger. Temporary UI outage only. |
+| Trade Interval Cache (S6b) | NO (optional, rebuildable) | Rebuild from volume_reference + volume_interval. Per-trade detail unavailable until rebuilt. |
 | Rollup Aggregates | NO (rebuildable) | Rebuild from cells/cache. Temporary reporting gap. |
 | Dependency Index | NO (rebuildable) | Rebuild by re-resolving all cells. Slow but lossless. |
 
@@ -846,6 +900,7 @@ volume_interval
 | `(tenant_id, delivery_range)` | Position ledger | "All positions for this customer in this month" |
 | `(position_id, interval_start)` | Settlement cells | "All settled values for this position" |
 | `(delivery_point, portfolio, interval)` | Slot cache | "Net position for this grid cell" |
+| `(trade_leg_id, interval_start)` | Trade interval cache (S6b) | "Per-trade resolved volume in time order" |
 
 ### 10.4 Sizing — Real Numbers (with formulas)
 
@@ -873,6 +928,7 @@ Ih = 24 intervals per day (hourly)
 | **volume_reference** | `T × (A × N + Bf)` | 200 × (20 + 5) | **5,000 rows** |
 | **Position ledger** | `(P + T×Bf) × M × versions` | 5,000 × 12 × ~2 | **~120K rows** |
 | **Settlement cells** | `T × A × M_del × D × I × N × 1.3` | 200×8×6×30.4×96×2.5×1.3 | **~109M rows** |
+| **Trade interval cache** (S6b, optional) | `(P + T×Bf) × hot_months × D × I` | 5,000 × 2 × 30.4 × 96 | **~29M rows** |
 | **EOD struck marks** | `(P + T×Bf) × 12 × 21_biz_days` | 5,000 × 12 × 21 | **~1.3M rows** |
 
 **The big wins from this model:**
