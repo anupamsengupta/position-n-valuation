@@ -4,7 +4,7 @@
 
 **Companion documents:**
 - `functional-spec-position-valuation-v1.0.md` — the binding functional spec (FR-nnn rules, D-1…D-10 decisions, O-1…O-8 open items). Cite FR/D numbers in implementation prompts.
-- Data Architecture V1.4/V1.5 — VolumeSeries module (owned separately; position model consumes it by reference only).
+- `VOLUME_SERIES_SPEC-V3_0.md` — the volume series domain model (unified VolumeSeries + VolumeReference pattern). V3.0 is a breaking rewrite of V2.1.
 - UX Spec V1.0 — grid/board UI (consumes the read-path contracts defined here).
 
 ---
@@ -33,9 +33,10 @@ It conflated staging lifecycle with business origin. Split into:
 ### 2.2 Positions vs volume series — the key split
 User correctly identified: NOMINATION, SCHEDULE, FORECAST, ACTUAL, IMBALANCE are **volume series layers**, not positions. Final model:
 - **Position** = trade-derived economic exposure (price-bearing, signed, portfolio-attributed, bitemporal). Only contractual trade exposure lives in the position ledger.
-- **VolumeSeries** (existing module, V1.4/V1.5) owns the operational layers with supersession + BAV.
+- **VolumeSeries** (V3.0 module) owns volume data with supersession. Unified model: every trade resolves volume via `VolumeReference` → `VolumeSeries` × `multiplier`. FORECAST series (per asset, shared) and PROFILE series (per trade, dedicated) stored in one unified table; MeteredActualVolumeSeries stays separate.
 - MTM_REVAL is not a source at all — it's a valuation event against an existing position.
 - Same trade's MW shape legitimately exists in two projections (risk vs ops); neither derives from the other's materialization.
+- **Volume is per asset** for renewable PPAs: one forecast + one meter per physical asset. Multiple trades slice the asset's output via capacity multipliers on `VolumeReference`. Fixed-profile trades (DA, bilateral) are a **degenerate case**: per-trade PROFILE series with `multiplier=1.0`. Same code path for all trades.
 
 ### 2.3 PeakType — off the position row
 Peak/off-peak is a deterministic function of (market, interval local wall-clock, holiday calendar). Unrelated to write time or gate closure (user initially conflated these — clarified: gate closure is a tradability rule, no effect on peak flags). Resolution: materialize `is_peak` once per (market, atomic interval) into the interval dimension / slot cache, versioned by `calendar_version`. Never stored on position rows; never resolved per-record at display time (that was the user's legitimate perf concern — answered by interval-grain materialization, not row-level storage).
@@ -75,7 +76,7 @@ Both, same derivation logic, two cadences. **Event path**: incremental, dependen
 |---|---|---|---|
 | S1 | Position Ledger | trade-leg × delivery-month block | bitemporal entity, sparse, source of truth (~24 rows/yr-deal) |
 | S2 | PriceExpression | expression version per leg | bitemporal entity, tree; fixed price = degenerate |
-| S3 | VolumeSeries (interface only) | series × interval | external module; consumed by reference (contractual/forecast/metered) |
+| S3 | VolumeSeries (V3.0 unified) | series × interval | external module; consumed via VolumeReference × multiplier (FORECAST per asset / PROFILE per trade / MeteredActual per asset) |
 | S4 | Market Data Store | series × interval × as-of | shared reference facts, per-series clocks; restatement events |
 | S5a | Settlement cells | position × atomic interval | durable bitemporal measure; dense over delivered past only; `active_leaves` + full input-version stamps |
 | S5b | Forward marks | position × atomic interval | EPHEMERAL current-state; zero durable rows |
@@ -134,18 +135,62 @@ Core (S1 bitemporal ledger, delivery ranges, DeliveryPoint hierarchy, PriceExpre
 
 ---
 
-## 9. Fixed decisions (D-1…D-10) — cite these, don't re-argue them
+## 9. Volume Series unified model (V3.0 — binding, do NOT regress)
 
-D-1 month-block ledger grain, signed qty, no direction enum, no interval fan-out in S1 · D-2 price = expression ref, fixed = degenerate · D-3 forward ephemeral / settlement bitemporal / official MtM = month-bucket EOD strike with stamps · D-4 optimized restatement binding + active_leaves at first resolution · D-5 peak = interval dimension, calendar-versioned · D-6 dual units only in cache/rollups · D-7 batch authoritative, events additive; re-derive idempotency · D-8 netting = projection policy; drill-down mandatory · D-9 shared monthly partitions, tenant leading key; S5c on strike-month axis · D-10 all interval structure via MarketCalendar.
+The volume series module underwent a major simplification from V2.1 → V3.0. Key decisions:
 
-## 10. Open items (O-1…O-8) — resolve before/during tech spec, do not guess
+### 9.1 Unified resolution pattern (the core simplification)
+Every trade resolves volume the SAME way: `trade_volume = VolumeSeries_interval.volume × VolumeReference.multiplier`. No category branching, no separate code paths. The distinction between PPAs and DA trades is entirely in data properties, not in resolution logic.
+
+- **PPA (generation-following):** `VolumeReference` → shared asset `VolumeSeries(seriesType=FORECAST)`, `multiplier=0.30`, `meteredSeriesKey` set
+- **DA/bilateral (fixed-profile):** `VolumeReference` → per-trade `VolumeSeries(seriesType=PROFILE)`, `multiplier=1.0`, `meteredSeriesKey=null` (settlement uses same PROFILE volume)
+- Fixed-profile is a **degenerate case** — same pattern as fixed price being a degenerate PriceExpression (D-2)
+
+### 9.2 Entities (V3.0 final)
+- `VolumeSeries` — unified root aggregate (replaces `ForecastVolumeSeries` + `ContractualVolumeSeries`); has `seriesType` enum (FORECAST | PROFILE); exactly one of `assetId` / `tradeLegId` set
+- `VolumeInterval` — unified interval entity (replaces `ForecastInterval` + `ContractualInterval`)
+- `MeteredActualVolumeSeries` + `MeteredActualInterval` — unchanged, per asset only, TSO-sourced
+- `VolumeReference` — universal link from trade-leg to volume (replaces `AssetVolumeReference` which was PPA-only); carries `multiplier`, `effectiveFrom/To` (own date range), `volumeSeriesKey`, `meteredSeriesKey` (nullable)
+- `CompactionView` — optional coarsened read model, not source of truth
+
+### 9.3 What was eliminated and why
+- **Category A/B distinction** — eliminated; one code path for all trades
+- **ContractualVolumeSeries** (as separate entity) — merged into VolumeSeries with `seriesType=PROFILE`; PPAs never had intervals anyway (multiplier × forecast IS the contractual volume)
+- **Separate ForecastInterval / ContractualInterval tables** — unified into `volume_interval`
+- **PLAN bucket** (V2.1) — removed entirely; valuation consumes FORECAST for undelivered intervals
+- **CascadeTier** (V2.1) — removed; store-as-uploaded + optional compaction
+
+### 9.4 Asset-centric ownership (binding)
+- FORECAST series: per asset (shared across N trade-legs via multiplier)
+- METERED_ACTUAL series: per asset (shared, TSO meter on physical connection point)
+- PROFILE series: per trade-leg (dedicated, few intervals, created once at capture)
+- Multiplier applied at **consumption time** (read path), never stored on volume intervals. One forecast update = one write = N revaluations via fan-out.
+- Sum of multipliers per asset per time window should ≤ 1.0 (business validation, not hard constraint)
+
+### 9.5 Consumption contract (position/valuation reads volume)
+Single query: `queryVolumeForTradeLeg(tradeLegId, purpose, intervalRange)` where purpose = FORWARD | SETTLEMENT.
+- FORWARD: resolves `VolumeReference.volumeSeriesKey` × multiplier
+- SETTLEMENT: resolves `VolumeReference.meteredSeriesKey` × multiplier (if set); else falls back to `volumeSeriesKey` × multiplier
+- Consumer handles granularity expansion (stored grain → atomic grid)
+- Version stamping per FR-056: every valuation cell stamps `(series_key, version_id)` used
+
+### 9.6 VolumeReference date range (effectiveFrom/To on reference, NOT derived from trade)
+Five reasons: (1) stepped allocations (different multipliers over time), (2) partial unwinds, (3) sub-range coverage (asset connects later than trade starts), (4) query efficiency for fan-out, (5) independent lifecycle from trade amendments. Validation rule: allocation period must be within trade delivery window (soft check).
+
+---
+
+## 10. Fixed decisions (D-1…D-11) — cite these, don't re-argue them
+
+D-1 month-block ledger grain, signed qty, no direction enum, no interval fan-out in S1 · D-2 price = expression ref, fixed = degenerate · D-3 forward ephemeral / settlement bitemporal / official MtM = month-bucket EOD strike with stamps · D-4 optimized restatement binding + active_leaves at first resolution · D-5 peak = interval dimension, calendar-versioned · D-6 dual units only in cache/rollups · D-7 batch authoritative, events additive; re-derive idempotency · D-8 netting = projection policy; drill-down mandatory · D-9 shared monthly partitions, tenant leading key; S5c on strike-month axis · D-10 all interval structure via MarketCalendar · **D-11 unified volume resolution: every trade via VolumeReference → VolumeSeries × multiplier; fixed-profile = degenerate case (multiplier=1.0, per-trade PROFILE series); no category branching in code**.
+
+## 11. Open items (O-1…O-8) — resolve before/during tech spec, do not guess
 
 O-1 hot-window length per market · O-2 event path in phase 1 vs batch-only (biggest scope lever) · O-3 v1 expression operator set · O-4 settlement cell: price vs amount vs both (cashflow-module contract) · O-5 struck-mark bucket granularity confirmation · O-6 curve-pillar→interval expansion ownership (affects meaning of "curve version" stamp) · O-7 dispute/annotation model on settlement cells · O-8 cross-zone financial-net flagging in payloads.
 
-## 11. Platform constants (from prior architecture work — apply here too)
+## 12. Platform constants (from prior architecture work — apply here too)
 
 Java 21 / Spring Boot 3.3 / Aurora PostgreSQL 16 (NO TimescaleDB — invalid on RDS/Aurora; declarative partitioning + pg_partman + pg_cron + matviews) / Kafka 3.7 KRaft (batch listeners for high-volume consumers, manual commit, InFlightOffsetTracker at-least-once) / Redis 7 (pipeline + MULTI-EXEC compose independently) / `GenerationType.SEQUENCE` allocationSize=50 (never IDENTITY — kills JDBC batching) / Flyway owns all DDL incl. partition mgmt / per-tenant Hikari partitioning + PgBouncer transaction pooling + WFQ producer-side token buckets for noisy-neighbour isolation.
 
 ---
 
-**Status:** Functional spec v1.0 in review. Technical spec NOT yet authored — explicitly deferred until functional review completes. Implementation prompts should cite `functional-spec-position-valuation-v1.0.md` FR/D numbers and this file for rationale.
+**Status:** Functional spec v1.0 in review. Volume Series spec V3.0 (unified model) complete. Technical spec NOT yet authored — explicitly deferred until functional review completes. Implementation prompts should cite `functional-spec-position-valuation-v1.0.md` FR/D numbers, `VOLUME_SERIES_SPEC-V3_0.md` for volume model, and this file for rationale.

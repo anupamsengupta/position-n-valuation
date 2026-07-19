@@ -38,12 +38,11 @@ Think of the system as two halves joined by a handshake:
     │                     │                         │
     │   "How much power?" │   "How much money?"     │
     │                     │                         │
-    │   3 independent     │   Trade ledger          │
-    │   data streams:     │   + Price formulas      │
-    │                     │   + Market prices       │
-    │   - Contractual     │   + Calculated values   │
-    │   - Forecast        │                         │
-    │   - Metered actual  │                         │
+    │   Unified model:    │   Trade ledger          │
+    │   VolumeReference   │   + Price formulas      │
+    │   → VolumeSeries    │   + Market prices       │
+    │     × multiplier    │   + Calculated values   │
+    │   + Metered actual  │                         │
     └─────────────────────┴─────────────────────────┘
                     │
             Connected by a
@@ -55,26 +54,38 @@ Think of the system as two halves joined by a handshake:
 
 ## 3. Volume Series — Tracking Electricity Quantities
 
-### 3.1 The Three Streams (Layers)
+### 3.1 The Unified Volume Model
 
-The system tracks electricity volumes in **three completely independent streams**. Think of them as three separate filing cabinets that never mix:
+The system tracks electricity volumes using a **unified resolution pattern** where every trade works the same way. Two independent stores hold the data:
 
-| Stream | What it answers | Who fills it | Owned by | When it changes |
+| Store | What it answers | Who fills it | Owned by | When it changes |
 |---|---|---|---|---|
-| **CONTRACTUAL** | "What did we agree to trade?" | Trade capture (when a deal is booked) | **Per trade** | Almost never (only if the contract is amended) |
-| **FORECAST** | "What do we expect to generate/receive?" | Weather models, asset managers | **Per asset** (shared) | Frequently (every time the weather forecast updates) |
+| **Volume Series** | "What volume do we expect for this trade?" | Trade capture OR weather models | **Per asset** (shared, for PPAs) or **Per trade** (dedicated, for DA/bilateral) | Depends: forecasts change constantly; trade profiles are locked after booking |
 | **METERED ACTUAL** | "What actually flowed through the wire?" | The grid operator (TSO) sends meter data | **Per asset** (shared) | After delivery — first a rough number, later a confirmed one |
 
-**Why three separate streams?** Because they have completely different lives:
-- Contractual data is locked in stone (it's a legal agreement)
-- Forecasts change constantly (weather is unpredictable)
-- Meter readings arrive late and get corrected
+**Why separate?** Because they have completely different lives:
+- Volume expectations (forecasts/profiles) are the basis for forward valuation
+- Meter readings arrive late, get corrected, and are the basis for settlement
 
-Mixing them in one place would be like keeping your signed contract, your weather app, and your electricity bill all in the same filing cabinet with no labels.
+### 3.1a The Unified Resolution Pattern — The Key Insight
 
-### 3.1a Assets vs Trades — A Critical Distinction
+**Every trade resolves volume the SAME way:**
 
-This is one of the most important concepts in the system:
+```
+trade_volume = volume_series_interval.volume × multiplier
+```
+
+The only difference between trade types is the properties of what's being pointed to:
+
+| Trade Type | Volume Series | multiplier | Example |
+|---|---|---|---|
+| **PPA** (long-term renewable) | Shared asset forecast (weather model) | 0.30 (trade's share) | "30% of the wind farm's output" |
+| **DA fill** (exchange trade) | Dedicated per-trade profile (fixed MW) | 1.0 (100%) | "50 MW flat for tomorrow" |
+| **Bilateral flat block** | Dedicated per-trade profile (fixed MW) | 1.0 (100%) | "25 MW Mon-Fri 08-20" |
+
+**Analogy:** Think of it like a debit card vs a credit card at a store. The payment terminal processes them identically — swipe, amount, done. The fact that one draws from savings and the other from a credit line is invisible to the checkout process. Same for volume resolution: the code path is identical.
+
+### 3.1b Assets vs Trades — A Critical Distinction
 
 **An asset (e.g., a wind farm) has ONE physical output.** The weather forecast predicts the whole farm's output. The meter reads the whole farm's output. These exist independently of any trade.
 
@@ -92,28 +103,49 @@ WindPark-Nordsee (100 MW rated capacity)
 
 **Real-world analogy:** Think of a pizza parlor. The oven (asset) produces one pizza. Three customers (trades) have standing orders for 30%, 30%, and 40% of every pizza. The oven doesn't bake three separate pizzas — it bakes one, and each customer gets their slice.
 
+**Fixed-profile trades (DA, bilateral) are the simple case:** They don't reference an asset. Instead, the system creates a tiny per-trade "volume series" (e.g., 96 intervals of 50 MW for a DA block) and the trade references it with multiplier = 1.0. It's like a customer who owns the entire pizza — same resolution logic, just `100% × the whole thing`.
+
 **What this means for the system:**
 - The **forecast** is stored ONCE for the whole wind farm (e.g., "expect 72.5 MW at 18:45")
 - The **meter reading** is stored ONCE for the whole farm (e.g., "measured 68.3 MW at 18:45")
 - Each trade's share is calculated at read time: Trade T-7788 gets `72.5 × 0.30 = 21.75 MW`
 - If the forecast updates, we store the update ONCE, and all three trades' valuations are recalculated
+- For a DA trade: the volume series is tiny (96 intervals) and the multiplier is 1.0 — same code path
 
 **Why not store separate copies per trade?** Because:
 - 1 forecast update would require 3 writes instead of 1 (and for 50 trades on one asset, 50 writes)
 - The original asset-level data would be lost (you can't add up trade shares if multipliers overlap or change)
 - Changing a multiplier (e.g., selling 10% of your allocation to another buyer) would require rewriting all volume data
 
-**Not all trades reference an asset.** Exchange fills (DA, intraday), bilateral flat blocks, and monthly forwards are simple fixed-quantity trades. They have no asset, no forecast, no meter. Their volume comes from the contract itself (e.g., "50 MW flat for August").
+### 3.1c The "Degenerate Case" Concept
 
-### 3.2 What's Inside Each Stream
+**This is what makes the model elegant.** A fixed-profile trade (DA fill, bilateral block) is NOT a different kind of thing — it's a *simpler* version of the same thing:
 
-Each stream stores a list of **time slots** with a power value. For example:
+| PPA Trade | DA Trade |
+|---|---|
+| Points to a **shared** volume series (weather forecast) | Points to a **dedicated** volume series (fixed MW profile) |
+| multiplier = 0.30 (partial share) | multiplier = 1.0 (whole thing) |
+| Volume series has thousands of intervals (year-long) | Volume series has ~96 intervals (one day) |
+| Forecast updates frequently (weather changes) | Profile is set once at trade capture |
+| Settlement uses separate metered data | Settlement uses the same fixed profile |
+
+Same resolution: `volume = series_interval × multiplier`. Same code. Same query. Same events.
+
+**Parallel to pricing:** Just as a fixed price (EUR 45.00/MWh) is a "degenerate" pricing formula (a formula that just returns a constant), a DA fill's fixed volume profile is a "degenerate" volume series. The system doesn't special-case it — it processes it through the same formula engine, which just happens to return the same number every time.
+
+### 3.2 What's Inside Each Volume Series
+
+Each volume series stores a list of **time slots** with a power value. For example:
 
 ```
-Contractual Volume for Trade T-7788:
-  Aug 1, 2026  00:00-00:15  →  50 MW
-  Aug 1, 2026  00:15-00:30  →  50 MW
-  Aug 1, 2026  00:30-00:45  →  50 MW
+Volume Series for DA Fill T-5500 (seriesType=PROFILE):
+  Apr 24, 2026  00:00-00:15  →  50 MW
+  Apr 24, 2026  00:15-00:30  →  50 MW
+  ... (96 slots for one day)
+
+Volume Series for WindPark-Nordsee (seriesType=FORECAST):
+  Aug 1, 2026   00:00-00:15  →  72.5 MW  (full farm output)
+  Aug 1, 2026   00:15-00:30  →  71.8 MW
   ... (about 35,000 slots for a full year)
 ```
 
@@ -149,22 +181,22 @@ Sometimes people want to see a year of 15-minute data summarized at monthly leve
 
 ### 3.6 Versioning
 
-Each stream has its own version counter. When data changes:
+Each volume series has its own version counter. When data changes:
 
 - A new forecast arrives → forecast version goes from v5 to v6
 - Meter data gets corrected → meter version goes from v1 to v2
-- Contract amended → contractual version goes from v1 to v2
+- Trade profile amended → profile version goes from v1 to v2
 
-These version numbers are independent. A new forecast (v6) doesn't change the contractual version (still v1).
+These version numbers are independent. A new forecast (v6) doesn't change the meter version (still v1).
 
 ### 3.7 Quality States
 
-Each stream tracks data quality:
+Each series type tracks data quality:
 
-| Stream | Quality states | Meaning |
+| Series | Quality states | Meaning |
 |---|---|---|
-| Contractual | EFFECTIVE → AMENDED | "This is the active deal" vs "This was superseded by a change" |
-| Forecast | CURRENT → SUPERSEDED | "This is the latest forecast" vs "A newer one replaced it" |
+| PROFILE (fixed trades) | EFFECTIVE → AMENDED | "This is the active deal" vs "This was superseded by a change" |
+| FORECAST (asset-linked) | CURRENT → SUPERSEDED | "This is the latest forecast" vs "A newer one replaced it" |
 | Metered Actual | PROVISIONAL → VALIDATED | "Rough reading (D+1)" vs "Confirmed by the grid operator (D+7 to D+30)" |
 
 ---
@@ -232,13 +264,15 @@ The Position & Valuation side **consumes** volume data from the Volume Series si
 
 ### 5.1 Who Reads What
 
-| Valuation purpose | Which volume stream to read | Multiplier? |
-|---|---|---|
-| Settlement (what happened) | Read **METERED ACTUAL** (from asset) | Yes — apply trade's multiplier |
-| Forward marks (what we expect) | Read **FORECAST** (from asset) | Yes — apply trade's multiplier |
-| Grid display (what's the shape) | Read **CONTRACTUAL** (from trade-leg) | No — already trade-scoped |
+**Unified resolution — same for all trades:**
 
-For asset-linked trades: the system looks up the `AssetVolumeReference` to find the right asset series AND the multiplier, then computes `asset_volume × multiplier` to get the trade's share.
+| Valuation purpose | What the system reads | How |
+|---|---|---|
+| Forward marks (future) | `VolumeReference.volumeSeriesKey` × multiplier | For PPAs: asset forecast × 0.30. For DA: trade profile × 1.0 |
+| Settlement (past) | `VolumeReference.meteredSeriesKey` × multiplier (if set) | For PPAs: asset meter × 0.30 |
+| Settlement (past, no meter) | Falls back to `volumeSeriesKey` × multiplier | For DA: profile × 1.0 (the traded volume IS the settled volume) |
+
+The system always looks up the `VolumeReference` to find the volume series key AND the multiplier, then computes `series_volume × multiplier`.
 
 ### 5.2 No Mixing
 
@@ -280,9 +314,9 @@ If you split a 1-hour block into four 15-minute blocks, the total energy must st
 
 Within any volume stream, every time slot must connect perfectly to the next. No missing slots, no double-counted slots. Like tiles on a floor — no gaps, no overlaps.
 
-### 6.3 Layers Don't Interfere
+### 6.3 Series Don't Interfere
 
-Updating the forecast never changes the contractual data. Receiving meter readings never changes the forecast. Each stream lives in its own world.
+Updating the forecast never changes metered data, and vice versa. Amending a trade's PROFILE series never changes the asset's FORECAST series. Each series lives in its own world.
 
 ### 6.4 Versions Only Go Up
 
@@ -333,7 +367,7 @@ After 7.5 years, monthly partitions are automatically dropped.
 ### 8.3 Scale
 
 For 200 customers with ~20 long-term contracts each:
-- ~320-430 million rows of volume data in the "active" partitions
+- ~77M–119M rows of volume data in the "active" partitions (unified model)
 - This is well within Aurora's capabilities with proper indexing
 
 ---
@@ -345,59 +379,68 @@ This section gives the team a mental map of the database tables, their relations
 ### 9.1 The Full Table Map
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
+┌──────────────────────────────────────────────────────────────────────────────┐
 │                         VOLUME SERIES SIDE                                   │
-│                                                                             │
-│   PER TRADE-LEG                    PER ASSET (shared across trades)          │
-│  ┌─────────────────────────┐  ┌──────────────────────┐  ┌───────────────┐  │
-│  │ contractual_volume_series│  │ forecast_volume_series│  │metered_actual_│  │
-│  │ (header / metadata)     │  │ (header / metadata)  │  │volume_series  │  │
-│  │                         │  │                      │  │(header)       │  │
-│  │  - series_key           │  │  - series_key        │  │ - series_key  │  │
-│  │  - trade_id / leg_id    │  │  - asset_id ←────────│──│ - asset_id    │  │
-│  │  - version_id           │  │  - version_id        │  │ - version_id  │  │
-│  │  - granularity          │  │  - granularity       │  │ - granularity │  │
-│  │  - delivery_start/end   │  │  - delivery_start/end│  │ - delivery_*  │  │
-│  │  - volume_unit (MW/MWh) │  │  - forecast_source_id│  │ - metering_pt │  │
-│  │  - quality_state        │  │  - rated_capacity_mw │  │ - rated_cap_mw│  │
-│  │  - formula (recipe)     │  │  - quality_state     │  │ - quality_state│ │
-│  └───────────┬─────────────┘  └──────────┬───────────┘  └───────┬───────┘  │
-│              │ 1:many                     │ 1:many               │ 1:many   │
-│              ▼                            ▼                      ▼          │
-│  ┌─────────────────────────┐  ┌──────────────────────┐  ┌───────────────┐  │
-│  │ contractual_interval    │  │ forecast_interval    │  │metered_actual_│  │
-│  │ (the time slots)        │  │ (FULL ASSET output)  │  │interval       │  │
-│  │                         │  │                      │  │(FULL ASSET)   │  │
-│  │  - interval_start       │  │  - interval_start    │  │ - interval_*  │  │
-│  │  - interval_end         │  │  - interval_end      │  │ - volume      │  │
-│  │  - volume (MW or MWh)   │  │  - volume            │  │ - energy      │  │
-│  │  - energy (MWh derived) │  │  - energy            │  │               │  │
-│  │  - status               │  │                      │  │               │  │
-│  │  - chunk_month          │  │                      │  │               │  │
-│  └─────────────────────────┘  └──────────────────────┘  └───────────────┘  │
-│                                                                             │
-│  ┌─────────────────────────────────────────────┐                            │
-│  │ asset_volume_reference                      │   THE LINK TABLE           │
-│  │ (connects trades to assets with multiplier) │                            │
-│  │                                             │                            │
-│  │  - asset_id          (which wind farm)      │                            │
-│  │  - trade_leg_id      (which trade)          │                            │
-│  │  - multiplier        (0.30 = 30% share)     │                            │
-│  │  - effective_from/to (when this applies)    │                            │
-│  │  - forecast_series_key                      │                            │
-│  │  - metered_series_key                       │                            │
-│  └─────────────────────────────────────────────┘                            │
-│                                                                             │
-│  ┌─────────────────────────┐                                                │
-│  │ compaction_view         │  (Optional summary — created on user request)  │
-│  │  - source_series_id     │                                                │
-│  │  - target_granularity   │                                                │
-│  │  └→ compacted_interval  │                                                │
-│  └─────────────────────────┘                                                │
-└─────────────────────────────────────────────────────────────────────────────┘
+│                                                                              │
+│   UNIFIED MODEL: Every trade → VolumeReference → VolumeSeries × multiplier   │
+│                                                                              │
+│  ┌───────────────────────────────────────┐  ┌────────────────────────────┐   │
+│  │ volume_series (UNIFIED)               │  │ metered_actual_            │   │
+│  │                                       │  │ volume_series              │   │
+│  │  - series_key                         │  │ (per asset only)           │   │
+│  │  - series_type (FORECAST | PROFILE)   │  │                            │   │
+│  │  - asset_id     (set for FORECAST)    │  │  - series_key              │   │
+│  │  - trade_leg_id (set for PROFILE)     │  │  - asset_id                │   │
+│  │  - version_id                         │  │  - version_id              │   │
+│  │  - granularity                        │  │  - granularity             │   │
+│  │  - delivery_start/end                 │  │  - delivery_start/end      │   │
+│  │  - delivery_timezone                  │  │  - delivery_timezone       │   │
+│  │  - volume_unit (MW/MWh)               │  │  - volume_unit             │   │
+│  │  - rated_capacity_mw (FORECAST only)  │  │  - rated_capacity_mw       │   │
+│  │  - forecast_source_id (FORECAST only) │  │  - metering_point_id       │   │
+│  │  - quality_state                      │  │  - quality_state           │   │
+│  │  - published_at                       │  │  - received_at             │   │
+│  └──────────────┬────────────────────────┘  └──────────┬─────────────────┘   │
+│                 │ 1:many                               │ 1:many              │
+│                 ▼                                      ▼                     │
+│  ┌───────────────────────────────────────┐  ┌────────────────────────────┐   │
+│  │ volume_interval (UNIFIED)             │  │ metered_actual_interval    │   │
+│  │                                       │  │ (FULL ASSET output)        │   │
+│  │  - interval_start                     │  │                            │   │
+│  │  - interval_end                       │  │  - interval_start          │   │
+│  │  - volume (MW or MWh)                 │  │  - interval_end            │   │
+│  │  - energy (MWh derived)               │  │  - volume (MW or MWh)      │   │
+│  │  - status                             │  │  - energy (MWh derived)    │   │
+│  │  - chunk_month                        │  │                            │   │
+│  └───────────────────────────────────────┘  └────────────────────────────┘   │
+│                                                                              │
+│  ┌─────────────────────────────────────────────────────────────────────────┐ │
+│  │ volume_reference (ALL TRADES — THE KEY TABLE)                           │ │
+│  │                                                                         │ │
+│  │  - trade_leg_id        (which trade — ALWAYS set)                       │ │
+│  │  - asset_id            (which asset — null for fixed-profile trades)    │ │
+│  │  - multiplier          (0.30 for PPAs; 1.0 for DA/bilateral)            │ │
+│  │  - effective_from/to   (OWN date range — not derived from trade)        │ │
+│  │  - volume_series_key   (points to the VolumeSeries)                     │ │
+│  │  - metered_series_key  (points to MeteredActual — null for DA)          │ │
+│  │  - formula             (tolerance band, seasonal adjustments)           │ │
+│  │                                                                         │ │
+│  │  *** EVERY trade goes through this table ***                            │ │
+│  │  Volume = series_interval × multiplier (computed at read time)          │ │
+│  │  PPAs:  multiplier < 1.0, shared asset series                           │ │
+│  │  DA:    multiplier = 1.0, dedicated per-trade series (few intervals)    │ │
+│  └─────────────────────────────────────────────────────────────────────────┘ │
+│                                                                              │
+│  ┌─────────────────────────┐                                                 │
+│  │ compaction_view         │  (Optional summary — created on user request)   │
+│  │  - source_series_id     │                                                 │
+│  │  - target_granularity   │                                                 │
+│  │  └→ compacted_interval  │                                                 │
+│  └─────────────────────────┘                                                 │
+└──────────────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                      POSITION & VALUATION SIDE                               │
+│                      POSITION & VALUATION SIDE                              │
 │                                                                             │
 │  ┌──────────────────────┐   ┌──────────────────────┐                        │
 │  │ position_ledger (S1) │   │ price_expression (S2)│                        │
@@ -417,34 +460,34 @@ This section gives the team a mental map of the database tables, their relations
 │  │  - known_from/to     │                                                   │
 │  └──────────┬───────────┘                                                   │
 │             │                                                               │
-│             │ feeds into (derived)                                           │
+│             │ feeds into (derived)                                          │
 │             ▼                                                               │
-│  ┌──────────────────────┐  ┌──────────────────────┐  ┌──────────────────┐  │
-│  │settlement_cell (S5a) │  │forward_mark (S5b)    │  │eod_struck_mark   │  │
-│  │(real money, durable) │  │(estimates, ephemeral)│  │(S5c, frozen)     │  │
-│  │                      │  │                      │  │                  │  │
-│  │ - position_id        │  │ - position_id        │  │ - position_id    │  │
-│  │ - interval           │  │ - interval           │  │ - delivery_month │  │
-│  │ - value (EUR)        │  │ - value (EUR)        │  │ - business_day   │  │
-│  │ - status (PROV/FINAL)│  │ - (overwritten!)     │  │ - value          │  │
-│  │ - input_version_set  │  │                      │  │ - input_versions │  │
-│  │ - active_leaves      │  │                      │  │ - (immutable!)   │  │
-│  │ - valid/known times  │  │                      │  │                  │  │
-│  └──────────────────────┘  └──────────────────────┘  └──────────────────┘  │
+│  ┌──────────────────────┐  ┌──────────────────────┐  ┌──────────────────┐   │
+│  │settlement_cell (S5a) │  │forward_mark (S5b)    │  │eod_struck_mark   │   │
+│  │(real money, durable) │  │(estimates, ephemeral)│  │(S5c, frozen)     │   │
+│  │                      │  │                      │  │                  │   │
+│  │ - position_id        │  │ - position_id        │  │ - position_id    │   │
+│  │ - interval           │  │ - interval           │  │ - delivery_month │   │
+│  │ - value (EUR)        │  │ - value (EUR)        │  │ - business_day   │   │
+│  │ - status (PROV/FINAL)│  │ - (overwritten!)     │  │ - value          │   │
+│  │ - input_version_set  │  │                      │  │ - input_versions │   │
+│  │ - active_leaves      │  │                      │  │ - (immutable!)   │   │
+│  │ - valid/known times  │  │                      │  │                  │   │
+│  └──────────────────────┘  └──────────────────────┘  └──────────────────┘   │
 │                                                                             │
-│  ┌──────────────────────┐  ┌──────────────────────┐  ┌──────────────────┐  │
-│  │ slot_cache (S6)      │  │ rollup_aggregate (S7)│  │dependency_index  │  │
-│  │ (grid display)       │  │ (reporting)          │  │(S8, routing)     │  │
-│  │                      │  │                      │  │                  │  │
-│  │ - delivery_point     │  │ - level (hr/day/mo)  │  │ - input_series   │  │
-│  │ - portfolio          │  │ - period             │  │ - cell_id        │  │
-│  │ - interval           │  │ - peak/offpeak       │  │ - active_leaves  │  │
-│  │ - net_mw             │  │ - net_mw / net_mwh   │  │                  │  │
-│  │ - net_mwh            │  │ - settled_value      │  │ "When input X    │  │
-│  │ - version_hash       │  │ - forward_mark_value │  │  changes, which  │  │
-│  │                      │  │                      │  │  cells to redo?" │  │
-│  │ (rebuildable cache)  │  │ (rebuildable)        │  │ (rebuildable)    │  │
-│  └──────────────────────┘  └──────────────────────┘  └──────────────────┘  │
+│  ┌──────────────────────┐  ┌──────────────────────┐  ┌──────────────────┐   │
+│  │ slot_cache (S6)      │  │ rollup_aggregate (S7)│  │dependency_index  │   │
+│  │ (grid display)       │  │ (reporting)          │  │(S8, routing)     │   │
+│  │                      │  │                      │  │                  │   │
+│  │ - delivery_point     │  │ - level (hr/day/mo)  │  │ - input_series   │   │
+│  │ - portfolio          │  │ - period             │  │ - cell_id        │   │
+│  │ - interval           │  │ - peak/offpeak       │  │ - active_leaves  │   │
+│  │ - net_mw             │  │ - net_mw / net_mwh   │  │                  │   │
+│  │ - net_mwh            │  │ - settled_value      │  │ "When input X    │   │
+│  │ - version_hash       │  │ - forward_mark_value │  │  changes, which  │   │
+│  │                      │  │                      │  │  cells to redo?" │   │
+│  │ (rebuildable cache)  │  │ (rebuildable)        │  │ (rebuildable)    │   │
+│  └──────────────────────┘  └──────────────────────┘  └──────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -454,33 +497,50 @@ This section gives the team a mental map of the database tables, their relations
 
 Think of these as the **cover page** of a document — metadata about the whole series:
 
-| Table | What it represents | Owned by | Key fields (plain meaning) |
+| Table | What it represents | Owned by | series_type | Key fields |
+|---|---|---|---|---|
+| `volume_series` | The unified volume source for any trade | **Asset** (FORECAST) or **Trade-leg** (PROFILE) | FORECAST or PROFILE | series_type, asset_id/trade_leg_id, granularity, volume_unit, quality |
+| `metered_actual_volume_series` | "This asset's meter measured X MW" | **Asset** (always) | N/A | asset_id, metering_point, rated_capacity_mw, quality |
+
+**Two kinds of VolumeSeries in one table:**
+- `series_type=FORECAST`: per asset (shared), weather-model-sourced, frequently updated
+- `series_type=PROFILE`: per trade-leg (dedicated), created once at trade capture, few intervals, immutable
+
+#### The Link Table: `volume_reference` (THE most important table — ALL trades have one)
+
+**Every trade goes through this table.** It's the universal link between a trade and its volume:
+
+| Field | PPA Example | DA Example | Meaning |
 |---|---|---|---|
-| `contractual_volume_series` | "This trade promised X MW from date A to date B" | **Trade-leg** | series_key, trade_id, granularity (slot size), delivery window, volume_unit, formula (the recipe) |
-| `forecast_volume_series` | "This wind farm is expected to produce X MW from A to B" | **Asset** | series_key, asset_id, forecast_source (model/vendor), rated_capacity_mw, quality (CURRENT or old) |
-| `metered_actual_volume_series` | "This wind farm's meter measured X MW from A to B" | **Asset** | series_key, asset_id, metering_point (physical meter ID), rated_capacity_mw, quality (PROVISIONAL or VALIDATED) |
+| `trade_leg_id` | T-7788-LEG-1 | T-5500-LEG-1 | Which trade (ALWAYS set) |
+| `asset_id` | WP-NORDSEE | null | Which asset (null for fixed-profile) |
+| `multiplier` | 0.30 | 1.0 | Trade's share of the volume |
+| `effective_from` | 2026-08-01 | 2026-04-24 | When this allocation starts |
+| `effective_to` | 2027-08-01 | 2026-04-25 | When this allocation ends |
+| `volume_series_key` | FCST-WP-NORDSEE | VS-T5500-1 | Points to the VolumeSeries |
+| `metered_series_key` | MTR-WP-NORDSEE | null | Points to meter (null for DA) |
+| `formula` | (tolerance, seasonal adj) | (baseVolume: 50 MW) | Contract parameters |
 
-#### The Link Table: `asset_volume_reference`
+**Why does `effective_from/to` live HERE instead of being derived from the trade?**
 
-This small but crucial table connects trades to assets:
+Five reasons:
 
-| Field | Example | Meaning |
-|---|---|---|
-| `asset_id` | WP-NORDSEE | Which wind farm |
-| `trade_leg_id` | T-7788-LEG-1 | Which trade |
-| `multiplier` | 0.30 | "This trade gets 30% of the farm's output" |
-| `effective_from` | 2026-08-01 | When this allocation starts |
-| `effective_to` | 2027-08-01 | When this allocation ends |
-| `forecast_series_key` | FCST-WP-NORDSEE | Points to the farm's forecast series |
-| `metered_series_key` | MTR-WP-NORDSEE | Points to the farm's meter series |
+1. **Stepped allocations**: A trade might have 20% in year 1 (ramp-up) then 30% from year 2. That's two rows with different periods and multipliers — you can't express this with a single date range from the trade.
+
+2. **Partial unwinds**: If you sell back half your allocation for the last 6 months, the reference period shortens but the trade itself isn't amended.
+
+3. **Sub-range coverage**: A trade starts Aug 2026, but the asset connects to the grid in Jan 2027. The allocation only starts in Jan — different from the trade's start.
+
+4. **Query performance**: "Which trades are active on this asset in August 2027?" is answered with one indexed query on the reference table. No join to the trade table needed.
+
+5. **Independent lifecycle**: Extending a trade's delivery period and extending the allocation are separate business decisions. Coupling them creates unnecessary coordination.
 
 **Multiplier rules:**
 - Each individual multiplier is between 0 and 1 (e.g., 0.30 = 30%)
-- The sum across all trades for one asset should ideally be 1.0 (100% allocated)
+- For asset-linked trades: the sum across all trades for one asset **within any time window** should ideally be 1.0 (100% allocated)
 - Sum < 1.0 is fine (uncontracted capacity — the farm hasn't sold its full output yet)
 - Sum > 1.0 triggers a warning (over-selling — a risk condition, but not blocked)
-
-**Not all trades have this link.** Exchange fills and flat bilateral deals don't reference an asset — they have no `asset_volume_reference` row.
+- For fixed-profile trades: multiplier is always 1.0 (100% — the trade owns its entire volume series)
 
 #### The "Interval" Tables (many rows per series — the actual data)
 
@@ -488,11 +548,11 @@ These are the **bulk of the data**. Each row = one time slot:
 
 | Table | Owned by | Fields | Example row |
 |---|---|---|---|
-| `contractual_interval` | Trade-leg | series_id, start, end, volume, energy, status, chunk_month | series=abc, 2026-08-01 00:00–00:15, 50.000000 MW, 12.500000 MWh, CONFIRMED |
-| `forecast_interval` | **Asset** | series_id, start, end, volume, energy | series=def, 2026-08-01 00:00–00:15, **72.500000 MW** (full farm output), 18.125000 MWh |
-| `metered_actual_interval` | **Asset** | series_id, start, end, volume, energy | series=ghi, 2026-08-01 00:00–00:15, **68.300000 MW** (full farm output), 17.075000 MWh |
+| `volume_interval` (FORECAST) | **Asset** | series_id, start, end, volume, energy | series=def, 2026-08-01 00:00–00:15, **72.500000 MW** (full farm), 18.125000 MWh |
+| `volume_interval` (PROFILE) | **Trade-leg** | series_id, start, end, volume, energy, status, chunk_month | series=abc, 2026-04-24 00:00–00:15, 50.000000 MW, 12.500000 MWh, CONFIRMED |
+| `metered_actual_interval` | **Asset** | series_id, start, end, volume, energy | series=ghi, 2026-08-01 00:00–00:15, **68.300000 MW** (full farm), 17.075000 MWh |
 
-**Key point:** Forecast and metered intervals store the **full asset output**, not a trade's share. The trade's share is calculated at read time by applying the multiplier:
+**Key point:** FORECAST intervals store the **full asset output**, not a trade's share. The trade's share is calculated at read time by applying the multiplier:
 
 ```
 Farm forecast for 18:45 = 72.5 MW (stored once)
@@ -500,13 +560,15 @@ Farm forecast for 18:45 = 72.5 MW (stored once)
 Trade T-7788 reads it: 72.5 × 0.30 = 21.75 MW  (calculated, not stored)
 Trade T-8899 reads it: 72.5 × 0.30 = 21.75 MW  (calculated, not stored)
 Trade T-9900 reads it: 72.5 × 0.40 = 29.00 MW  (calculated, not stored)
+
+DA Fill T-5500 reads its own PROFILE: 50.0 × 1.0 = 50.0 MW  (same code path!)
 ```
 
-**Scale per table:** ~2,976 rows per series per month (31 days x 96 slots). But because forecast and meter are per asset (not per trade), the storage is much smaller — one farm with 5 trades stores 2,976 forecast rows, not 14,880.
+**Scale per table:** ~2,976 rows per FORECAST series per month (31 days x 96 slots). Asset-linked series are shared — one farm with 5 trades stores 2,976 rows, not 14,880. PROFILE series are tiny (a DA fill = ~96 rows total).
 
 #### The VolumeFormula (the "Recipe")
 
-Attached to the contractual series. Tells the system HOW to generate intervals:
+Attached to the VolumeReference. Tells the system HOW to generate intervals for PROFILE series:
 
 ```
 VolumeFormula for Trade T-7788:
@@ -633,21 +695,19 @@ This is what makes targeted recalculation efficient — we never scan the whole 
 ### 9.4 How Tables Relate to Each Other
 
 ```
+UNIFIED PATTERN — same for ALL trade types:
+
 Asset (e.g., WindPark-Nordsee)
   │
-  ├──→ ForecastVolumeSeries ──→ ForecastIntervals (full asset output)
+  ├──→ VolumeSeries (type=FORECAST) ──→ VolumeIntervals (full asset output)
   │
   ├──→ MeteredActualVolumeSeries ──→ MeteredActualIntervals (full asset output)
   │
-  └──→ AssetVolumeReference(s): one per trade that slices this asset
+  └──→ VolumeReference(s): one per trade that slices this asset
            │
-           │   multiplier = 0.30
+           │   multiplier = 0.30, volumeSeriesKey → FCST-WP-NORDSEE
            ▼
-Trade T-7788, Leg 1
-  │
-  ├──→ ContractualVolumeSeries ──→ ContractualIntervals (this trade's shape)
-  │         │
-  │         └── VolumeFormula (recipe)
+Trade T-7788 (PPA), Leg 1
   │
   └──→ Position Ledger rows (1 per month of delivery)
            │
@@ -660,9 +720,20 @@ Trade T-7788, Leg 1
            │         uses: forecast × 0.30 for volume
            │
            └──→ EOD Struck Marks (official daily snapshot per month)
+
+
+DA Fill T-5500 (SAME pattern, just simpler):
+  │
+  ├──→ VolumeSeries (type=PROFILE) ──→ VolumeIntervals (96 intervals, 50 MW)
+  │
+  └──→ VolumeReference: multiplier = 1.0, volumeSeriesKey → VS-T5500-1
+           │
+           ▼
+  └──→ Position Ledger rows → Settlement / Forward Marks / EOD
+             uses: profile × 1.0 for volume (same code path!)
 ```
 
-**Key insight:** The asset's forecast/meter data is stored once and shared. Each trade gets its slice via the multiplier in `AssetVolumeReference`. The volume and position sides are linked by `series_key` references and live in separate tables and services.
+**Key insight:** Every trade resolves volume the same way: `VolumeReference` → `VolumeSeries` × `multiplier`. The only difference is whether the volume series is shared (asset forecast) or dedicated (trade profile), and whether the multiplier is fractional or 1.0.
 
 ### 9.5 What Is a "Source of Truth" vs "Derived/Rebuildable"
 
@@ -670,7 +741,9 @@ Trade T-7788, Leg 1
 |---|---|---|
 | Position Ledger | YES | We've lost the legal record. Unrecoverable. |
 | PriceExpression | YES | We've lost the pricing recipes. Unrecoverable. |
-| Volume Series (all 3) | YES | We've lost the volumes. Unrecoverable. |
+| Volume Reference | YES | We've lost which trades link to which volume series and at what multiplier. Unrecoverable. |
+| Volume Series (FORECAST + PROFILE) | YES | We've lost the volume data. Unrecoverable. |
+| Metered Actual Series (per asset) | YES | We've lost the meter readings. Unrecoverable. |
 | Settlement Cells | YES (derived but durable) | Must recompute from ledger + prices + volumes |
 | EOD Struck Marks | YES (frozen snapshot) | Cannot be recreated after the business day passes |
 | Forward Marks | NO (ephemeral) | Just recalculate from current curves. No loss. |
@@ -698,10 +771,10 @@ Trade T-7788, Leg 1
 All large tables are **partitioned by delivery month**. Think of it like filing cabinets organized by month:
 
 ```
-contractual_interval
-  ├── contractual_interval_2026_08  (all Aug 2026 delivery slots)
-  ├── contractual_interval_2026_09  (all Sep 2026 delivery slots)
-  ├── contractual_interval_2026_10  (all Oct 2026 delivery slots)
+volume_interval
+  ├── volume_interval_2026_08  (all Aug 2026 delivery slots)
+  ├── volume_interval_2026_09  (all Sep 2026 delivery slots)
+  ├── volume_interval_2026_10  (all Oct 2026 delivery slots)
   └── ... (one partition per month)
 ```
 
@@ -716,29 +789,63 @@ contractual_interval
 
 | Index | On table | Purpose |
 |---|---|---|
-| `(series_id, interval_start)` | All interval tables | "Give me slots for this series in time order" |
-| `(series_key, version_id)` | All series header tables | "Give me a specific version of this series" |
+| `(series_id, interval_start)` | volume_interval, metered_actual_interval | "Give me slots for this series in time order" |
+| `(series_key, version_id)` | volume_series, metered_actual_volume_series | "Give me a specific version of this series" |
+| `(trade_leg_id)` | volume_reference | "What volume series does this trade use?" |
+| `(asset_id)` | volume_reference | "Which trades reference this asset?" (fan-out) |
 | `(tenant_id, delivery_range)` | Position ledger | "All positions for this customer in this month" |
 | `(position_id, interval_start)` | Settlement cells | "All settled values for this position" |
 | `(delivery_point, portfolio, interval)` | Slot cache | "Net position for this grid cell" |
 
-### 10.4 Sizing — Real Numbers
+### 10.4 Sizing — Real Numbers (with formulas)
 
-For a typical deployment (200 tenants, ~20 PPAs each, referencing ~8 distinct assets per tenant):
+**Starting assumptions:**
+```
+T  = 200 tenants
+A  = 8 assets (wind/solar farms) per tenant
+N  = 2.5 trade-legs per asset (how many buyers share one farm)
+P  = T × A × N = 200 × 8 × 2.5 = 4,000 PPAs total
+Bf = 5 fixed-profile trades per tenant = 1,000 total
+M  = 12 hot months
+D  = 30.4 avg days per month
+I  = 96 intervals per day (15-min)
+Ih = 24 intervals per day (hourly)
+```
 
-| Table | Rows in "active" partitions | Growth rate | Note |
+**Formulas:**
+
+| Table | Formula | Calculation | Result |
 |---|---|---|---|
-| Contractual intervals | ~143 million | Grows as new months materialize | Per trade-leg |
-| Forecast intervals | ~28 million | Depends on forecast frequency | **Per asset** (shared!) |
-| Metered actual intervals | ~28 million | Grows only for delivered months | **Per asset** (shared!) |
-| Asset volume references | ~32,000 | Grows with new trades | Tiny link table |
-| Position ledger | ~720,000 | Very slow growth | Very compact! |
-| Settlement cells | ~2.7 billion (all tiers) | Grows as delivery progresses | Biggest table |
-| EOD struck marks | ~14 million | Small, steady growth | |
-| Slot cache | ~tens of millions | Fixed size (hot window only) | Rebuildable |
-| Rollup aggregates | ~low millions | Fixed size | Rebuildable |
+| **volume_interval** (FORECAST, per asset, hourly) | `T × A × M × D × Ih` | 200 × 8 × 12 × 30.4 × 24 | **~14M rows** |
+| **volume_interval** (FORECAST, per asset, 15-min) | `T × A × M × D × I` | 200 × 8 × 12 × 30.4 × 96 | **~56M rows** |
+| **volume_interval** (PROFILE, per trade, fixed) | `T × Bf × M × D × I` | 200 × 5 × 12 × 30.4 × 96 | **~35M rows** |
+| **metered_actual_interval** (per asset, 6 delivered months) | `T × A × 6 × D × I` | 200 × 8 × 6 × 30.4 × 96 | **~28M rows** |
+| **volume_reference** | `T × (A × N + Bf)` | 200 × (20 + 5) | **5,000 rows** |
+| **Position ledger** | `(P + T×Bf) × M × versions` | 5,000 × 12 × ~2 | **~120K rows** |
+| **Settlement cells** | `T × A × M_del × D × I × N × 1.3` | 200×8×6×30.4×96×2.5×1.3 | **~109M rows** |
+| **EOD struck marks** | `(P + T×Bf) × 12 × 21_biz_days` | 5,000 × 12 × 21 | **~1.3M rows** |
 
-**The key insight:** Because forecast and meter data is per asset (not per trade), the storage is dramatically smaller. If 5 trades reference the same wind farm, forecast data is stored once — not 5 times. The position ledger (the legal record) is tiny — less than 1M rows for the whole fleet. The settlement cells are the largest store but only ~12-14 months sit in "hot" partitions at any time.
+**The big wins from this model:**
+
+| What was eliminated | Why | Rows saved |
+|---|---|---|
+| Separate contractual intervals for ALL PPAs | VolumeReference × multiplier replaces them | **~140M rows eliminated** (200×20×12×30.4×96) |
+| Per-trade forecast copies | Stored once per asset, not per trade | **~21M rows saved** (vs old per-trade model) |
+| Per-trade meter copies | Stored once per asset, not per trade | **~42M rows saved** |
+| Separate code paths for different trade types | Unified resolution eliminates branching | **0 rows** but huge code simplicity win |
+
+**Bottom line:** The "hot" volume data is ~77M–119M rows (depending on forecast granularity), down from ~245M+ in the old per-trade model. The position ledger is tiny (~120K rows). Settlement cells grow over time but only 6-12 months are in the "hot" partition.
+
+**Why the savings are so dramatic for PPAs:** A 10-year PPA in the OLD model would store:
+- 3,504,000 contractual intervals (10 years × 365 days × 96 intervals)
+
+In the NEW model, that same PPA stores:
+- **1 row** in `volume_reference` (multiplier + date range)
+- 0 dedicated intervals (it reads the shared asset forecast/meter)
+
+The forecast and meter data for that PPA's asset exists anyway (it's shared) — so the marginal cost of adding a PPA trade is literally 1 row.
+
+**For DA trades:** A DA fill stores ~96 volume intervals (one day × 96 slots) in a dedicated PROFILE series, plus 1 row in `volume_reference` with multiplier=1.0. Same resolution path, tiny footprint.
 
 ### 10.5 Data Flow — The Life of a Number
 
@@ -747,22 +854,29 @@ Here's how a single electricity delivery flows through the system. Note how the 
 ```
 STEP 0: Asset onboarded (before any trades)
   └─→ WindPark-Nordsee registered as asset (100 MW rated capacity)
-  └─→ ForecastVolumeSeries created (per asset — stores full farm output)
+  └─→ VolumeSeries (type=FORECAST) created (per asset — stores full farm output)
   └─→ MeteredActualVolumeSeries created (per asset — stores full farm output)
 
-STEP 1: Trade T-7788 is booked — buys 30% of asset (Day 0)
+STEP 1: PPA Trade T-7788 is booked — buys 30% of asset (Day 0)
   └─→ Position Ledger: +30 MW for Aug 2026 (1 row)
-  └─→ ContractualVolumeSeries: 2,976 intervals created for this trade's Aug
-  └─→ AssetVolumeReference: (asset=WP-Nordsee, trade=T-7788, multiplier=0.30)
+  └─→ VolumeReference: (trade=T-7788, asset=WP-Nordsee, multiplier=0.30,
+                         volumeSeriesKey=FCST-WP-NORDSEE, meteredSeriesKey=MTR-WP-NORDSEE)
   └─→ Slot Cache: 2,976 cells updated with forecast × 0.30
 
-STEP 1b: Trade T-8899 is booked — buys 30% of SAME asset
+STEP 1b: PPA Trade T-8899 is booked — buys 30% of SAME asset
   └─→ Position Ledger: +30 MW for Aug 2026 (1 row)
-  └─→ AssetVolumeReference: (asset=WP-Nordsee, trade=T-8899, multiplier=0.30)
+  └─→ VolumeReference: (trade=T-8899, asset=WP-Nordsee, multiplier=0.30, ...)
   └─→ Same forecast data, different multiplier → different trade volumes
 
+STEP 1c: DA Fill T-5500 is booked — 50 MW flat for Apr 24 (SAME pattern!)
+  └─→ Position Ledger: +50 MW for Apr 2026 (1 row)
+  └─→ VolumeSeries (type=PROFILE): 96 intervals of 50 MW created PER TRADE
+  └─→ VolumeReference: (trade=T-5500, asset=null, multiplier=1.0,
+                         volumeSeriesKey=VS-T5500-1, meteredSeriesKey=null)
+  └─→ Same code path as PPAs — just multiplier=1.0 and dedicated series
+
 STEP 2: Weather forecast arrives (Day 0 + hours)
-  └─→ ForecastVolumeSeries: 2,976 intervals (e.g., 35-95 MW full farm output)
+  └─→ VolumeSeries (FORECAST): 2,976 intervals (e.g., 35-95 MW full farm output)
   └─→ STORED ONCE for the asset, NOT per trade
   └─→ Forward Marks for T-7788: 2,976 cells (curve × forecast × 0.30)
   └─→ Forward Marks for T-8899: 2,976 cells (curve × forecast × 0.30)
@@ -776,6 +890,10 @@ STEP 4: Power is delivered (Aug 1)
   └─→ Settlement for T-7788: 96 cells (price × meter × 0.30)
   └─→ Settlement for T-8899: 96 cells (price × meter × 0.30)
   └─→ Forward Marks: 96 cells DELETED per trade (no longer future)
+
+STEP 4b: DA Fill T-5500 settles (same day — exchange confirms volume)
+  └─→ Settlement for T-5500: 96 cells (price × profile × 1.0)
+  └─→ No metered series needed — the traded volume IS the settled volume
 
 STEP 5: Meter data confirmed (Aug 7)
   └─→ MeteredActualVolumeSeries: version v1 → v2 (quality: VALIDATED)
@@ -832,7 +950,7 @@ These patterns should guide implementation decisions:
 
 | Stored (source of truth) | Derived (rebuildable) |
 |---|---|
-| VolumeFormula (50 MW baseload, Berlin timezone, 15-min) | 35,040 interval rows |
+| VolumeFormula (50 MW baseload, Berlin timezone, 15-min) | VolumeInterval rows in a PROFILE series |
 | PriceExpression (collar formula with CPI + neg-gate) | Per-interval EUR values |
 | Position Ledger (+50 MW, Aug block) | Slot cache cells, rollups |
 | Market data (DA price 68.20 for slot X) | Settlement cell value 777.48 EUR |
@@ -870,7 +988,7 @@ When something changes (e.g., a new meter reading), we don't recalculate everyth
 |---|---|
 | **Aggregate** | A group of related objects treated as a unit (e.g., a series + its intervals) |
 | **Asset** | A physical power generation facility (wind farm, solar park, gas plant) that produces electricity |
-| **AssetVolumeReference** | The link between a trade and an asset, carrying the multiplier (trade's share) |
+| **VolumeReference** | The universal link between a trade and its volume series, carrying the multiplier (trade's share) |
 | **Atomic interval** | The smallest time slot (usually 15 minutes in Germany) |
 | **Bidding zone** | A region of the electricity grid where one price applies (e.g., Germany-Luxembourg) |
 | **Bitemporal** | Tracking two timelines: "when was it true?" AND "when did we know it?" |
@@ -881,7 +999,9 @@ When something changes (e.g., a new meter reading), we don't recalculate everyth
 | **Forward mark** | An estimated future value based on current market curves |
 | **Granularity** | The size of time slots (15-min, hourly, daily, monthly) |
 | **Ledger** | The permanent record of all trading positions |
-| **Multiplier** | A trade's share of an asset's output (0.30 = 30%); applied at read time, not stored on volume data |
+| **Multiplier** | A trade's share of a volume series (0.30 = 30% for PPAs; 1.0 = 100% for DA/bilateral); applied at read time |
+| **PROFILE** | A VolumeSeries type for fixed-profile trades (DA, bilateral) — created per trade with known MW intervals |
+| **Degenerate case** | A special case that's simpler but uses the same general structure (like a fixed price as a one-constant formula) |
 | **MW** | Megawatt — a rate of power (like speed: km/h) |
 | **MWh** | Megawatt-hour — an amount of energy (like distance: km) |
 | **Netting** | Adding up buys and sells to get the net position |
@@ -907,21 +1027,22 @@ When something changes (e.g., a new meter reading), we don't recalculate everyth
 Use this checklist to validate the design with team members:
 
 **Volume model:**
-- [ ] **Three separate volume streams** (contractual, forecast, metered) — never mixed
+- [ ] **Unified resolution pattern** — ALL trades go through VolumeReference → VolumeSeries × multiplier
+- [ ] **PPAs: shared asset forecast** — multiplier < 1.0, volume series shared across trades
+- [ ] **DA/bilateral: dedicated profile** — multiplier = 1.0, per-trade volume series (few intervals)
+- [ ] **Same code path for all trades** — fixed-profile is a "degenerate case" of the unified model
 - [ ] **Forecast and meter are per ASSET** — one wind farm = one forecast, one meter (not per trade)
-- [ ] **Multiple trades can reference the same asset** — each with a multiplier (e.g., 30%, 40%)
-- [ ] **Multiplier is applied at read time** — asset data stored once, trade share calculated on query
+- [ ] **Multiplier is applied at read time** — volume data stored once, trade share calculated on query
 - [ ] **Sum of multipliers should be ~1.0** — over-allocation is flagged as a warning, not an error
-- [ ] **Contractual series is per trade-leg** — this IS per trade (the contract is trade-specific)
 - [ ] **Store data as-is** — no forced conversion to different time resolutions
-- [ ] **Each stream versioned independently** — forecast v6 doesn't affect contractual v1
+- [ ] **Each series versioned independently** — forecast v6 doesn't affect meter v1
 
 **Position & valuation:**
 - [ ] **Position ledger is the legal record** — tracks who owes what, with full audit trail
 - [ ] **Prices are formulas, not fixed numbers** — computed per interval using live market data
 - [ ] **Three valuation types** — settlement (permanent), forward marks (temporary), EOD snapshots (permanent)
 - [ ] **Forward marks are NOT stored permanently** — they're live estimates, overwritten constantly
-- [ ] **Settlement only uses actual data** — never forecasts; always meter × multiplier
+- [ ] **Settlement uses metered data for PPAs** — meter × multiplier; for DA, settlement uses the same profile × 1.0
 - [ ] **One asset event fans out to all trades** — forecast/meter update triggers revaluation for every trade referencing that asset
 
 **Infrastructure:**
