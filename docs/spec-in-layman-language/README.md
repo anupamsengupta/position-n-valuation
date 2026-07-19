@@ -451,6 +451,7 @@ This section gives the team a mental map of the database tables, their relations
 │  │  - tenant_id         │   │  - tree structure    │                        │
 │  │  - trade_id / leg_id │   │    (nodes + leaves)  │                        │
 │  │  - signed_quantity   │   │  - valid_from/to     │                        │
+│  │  - quantity_ref ─────────────────────────────────────→ volume_series_key │
 │  │  - delivery_point    │   │  - known_from/to     │                        │
 │  │  - portfolio / book  │   │                      │                        │
 │  │  - delivery_range    │   └──────────────────────┘                        │
@@ -608,7 +609,7 @@ One row per trade-leg per delivery-month per version. This is surprisingly compa
 | `tenant_id` | TN_0042 | Customer isolation |
 | `trade_id` / `leg_id` | T-7788 / LEG-1 | Links back to the actual trade |
 | `signed_quantity` | +50.0 | Positive = we buy; negative = we sell |
-| `quantity_ref` | VS-3312 | OR a reference to the volume series (for shaped deals) |
+| `quantity_ref` | VS-3312 | **Denormalized pointer** to the volume_series_key (avoids join to volume_reference at query time). Same value as `volume_reference.volume_series_key` for this trade-leg. |
 | `delivery_point` | DE_LU (Germany-Luxembourg zone) | Where on the grid |
 | `portfolio` / `book` | "Renewables" / "Wind-DE" | Organizational attribution |
 | `delivery_range` | [2026-08-01, 2026-09-01) | Which month this row covers |
@@ -617,6 +618,55 @@ One row per trade-leg per delivery-month per version. This is surprisingly compa
 | `known_from` / `known_to` | 2026-07-15 14:32 / open | "When did the system learn this?" |
 
 **Row count:** A full-year PPA = 12 rows (one per month) × ~2-5 versions = **24-60 rows total**. That's the entire legal record for a year-long contract. Extremely compact.
+
+#### How Do I Query "Today's Position for My Portfolio"?
+
+Two levels of detail depending on what you need:
+
+**Level 1 — Nominal position (fast, one table, no joins):**
+
+```sql
+SELECT trade_id, leg_id, signed_quantity, volume_unit
+FROM   position_ledger
+WHERE  portfolio = 'Wind-DE'
+  AND  delivery_point = 'DE_LU'
+  AND  delivery_range @> '2026-07-20'
+  AND  valid_to IS NULL          -- current version only
+  AND  known_to IS NULL          -- not superseded
+```
+
+This gives you the headline MW per trade — the "dashboard view." No volume resolution needed.
+
+**Level 2 — Per-interval position (e.g., "what's my MW at 14:00 today?"):**
+
+Here you resolve actual volume through the series:
+
+```
+1. position_ledger (same query above)
+       → gives: trade_leg_id, quantity_ref (volume series key)
+
+2. volume_reference WHERE trade_leg_id IN (...)
+       → gives: multiplier, volume_series_key, metered_series_key
+
+3. volume_interval WHERE series_id matches AND interval_start = '2026-07-20 14:00'
+       → gives: raw MW (full asset output for FORECAST, or flat MW for PROFILE)
+
+4. Compute: raw_volume × multiplier = trade's volume for that slot
+```
+
+**Concrete example — portfolio "Wind-DE", zone DE_LU, at 14:00 today:**
+
+| Trade | Type | Raw interval | × Multiplier | = Trade's MW |
+|---|---|---|---|---|
+| T-7788 (PPA, Wind-DE) | FORECAST | 68.3 MW (whole farm) | × 0.30 | **20.49 MW** |
+| T-8899 (PPA, Wind-DE) | FORECAST | 68.3 MW (same series!) | × 0.30 | **20.49 MW** |
+| T-5500 (DA fill) | PROFILE | 50.0 MW | × 1.0 | **50.00 MW** |
+| **Net portfolio** | | | | **90.98 MW** |
+
+**Why `quantity_ref` helps but doesn't replace `volume_reference`:**
+- `quantity_ref` is a denormalized shortcut to identify *which* volume series to read (saves one hop)
+- You still need `volume_reference` for the **multiplier** — so the join isn't fully avoided for interval-level queries
+- For aggregate/dashboard queries, `signed_quantity` alone is sufficient (zero joins)
 
 #### Settlement Cells (S5a) — Real Money, Permanent
 
