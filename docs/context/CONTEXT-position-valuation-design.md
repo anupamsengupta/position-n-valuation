@@ -82,10 +82,11 @@ Both, same derivation logic, two cadences. **Event path**: incremental, dependen
 | S5b | Forward marks | position × atomic interval | EPHEMERAL current-state; zero durable rows |
 | S5c | EOD struck marks | position × month-bucket × business day | durable immutable frozen projection |
 | S6 | Slot Cache | (point×portfolio×type) × atomic interval | rebuildable netted materialization; hot window only (default T+60d); net_mw + net_mwh + is_peak + version_hash |
+| S6b | Trade Interval Cache | trade-leg × atomic interval | **optional** rebuildable per-trade pre-multiplied volume (resolved_mw/mwh); event-driven rebuild on VolumePublished / reference change; serves portfolio-detail dashboards; ~29M rows in 2-month hot window |
 | S7 | Rollups | hour/day/month × peak split | rebuildable; serves far-dated + reporting |
 | S8 | Dependency index | input-series → cell edges | with active-flag; restatement blast-radius; pruned to open exposure |
 
-Dependency is strictly one-way: S1/S2 (+S3/S4 inputs) ⇒ S5 ⇒ S6/S7. Everything right of S4 is rebuildable.
+Dependency is strictly one-way: S1/S2 (+S3/S4 inputs) ⇒ S5 ⇒ S6/S6b/S7. Everything right of S4 is rebuildable.
 
 ### Ledger grain detail (D-1)
 Delivery-month blocks — not 1 row per leg (defeats delivery-month partition pruning), not interval rows (5 orders of magnitude for zero attribution gain). A 12-month deal = 12 blocks (POS-5501…POS-5512), each wholly inside one monthly partition. Shape within a block is delegated by reference to the volume series; attributes constant within a block; mid-month term changes handled by valid-time splitting of the block's versions.
@@ -131,7 +132,73 @@ Worked interval 2026-08-15 QH18:45: DA 68.20, f=128.4/105.2=1.22053 ⇒ collar [
 
 ## 8. Multi-commodity note (deferred, shapes the core)
 
-Core (S1 bitemporal ledger, delivery ranges, DeliveryPoint hierarchy, PriceExpression, derived-measure layering) is commodity-neutral. Power plug-in = dense grid + MW/MWh duality + peak + cascade. Gas would add offset gas-day calendar + basis; oil/ags would add parcel/lot + grade + formula differentials. DO NOT build these speculatively — but the two cheap-now decisions that enable them are already taken: `price_expression_ref` instead of scalar price, and polymorphic DeliveryPoint.
+Core (S1 bitemporal ledger, delivery ranges, DeliveryPoint hierarchy, PriceExpression, derived-measure layering) is commodity-neutral. Power plug-in = dense grid + MW/MWh duality + peak + cascade. Gas would add offset gas-day calendar + basis; oil/ags would add parcel/lot + grade + formula differentials. DO NOT build these speculatively — but the cheap-now decisions that enable them are already taken: `price_expression_ref` instead of scalar price, polymorphic DeliveryPoint, and the unified `VolumeReference → VolumeSeries × multiplier` pattern.
+
+### 8.1 How the unified volume pattern extends to other commodities
+
+The `VolumeReference × multiplier` resolution and the S6b trade-interval cache are commodity-neutral patterns. Only the **interval semantics** and **unit duality** change per commodity:
+
+| Commodity | VolumeSeries interval | Multiplier use case | Unit duality | S6b resolved unit |
+|---|---|---|---|---|
+| **Power (current)** | 15-min / 5-min / 1-min slots | PPA: trade's share of wind/solar asset (0.30) | MW / MWh | resolved_mw, resolved_mwh |
+| **Gas** | Gas-day (06:00–06:00 CET) or hourly | Storage: withdrawal rights as fraction of facility capacity (0.25) | kWh/h / kWh (or therms) | resolved_kwhh, resolved_kwh |
+| **Oil (crude/products)** | Monthly delivery windows or cargo lots | Consortium lift: participant's share of term contract (0.40) | bbl/day / bbl (or MT) | resolved_bbl_day, resolved_bbl |
+| **Ags (grain, softs)** | Crop-month delivery windows | Pool allocation: farmer's pro-rata share of cooperative contract (0.15) | MT/period / MT (or bushels) | resolved_mt_period, resolved_mt |
+
+**Gas example — storage contract:**
+```
+Storage facility "Rehden" (4,400 GWh working gas volume)
+  │
+  ├── VolumeSeries (type=FORECAST): hourly withdrawal/injection forecast
+  │
+  └── VolumeReference(s):
+         Trade T-9100: withdrawal right = 25% of facility capacity (multiplier=0.25)
+         Trade T-9200: withdrawal right = 15% (multiplier=0.15)
+         → resolved volume = facility_forecast × multiplier (same code path as power PPAs)
+         → gas-day calendar replaces MarketCalendar (06:00–06:00 CET instead of midnight)
+```
+
+**Oil example — consortium lifting:**
+```
+Term contract "Bonny-Light-2027" (120,000 bbl/day for 12 months)
+  │
+  ├── VolumeSeries (type=PROFILE): monthly lifting schedule (flat or shaped)
+  │
+  └── VolumeReference(s):
+         Participant A: 40% of contract (multiplier=0.40)
+         Participant B: 35% (multiplier=0.35)
+         Participant C: 25% (multiplier=0.25)
+         → resolved volume = schedule × multiplier
+         → DeliveryPoint = loading terminal (polymorphic: VirtualPoint subtype)
+         → PriceExpression = Dated Brent + differential + freight
+```
+
+**Ags example — cooperative pool:**
+```
+Cooperative contract "Wheat-Export-Q4-2027" (10,000 MT)
+  │
+  ├── VolumeSeries (type=PROFILE): delivery window allocation across crop months
+  │
+  └── VolumeReference(s):
+         Farm A: 15% of pool (multiplier=0.15)
+         Farm B: 20% (multiplier=0.20)
+         → resolved volume = pool_allocation × multiplier
+         → PriceExpression = CBOT front-month + basis + quality premium/discount
+```
+
+**What changes per commodity (plug-in), what stays the same (core):**
+
+| Layer | Core (unchanged) | Plug-in (per commodity) |
+|---|---|---|
+| Position Ledger (S1) | Bitemporal, signed qty, month-block grain | `volume_unit` enum extended (MW→kWh/h→bbl/day→MT) |
+| VolumeReference | `multiplier`, `effectiveFrom/To`, `volumeSeriesKey` | No change needed |
+| VolumeSeries | `seriesType` (FORECAST/PROFILE), intervals | Interval granularity (gas-day, monthly cargo) |
+| S6b Trade Interval Cache | `trade_leg_id`, `interval_start`, `multiplier`, `version_hash` | `resolved_mw/mwh` → `resolved_qty/energy` (generic column names) |
+| PriceExpression (S2) | Tree structure, versioned, `active_leaves` | Operator set extended (basis, differentials, grade adj) |
+| MarketCalendar | Interface contract (sole authority for intervals) | Gas-day 06:00 offset; cargo windows; crop calendar |
+| Slot Cache (S6) | Net by (point, portfolio, type) × interval | Unit-aware netting (never sum rate units across intervals) |
+
+**Key insight:** The `VolumeReference × multiplier` pattern is not power-specific — it models any scenario where multiple economic interests slice a shared physical asset or pool. Power PPAs slice a wind farm; gas storage contracts slice a facility; oil consortium members slice a term contract; ags cooperatives slice a pool. The resolution code (`volume × multiplier`) is identical. S6b pre-multiplies the result regardless of commodity — the only difference is the column names and units.
 
 ---
 
@@ -179,9 +246,9 @@ Five reasons: (1) stepped allocations (different multipliers over time), (2) par
 
 ---
 
-## 10. Fixed decisions (D-1…D-11) — cite these, don't re-argue them
+## 10. Fixed decisions (D-1…D-12) — cite these, don't re-argue them
 
-D-1 month-block ledger grain, signed qty, no direction enum, no interval fan-out in S1 · D-2 price = expression ref, fixed = degenerate · D-3 forward ephemeral / settlement bitemporal / official MtM = month-bucket EOD strike with stamps · D-4 optimized restatement binding + active_leaves at first resolution · D-5 peak = interval dimension, calendar-versioned · D-6 dual units only in cache/rollups · D-7 batch authoritative, events additive; re-derive idempotency · D-8 netting = projection policy; drill-down mandatory · D-9 shared monthly partitions, tenant leading key; S5c on strike-month axis · D-10 all interval structure via MarketCalendar · **D-11 unified volume resolution: every trade via VolumeReference → VolumeSeries × multiplier; fixed-profile = degenerate case (multiplier=1.0, per-trade PROFILE series); no category branching in code**.
+D-1 month-block ledger grain, signed qty, no direction enum, no interval fan-out in S1 · D-2 price = expression ref, fixed = degenerate · D-3 forward ephemeral / settlement bitemporal / official MtM = month-bucket EOD strike with stamps · D-4 optimized restatement binding + active_leaves at first resolution · D-5 peak = interval dimension, calendar-versioned · D-6 dual units only in cache/rollups · D-7 batch authoritative, events additive; re-derive idempotency · D-8 netting = projection policy; drill-down mandatory · D-9 shared monthly partitions, tenant leading key; S5c on strike-month axis · D-10 all interval structure via MarketCalendar · D-11 unified volume resolution: every trade via VolumeReference → VolumeSeries × multiplier; fixed-profile = degenerate case (multiplier=1.0, per-trade PROFILE series); no category branching in code · **D-12 S6b trade_interval_cache is optional, rebuildable, event-driven; pre-multiplied resolved volume per trade-leg per interval; not source of truth; serves portfolio-detail dashboards where runtime join (position→volume_reference→volume_interval×multiplier) is too expensive; indexed by (trade_leg_id, interval_start); commodity-neutral (column names generic: resolved_qty/energy)**.
 
 ## 11. Open items (O-1…O-8) — resolve before/during tech spec, do not guess
 
@@ -193,4 +260,4 @@ Java 21 / Spring Boot 3.3 / Aurora PostgreSQL 16 (NO TimescaleDB — invalid on 
 
 ---
 
-**Status:** Functional spec v1.0 in review. Volume Series spec V3.0 (unified model) complete. Technical spec NOT yet authored — explicitly deferred until functional review completes. Implementation prompts should cite `functional-spec-position-valuation-v1.0.md` FR/D numbers, `VOLUME_SERIES_SPEC-V3_0.md` for volume model, and this file for rationale.
+**Status:** Functional spec v1.0 in review (updated: D-11/D-12, FR-086a–e for S6b, §15.7 sizing, glossary). Volume Series spec V3.0 (unified model) complete. Technical spec NOT yet authored — explicitly deferred until functional review completes. Implementation prompts should cite `functional-spec-position-valuation-v1.0.md` FR/D numbers, `VOLUME_SERIES_SPEC-V3_0.md` for volume model, and this file for rationale.

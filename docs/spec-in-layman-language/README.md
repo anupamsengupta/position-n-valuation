@@ -9,6 +9,8 @@
 4. Position & Valuation — how we track money and risk
 5. How the two halves talk to each other
 6. Key rules the system must never break
+7–12. Storage, design patterns, glossary
+13. Beyond power — how this extends to gas, oil, and agriculture
 
 ---
 
@@ -652,32 +654,87 @@ This gives you the headline MW per trade — the "dashboard view." No volume res
 
 **Level 2 — Per-interval position (e.g., "what's my MW at 14:00 today?"):**
 
-Here you resolve actual volume through the series:
+Here you resolve actual volume through the series. Single query, three joins:
 
+```sql
+SELECT
+    pl.trade_id,
+    pl.leg_id,
+    vs.series_type,                                    -- FORECAST or PROFILE
+    vi.interval_start,
+    vi.interval_end,
+    vi.volume                      AS raw_mw,          -- full asset (FORECAST) or flat (PROFILE)
+    vr.multiplier,
+    vi.volume * vr.multiplier      AS resolved_mw,     -- trade's actual share
+    vi.energy * vr.multiplier      AS resolved_mwh,
+    SUM(vi.volume * vr.multiplier)
+        OVER ()                    AS net_portfolio_mw  -- net across all trades
+FROM   position_ledger pl
+JOIN   volume_reference vr
+       ON  vr.trade_leg_id = pl.leg_id
+       AND '2026-07-21' BETWEEN vr.effective_from AND vr.effective_to
+JOIN   volume_series vs
+       ON  vs.series_key = vr.volume_series_key
+       AND vs.quality_state IN ('CURRENT', 'EFFECTIVE')  -- latest version only
+JOIN   volume_interval vi
+       ON  vi.series_id  = vs.id
+       AND vi.interval_start = '2026-07-21 14:00:00'     -- the specific slot
+WHERE  pl.tenant_id      = 'TN_0042'
+  AND  pl.portfolio      = 'Wind-DE'
+  AND  pl.delivery_point = 'DE_LU'
+  AND  pl.delivery_range @> '2026-07-21'::date
+  AND  pl.valid_to  IS NULL                              -- current version
+  AND  pl.known_to  IS NULL                              -- not superseded
+ORDER BY pl.trade_id;
 ```
-1. position_ledger (same query above)
-       → gives: trade_leg_id, quantity_ref (volume series key)
 
-2. volume_reference WHERE trade_leg_id IN (...)
-       → gives: multiplier, volume_series_key, metered_series_key
+**What each join does:**
 
-3. volume_interval WHERE series_id matches AND interval_start = '2026-07-20 14:00'
-       → gives: raw MW (full asset output for FORECAST, or flat MW for PROFILE)
+| Join | From → To | Purpose |
+|---|---|---|
+| `pl → vr` | position_ledger → volume_reference | Find the multiplier + series key for each trade-leg |
+| `vr → vs` | volume_reference → volume_series | Resolve the series key to the actual series header |
+| `vs → vi` | volume_series → volume_interval | Get the raw MW for the requested time slot |
 
-4. Compute: raw_volume × multiplier = trade's volume for that slot
+**Example result set — portfolio "Wind-DE", zone DE_LU, at 14:00 today:**
+
+| trade_id | series_type | raw_mw | multiplier | resolved_mw | net_portfolio_mw |
+|---|---|---|---|---|---|
+| T-7788 | FORECAST | 68.3 | 0.30 | **20.49** | 90.98 |
+| T-8899 | FORECAST | 68.3 | 0.30 | **20.49** | 90.98 |
+| T-5500 | PROFILE | 50.0 | 1.00 | **50.00** | 90.98 |
+
+Note how T-7788 and T-8899 read the **same** volume_interval row (same asset forecast) — the multiplier is the only thing that differs.
+
+**For a full day (all 96 intervals), change the interval filter:**
+
+```sql
+-- Replace the single-slot filter:
+--   AND vi.interval_start = '2026-07-21 14:00:00'
+-- With a range:
+  AND vi.interval_start >= '2026-07-21 00:00:00'
+  AND vi.interval_start <  '2026-07-22 00:00:00'
 ```
 
-**Concrete example — portfolio "Wind-DE", zone DE_LU, at 14:00 today:**
+**For settlement (using metered actuals instead of forecast):**
 
-| Trade | Type | Raw interval | × Multiplier | = Trade's MW |
-|---|---|---|---|---|
-| T-7788 (PPA, Wind-DE) | FORECAST | 68.3 MW (whole farm) | × 0.30 | **20.49 MW** |
-| T-8899 (PPA, Wind-DE) | FORECAST | 68.3 MW (same series!) | × 0.30 | **20.49 MW** |
-| T-5500 (DA fill) | PROFILE | 50.0 MW | × 1.0 | **50.00 MW** |
-| **Net portfolio** | | | | **90.98 MW** |
+```sql
+-- Replace the forecast join with metered actual:
+JOIN   metered_actual_volume_series mas
+       ON  mas.series_key = vr.metered_series_key       -- metered, not forecast
+       AND mas.quality_state IN ('PROVISIONAL', 'VALIDATED')
+JOIN   metered_actual_interval mai
+       ON  mai.series_id = mas.id
+       AND mai.interval_start = '2026-07-21 14:00:00'
+
+-- Note: DA trades have metered_series_key = NULL, so they
+-- fall back to the PROFILE volume_series (same query as above).
+-- In practice, the service handles this with a COALESCE:
+--   COALESCE(vr.metered_series_key, vr.volume_series_key)
+```
 
 **Why `quantity_ref` helps but doesn't replace `volume_reference`:**
-- `quantity_ref` is a denormalized shortcut to identify *which* volume series to read (saves one hop)
+- `quantity_ref` is a denormalized shortcut to identify *which* volume series to read (saves the `pl → vr` join for series lookup)
 - You still need `volume_reference` for the **multiplier** — so the join isn't fully avoided for interval-level queries
 - For aggregate/dashboard queries, `signed_quantity` alone is sufficient (zero joins)
 
@@ -1128,7 +1185,161 @@ When something changes (e.g., a new meter reading), we don't recalculate everyth
 
 ---
 
-## 13. One-Page Summary for Validation
+## 13. Beyond Power — How This Design Extends to Other Commodities
+
+The system is built for electricity today, but the core architecture works for **any commodity where multiple buyers or participants share a physical asset**. The `VolumeReference × multiplier` pattern doesn't know or care that it's slicing a wind farm — it just multiplies a volume by a fraction. Here's how the same pattern works for gas, oil, and agricultural commodities.
+
+### 13.1 The Universal Pattern
+
+```
+Shared physical thing (asset/facility/pool/contract)
+  │
+  ├── VolumeSeries: the total output/capacity/allocation
+  │
+  └── VolumeReference(s): one per participant, each with a multiplier
+         │
+         └── resolved_volume = series_interval.volume × multiplier
+```
+
+**This is identical to power.** The only things that change are the units, the time intervals, and the pricing formulas.
+
+### 13.2 Gas — Storage Withdrawal Rights
+
+```
+Storage facility "Rehden" (4,400 GWh working gas volume)
+  │
+  ├── VolumeSeries (type=FORECAST): hourly withdrawal/injection capacity forecast
+  │     2026-10-15 06:00–07:00 → 180 GWh/h (full facility)
+  │     2026-10-15 07:00–08:00 → 175 GWh/h
+  │     ... (gas-day runs 06:00–06:00, not midnight–midnight)
+  │
+  └── VolumeReference(s):
+         Trader A: 25% of facility → multiplier = 0.25
+         Trader B: 15% of facility → multiplier = 0.15
+         Trader C: 10% of facility → multiplier = 0.10
+```
+
+**Resolution (same code as power):**
+```
+Facility forecast for 08:00 = 175 GWh/h
+
+Trader A reads it: 175 × 0.25 = 43.75 GWh/h  (their withdrawal right)
+Trader B reads it: 175 × 0.15 = 26.25 GWh/h
+Trader C reads it: 175 × 0.10 = 17.50 GWh/h
+
+Same formula, same code path, same S6b cache — just different units.
+```
+
+**What changes vs power:**
+| What | Power | Gas |
+|---|---|---|
+| Time intervals | 15-min slots, midnight–midnight | Hourly or gas-day (06:00–06:00 CET) |
+| Units | MW / MWh | kWh/h / kWh (or therms) |
+| Delivery point | Bidding zone (DE_LU) | Virtual trading point (THE, TTF) |
+| Pricing | Collar + neg-price gate + HICP escalation | Basis differential + seasonal swing + take-or-pay floor |
+
+**What stays the same:** VolumeReference, multiplier, VolumeSeries, S6b cache, settlement cells, dependency index, position ledger, bitemporal audit — all unchanged.
+
+### 13.3 Oil — Consortium Lifting
+
+```
+Term contract "Bonny-Light-2027" (120,000 bbl/day for 12 months)
+  │
+  ├── VolumeSeries (type=PROFILE): monthly lifting schedule
+  │     Jan 2027 → 120,000 bbl/day
+  │     Feb 2027 → 115,000 bbl/day (planned maintenance)
+  │     ... (one interval per month or per cargo)
+  │
+  └── VolumeReference(s):
+         Participant A: 40% of contract → multiplier = 0.40
+         Participant B: 35%              → multiplier = 0.35
+         Participant C: 25%              → multiplier = 0.25
+```
+
+**Resolution (same code as power):**
+```
+Jan 2027 schedule = 120,000 bbl/day
+
+Participant A: 120,000 × 0.40 = 48,000 bbl/day  (their lifting entitlement)
+Participant B: 120,000 × 0.35 = 42,000 bbl/day
+Participant C: 120,000 × 0.25 = 30,000 bbl/day
+```
+
+**What changes vs power:**
+| What | Power | Oil |
+|---|---|---|
+| Time intervals | 15-min slots (35,000/year) | Monthly cargo windows (12/year) — much fewer |
+| Units | MW / MWh | bbl/day / bbl (or MT) |
+| Delivery point | Bidding zone (DE_LU) | Loading terminal (Bonny, Forcados) |
+| Pricing | DA auction + collar | Dated Brent + quality differential + freight + demurrage |
+
+### 13.4 Agriculture — Cooperative Pool
+
+```
+Cooperative contract "Wheat-Export-Q4-2027" (10,000 MT total)
+  │
+  ├── VolumeSeries (type=PROFILE): crop-month delivery allocation
+  │     Oct 2027 → 4,000 MT
+  │     Nov 2027 → 3,500 MT
+  │     Dec 2027 → 2,500 MT
+  │
+  └── VolumeReference(s):
+         Farm A: 15% of pool → multiplier = 0.15
+         Farm B: 20% of pool → multiplier = 0.20
+         Farm C: 30% of pool → multiplier = 0.30
+```
+
+**Resolution (same code as power):**
+```
+Oct 2027 allocation = 4,000 MT
+
+Farm A: 4,000 × 0.15 = 600 MT  (their delivery obligation)
+Farm B: 4,000 × 0.20 = 800 MT
+Farm C: 4,000 × 0.30 = 1,200 MT
+```
+
+**What changes vs power:**
+| What | Power | Ags |
+|---|---|---|
+| Time intervals | 15-min slots | Crop-month delivery windows |
+| Units | MW / MWh | MT/period / MT (or bushels) |
+| Delivery point | Bidding zone (DE_LU) | Warehouse / silo / port |
+| Pricing | DA auction + collar | CBOT/Euronext front-month + basis + grade premium/discount |
+
+### 13.5 What This Means for the Platform
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    COMMODITY-NEUTRAL CORE                       │
+│                    (unchanged across commodities)               │
+│                                                                 │
+│  Position Ledger (S1)      — same bitemporal, signed-qty model  │
+│  PriceExpression (S2)      — same tree structure, new operators │
+│  VolumeReference           — same multiplier × series pattern   │
+│  VolumeSeries              — same FORECAST/PROFILE distinction  │
+│  Settlement cells (S5a)    — same durable bitemporal measures   │
+│  Forward marks (S5b)       — same ephemeral current-state       │
+│  EOD struck marks (S5c)    — same frozen snapshots              │
+│  Slot Cache (S6)           — same netted materialization        │
+│  Trade Interval Cache(S6b) — same pre-multiplied per-trade cach │
+│  Dependency index (S8)     — same blast-radius optimization     │
+│                                                                 │
+├─────────────────────────────────────────────────────────────────┤
+│                    COMMODITY PLUG-INS                           │
+│                    (added per commodity, no core changes)       │
+│                                                                 │
+│  Power:  15-min grid, MW/MWh, peak/offpeak, cascade, DST        │
+│  Gas:    Gas-day calendar (06:00), kWh/h, swing/ToP, VTP        │
+│  Oil:    Monthly cargoes, bbl/day, quality diff, terminal       │
+│  Ags:    Crop-month windows, MT, grade premium, warehouse       │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**The key insight:** We built a power trading system, but what we actually built is a **shared-asset-slicing engine** that happens to be configured for power. The `volume × multiplier` pattern is the same whether you're slicing a wind farm's output, a gas storage facility's withdrawal rights, an oil consortium's lifting entitlements, or a farming cooperative's export pool. Zero core code changes — just new units, intervals, and pricing operators.
+
+---
+
+## 14. One-Page Summary for Validation
 
 Use this checklist to validate the design with team members:
 

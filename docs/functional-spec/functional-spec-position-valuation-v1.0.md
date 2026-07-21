@@ -94,7 +94,48 @@ This classification is the primary control preventing valuation-store explosion 
 
 ### 2.6 Commodity-neutral core, power plug-in
 
-**FR-013.** The Position Ledger, bitemporal machinery, delivery-point hierarchy, delivery ranges, PriceExpression, and the derived-measure layering are commodity-neutral. Power-specific machinery — dense interval grid, MW/MWh duality, peak/off-peak, cascading — is modeled as the power profile of the platform, kept out of the neutral core so that gas (offset gas-day, basis pricing) and bulk commodities (parcel/lot, grade, formula differentials) can be added as profiles without core migration. No speculative gas/oil structures are built now.
+**FR-013.** The Position Ledger, bitemporal machinery, delivery-point hierarchy, delivery ranges, PriceExpression, the derived-measure layering, and the unified `VolumeReference → VolumeSeries × multiplier` resolution (D-11) are commodity-neutral. Power-specific machinery — dense interval grid, MW/MWh duality, peak/off-peak, cascading — is modeled as the power profile of the platform, kept out of the neutral core so that gas (offset gas-day, basis pricing) and bulk commodities (parcel/lot, grade, formula differentials) can be added as profiles without core migration. No speculative gas/oil structures are built now.
+
+**FR-013a.** The `VolumeReference × multiplier` pattern is not power-specific — it models any scenario where multiple economic interests slice a shared physical asset or pool. The following commodity extensions demonstrate that the unified resolution pattern, VolumeReference, and S6b (trade interval cache) require **zero structural changes** to the core; only interval semantics, unit duality, and delivery-point types change:
+
+| Commodity | Shared asset | VolumeReference multiplier | Interval grain | Unit duality | PriceExpression extensions |
+|---|---|---|---|---|---|
+| **Power** (current) | Wind/solar farm | Trade's share of asset output (0.30) | 15-min / 5-min / 1-min | MW / MWh | Collar, neg-price gate, HICP escalation, FX |
+| **Gas** | Storage facility, pipeline receipt point | Withdrawal/injection right as fraction of facility capacity (0.25) | Gas-day (06:00–06:00 CET) or hourly | kWh/h / kWh (or therms) | Basis differential, seasonal swing, take-or-pay floor |
+| **Oil (crude/products)** | Loading terminal, refinery output | Consortium participant's share of term contract (0.40) | Monthly cargo windows or daily nominations | bbl/day / bbl (or MT) | Dated Brent + quality diff + freight + demurrage |
+| **Ags (grain, softs)** | Cooperative pool, warehouse receipt | Farmer/participant share of pool contract (0.15) | Crop-month delivery windows | MT/period / MT (or bushels) | CBOT/Euronext front-month + basis + grade premium/discount |
+
+**FR-013b.** Worked commodity extension examples (for illustration; not built now):
+
+**Gas — storage withdrawal rights:**
+A gas storage facility (e.g., "Rehden", 4,400 GWh working volume) is modeled as an asset. Its withdrawal capacity forecast is a `VolumeSeries(seriesType=FORECAST)`. Three traders hold withdrawal rights:
+
+- Trade T-9100: 25% of facility capacity → `VolumeReference(multiplier=0.25, volumeSeriesKey=FCST-REHDEN)`
+- Trade T-9200: 15% → `VolumeReference(multiplier=0.15, volumeSeriesKey=FCST-REHDEN)`
+- Resolution: `facility_forecast_interval.volume × 0.25` — identical code path to power PPAs
+
+Plug-in changes: MarketCalendar returns gas-day intervals (06:00–06:00 CET instead of midnight-midnight); `volume_unit` extends to `KWH_PER_HOUR`; DeliveryPoint hierarchy adds `VirtualTradingPoint` (e.g., THE/TTF). Core resolution, S6b cache, dependency index, settlement cells — all unchanged.
+
+**Oil — consortium lifting:**
+A term purchase contract ("Bonny-Light-2027", 120,000 bbl/day for 12 months) is modeled with a `VolumeSeries(seriesType=PROFILE)` containing monthly lifting allocations. Three consortium participants:
+
+- Participant A: 40% → `VolumeReference(multiplier=0.40)`
+- Participant B: 35% → `VolumeReference(multiplier=0.35)`
+- Participant C: 25% → `VolumeReference(multiplier=0.25)`
+- Resolution: `lifting_schedule_interval.volume × 0.40` — same pattern
+
+Plug-in changes: `volume_unit` extends to `BBL_PER_DAY` / `BBL`; intervals are monthly cargo windows (not 15-min slots); DeliveryPoint adds `LoadingTerminal`; PriceExpression adds differential + freight operators. Core unchanged.
+
+**Ags — cooperative pool:**
+A cooperative export contract ("Wheat-Export-Q4-2027", 10,000 MT) is modeled with a `VolumeSeries(seriesType=PROFILE)` containing crop-month allocations. Participating farms:
+
+- Farm A: 15% → `VolumeReference(multiplier=0.15)`
+- Farm B: 20% → `VolumeReference(multiplier=0.20)`
+- Resolution: `pool_allocation_interval.volume × 0.15` — same pattern
+
+Plug-in changes: `volume_unit` extends to `MT_PER_PERIOD` / `MT`; intervals are crop-month windows; DeliveryPoint adds `Warehouse` / `SiloPoint`; PriceExpression adds basis + grade quality adjustment operators. Core unchanged.
+
+**FR-013c.** The two cheap-now decisions that enable these future commodity profiles without core migration: (1) `price_expression_ref` instead of a scalar price column (PriceExpression tree is extensible with new operator types per commodity), (2) `VolumeReference` with `multiplier` instead of per-trade volume copies (the shared-asset-slicing pattern is universal). A third decision — polymorphic `DeliveryPoint` hierarchy (FR-022) — ensures delivery-location semantics extend without schema migration.
 
 ### 2.7 Reference deal (used in examples throughout)
 
@@ -151,10 +192,11 @@ The position/valuation model depends on four reference structures. Their interna
 | S5b | Forward/MtM marks | Measure (derived) | Position × atomic interval | None (current-state) | Dense over open future | **Ephemeral** (cache + overwrite) |
 | S5c | EOD struck marks | Measure (frozen projection) | Position × delivery-month bucket × business day | Uni-temporal (as-of strike) | Sparse | Durable, immutable |
 | S6 | Slot Cache | Measure (materialization) | (deliveryPoint × portfolio × positionType) × atomic interval | None (version-hashed current state) | Dense over hot window only | Rebuildable cache |
+| S6b | Trade Interval Cache | Measure (materialization, **optional**) | Trade-leg × atomic interval | None (version-hashed current state) | Dense over hot window, per trade | Rebuildable cache (opt-in) |
 | S7 | Rollup aggregates | Measure (materialization) | Aggregation level × period (hour/day/month, peak split) | None | Dense at coarse grain | Rebuildable |
 | S8 | Dependency index | Infrastructure | (input series → valuation cell) edges | None | Proportional to open exposure | Rebuildable |
 
-The dependency direction is strictly one-way: S1/S2 (+S3, S4 as inputs) ⇒ S5 ⇒ S6/S7. Any derived structure can be dropped and rebuilt from the structures to its left. The technical spec must preserve this rebuildability.
+The dependency direction is strictly one-way: S1/S2 (+S3, S4 as inputs) ⇒ S5 ⇒ S6/S6b/S7. Any derived structure can be dropped and rebuilt from the structures to its left. The technical spec must preserve this rebuildability.
 
 ---
 
@@ -285,9 +327,9 @@ The VolumeSeries module (Data Architecture V1.4/V1.5) owns operational volume la
 
 | Layer | Series example | Consumed by | Purpose | Availability |
 |---|---|---|---|---|
-| **CONTRACTUAL** | `VS-3312:CONTRACTUAL` | Ledger fan-out (§5), slot cache (§10) | Shape of the obligation for shaped/profiled deals — the MW per interval that the trade commits to deliver/receive. For flat-block deals this layer is absent; the ledger's fixed `quantity` suffices. | Available from trade booking; constant unless the trade is amended. |
-| **FORECAST** | `VS-3312:FORECAST` | Forward valuation (S5b, §9.3), EOD strike (S5c, §9.4) | Expected generation/consumption for **undelivered** intervals — the volume assumption behind forward marks. | Available from asset onboarding; updated periodically (weather model refresh, re-forecast). |
-| **METERED_ACTUAL** | `VS-3312:METERED_ACTUAL` | Settlement valuation (S5a, §9.2) | Delivered volume as measured — the volume fact behind settlement cells. Progresses through provisional→validated states. | Arrives D+1 or later; superseded as validated data replaces provisional. |
+| **CONTRACTUAL** | `VS-3312:CONTRACTUAL` | Ledger fan-out (§5), slot cache (§10), trade interval cache (§10.4) | Shape of the obligation for shaped/profiled deals — the MW per interval that the trade commits to deliver/receive. For flat-block deals this layer is absent; the ledger's fixed `quantity` suffices. | Available from trade booking; constant unless the trade is amended. |
+| **FORECAST** | `VS-3312:FORECAST` | Forward valuation (S5b, §9.3), EOD strike (S5c, §9.4), trade interval cache (§10.4) | Expected generation/consumption for **undelivered** intervals — the volume assumption behind forward marks. | Available from asset onboarding; updated periodically (weather model refresh, re-forecast). |
+| **METERED_ACTUAL** | `VS-3312:METERED_ACTUAL` | Settlement valuation (S5a, §9.2), trade interval cache (§10.4) | Delivered volume as measured — the volume fact behind settlement cells. Progresses through provisional→validated states. | Arrives D+1 or later; superseded as validated data replaces provisional. |
 
 **FR-051a.** The position ledger references a volume series by `quantity_ref` (e.g., `VS-3312`). The valuation layer resolves which **layer** to read based on valuation type and interval delivery status:
 
@@ -482,6 +524,20 @@ For pay-as-produced deals (e.g., wind PPAs) where no fixed contractual profile e
 - Finer-stored → coarser-view (roll-up): MW time-weighted-averages (weights = interval minutes; mandatory across DST-affected spans and mixed grains); MWh sums.
 - Heterogeneous native granularities in one view first land on the atomic grid, then net — no pairwise special-casing.
 
+### 10.4 S6b — Trade Interval Cache (optional per-trade volume breakdown)
+
+**FR-086.** The Trade Interval Cache is an **optional** rebuildable materialization that stores pre-multiplied resolved volume per trade-leg per atomic interval. Where S6 (Slot Cache) nets across trades to show aggregate portfolio position, S6b retains the per-trade breakdown for portfolio-detail dashboards.
+
+**FR-086a.** Grain: (trade_leg_id × atomic interval). Content per cell: `resolved_mw` (= `volume_interval.volume × volume_reference.multiplier`), `resolved_mwh` (= `volume_interval.energy × volume_reference.multiplier`), `multiplier` (stored for auditability), `series_key` (which volume series was used), `version_hash` (staleness detection).
+
+**FR-086b.** S6b is populated by the same event-driven path as S6: `VolumePublished` events trigger rebuild of affected trade intervals; `VolumeReference` changes (multiplier update, new allocation) trigger rebuild of that trade-leg's intervals; trade amendments trigger rebuild of affected intervals. All rebuilds are idempotent (re-derive from source per FR-106).
+
+**FR-086c.** Without S6b, per-trade interval-level volume requires a runtime join: `position_ledger → volume_reference → volume_interval`, applying the multiplier at query time. This is acceptable for small result sets (a few trades × one day = ~500 rows) but degrades for portfolio-detail dashboards showing many trades across extended periods (200 trades × 2,976 intervals = ~595K rows joined and multiplied on the fly). S6b reduces this to a single-table indexed scan.
+
+**FR-086d.** S6b is explicitly **not source of truth**: entirely rebuildable from `volume_reference` + `volume_interval`. Systems that do not require per-trade dashboards may omit it. Sizing: `(P + T×Bf) × hot_months × D × I` = 5,000 × 2 × 30.4 × 96 ≈ **29M rows** in the hot window (2 months).
+
+**FR-086e.** Commodity neutrality: S6b's resolution pattern (`volume × multiplier → resolved quantity`) is unit-agnostic. For non-power commodities, the columns generalize: `resolved_mw/mwh` → `resolved_qty/energy` (or `resolved_rate/quantity` depending on the commodity's rate/amount duality — FR-035 semantics apply). The index key (`trade_leg_id, interval_start`) and the rebuild triggers are identical across commodities.
+
 ---
 
 ## 11. S7 — Rollup Aggregates
@@ -606,7 +662,11 @@ Every hot query is (one tenant) × (pruned delivery months) × (current-state fi
 
 Hot window 60d × 96 QH = 5,760 cells per live (point, portfolio, type) combo; a tenant with low-hundreds of combos ⇒ **low millions of cells**, rebuildable. Granularity-floor sensitivity: at a 5-min floor the same window is 17,280 cells/combo (×3); at 1-min, 86,400 (×15) — the hot-window length is the control knob and must be configurable per market (FR-083).
 
-### 15.7 Dependency index (S8)
+### 15.7 Trade interval cache (S6b, optional)
+
+Rows = (total trade-legs) × hot-window intervals. Reference fleet: (P + T×Bf) × hot_months × D × I = 5,000 × 2 × 30.4 × 96 ≈ **29M rows** in the 2-month hot window. Comparable to the slot cache in magnitude but keyed per trade-leg rather than per (point, portfolio, type). At 5-min granularity: ×3 → ~87M rows (still within indexed-scan viability). The cache is entirely optional — systems without per-trade dashboards omit it with no functional loss.
+
+### 15.8 Dependency index (S8)
 
 Edges ≈ open (position × interval) cells × ~4 leaves, bounded by FR-104 pruning to open exposure — same order as the open slice of S5, not lifetime history.
 
@@ -632,6 +692,8 @@ The technical spec inherits the platform's technology decisions. These are not r
 | D-8 | Netting is projection policy; default cache nets by (point, portfolio, type); drill-down mandatory |
 | D-9 | Shared monthly partitions with tenant as leading isolation key; S5c on strike-month axis |
 | D-10 | All interval structure via MarketCalendar; no timestamp arithmetic anywhere |
+| D-11 | Unified volume resolution: every trade via VolumeReference → VolumeSeries × multiplier; fixed-profile = degenerate case (multiplier=1.0, per-trade PROFILE series); no category branching in code |
+| D-12 | S6b trade_interval_cache: optional, rebuildable, event-driven per-trade pre-multiplied volume cache; not source of truth; commodity-neutral (resolved_qty/energy columns generalize across power/gas/oil/ags); indexed by (trade_leg_id, interval_start) |
 
 ### 16.2 Open items to resolve in (or before) the technical spec
 
@@ -666,6 +728,7 @@ The technical spec inherits the platform's technology decisions. These are not r
 | Hot window | The date range over which the slot cache is densely materialized |
 | Input version set | The stamped versions of every series + expression + volume used to resolve a cell |
 | Struck mark | The immutable official EOD MtM per position × month bucket |
+| Trade Interval Cache (S6b) | Optional rebuildable per-trade pre-multiplied volume cache (resolved_mw = volume × multiplier); commodity-neutral; event-driven rebuild on VolumePublished / reference change (§10.4) |
 | Supersession | Version replacement by closing knowledge time and appending, never editing |
 | VOLUME_MISSING | Data-quality flag on a slot-cache or forward-mark cell indicating no forecast volume was available for the interval |
 | VolumeSuperseded | Event emitted by the VolumeSeries module when a layer's data is replaced for a range of intervals (§7.5) |

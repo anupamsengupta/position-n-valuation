@@ -71,5 +71,3 @@ desktop.ini
 *.key
 credentials.json
 
-# === Claude Code ===
-.claude/
