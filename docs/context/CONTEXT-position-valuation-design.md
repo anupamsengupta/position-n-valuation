@@ -82,7 +82,7 @@ Both, same derivation logic, two cadences. **Event path**: incremental, dependen
 | S5b | Forward marks | position × atomic interval | EPHEMERAL current-state; zero durable rows |
 | S5c | EOD struck marks | position × month-bucket × business day | durable immutable frozen projection |
 | S6 | Slot Cache | (point×portfolio×type) × atomic interval | rebuildable netted materialization; hot window only (default T+60d); net_mw + net_mwh + is_peak + version_hash |
-| S6b | Trade Interval Cache | trade-leg × atomic interval | **optional** rebuildable per-trade pre-multiplied volume (resolved_mw/mwh); event-driven rebuild on VolumeSuperseded / reference change; serves portfolio-detail dashboards; ~29M rows in 2-month hot window |
+| S6b | Trade Interval Cache | trade-leg × atomic interval | **optional** rebuildable per-trade pre-multiplied volume (resolved_qty/energy — commodity-neutral per D-12); event-driven rebuild on VolumeSuperseded / reference change; serves portfolio-detail dashboards; ~29M rows in 2-month hot window |
 | S7 | Rollups | hour/day/month × peak split | rebuildable; serves far-dated + reporting |
 | S8 | Dependency index | input-series → cell edges | with active-flag; restatement blast-radius; pruned to open exposure |
 
@@ -140,7 +140,7 @@ The `VolumeReference × multiplier` resolution and the S6b trade-interval cache 
 
 | Commodity | VolumeSeries interval | Multiplier use case | Unit duality | S6b resolved unit |
 |---|---|---|---|---|
-| **Power (current)** | 15-min / 5-min / 1-min slots | PPA: trade's share of wind/solar asset (0.30) | MW / MWh | resolved_mw, resolved_mwh |
+| **Power (current)** | 15-min / 5-min / 1-min slots | PPA: trade's share of wind/solar asset (0.30) | MW / MWh | resolved_qty, resolved_energy |
 | **Gas** | Gas-day (06:00–06:00 CET) or hourly | Storage: withdrawal rights as fraction of facility capacity (0.25) | kWh/h / kWh (or therms) | resolved_kwhh, resolved_kwh |
 | **Oil (crude/products)** | Monthly delivery windows or cargo lots | Consortium lift: participant's share of term contract (0.40) | bbl/day / bbl (or MT) | resolved_bbl_day, resolved_bbl |
 | **Ags (grain, softs)** | Crop-month delivery windows | Pool allocation: farmer's pro-rata share of cooperative contract (0.15) | MT/period / MT (or bushels) | resolved_mt_period, resolved_mt |
@@ -261,4 +261,4 @@ Java 21 / Spring Boot 3.3 / Aurora PostgreSQL 16 (NO TimescaleDB — invalid on 
 
 ---
 
-**Status:** Functional spec v1.0 in review (updated: D-11/D-12, FR-086a–e for S6b, §15.7 sizing, glossary). Volume Series spec V3.0 (unified model) complete. Technical spec NOT yet authored — explicitly deferred until functional review completes. Implementation prompts should cite `functional-spec-position-valuation-v1.0.md` FR/D numbers, `VOLUME_SERIES_SPEC-V3_0.md` for volume model, and this file for rationale.
+**Status:** Functional spec v1.0 in review (updated: D-11/D-12, FR-086a–e for S6b, §15.7 sizing, glossary). Volume Series spec V3.0 (unified model) complete. Technical data architecture V2.0 authored (companion to V3.0 spec). Implementation prompts should cite `functional-spec-position-valuation-v1.0.md` FR/D numbers, `VOLUME_SERIES_SPEC-V3_0.md` for volume model, `VOLUME_SERIES_DATA_ARCHITECTURE-V2_0.md` for persistence, and this file for rationale.

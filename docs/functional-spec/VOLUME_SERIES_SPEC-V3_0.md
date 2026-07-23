@@ -325,7 +325,7 @@ The unified volume series aggregate representing either an asset's forecast outp
 
 | Field | Type | Description |
 |---|---|---|
-| `id` | `UUID` | Primary key |
+| `id` | `UUID` | Primary key (see §3.3.8 Implementation Note: ID Strategy) |
 | `seriesKey` | `String` | Stable external key (e.g., `FCST-WP-NORDSEE` or `VS-T5500-1`) — survives amendments |
 | `seriesType` | `SeriesType` | FORECAST or PROFILE |
 | `assetId` | `String` (nullable) | FK to asset — set for FORECAST, null for PROFILE |
@@ -366,6 +366,8 @@ Replaces both `ForecastInterval` and `ContractualInterval` from the previous mod
 | `energy` | `BigDecimal` | Derived MWh (see energy calculation section 5.5) |
 | `status` | `IntervalStatus` | Lifecycle status |
 | `chunkMonth` | `YearMonth` (nullable) | Which materialization chunk produced this (set for PROFILE rolling-horizon) |
+| `version` | `int` | Forward-link append-only version (starts at 1; incremented on supersession) |
+| `supersedes_id` | `UUID` (nullable) | Points to the interval this version replaces (null for first version) |
 
 #### 3.3.3 VolumeReference (UNIVERSAL — all trades)
 
@@ -513,6 +515,9 @@ What was actually delivered — metered data from TSO. Always at market base gra
 | `intervalEnd` | `ZonedDateTime` | End (exclusive) |
 | `volume` | `BigDecimal` | Metered volume (MW or MWh) |
 | `energy` | `BigDecimal` | Derived MWh |
+| `qualityState` | `QualityState` | PROVISIONAL, VALIDATED, or ESTIMATED |
+| `version` | `int` | Forward-link append-only version (starts at 1) |
+| `supersedes_id` | `UUID` (nullable) | Points to the interval this version replaces (null for first version) |
 
 #### 3.3.6 CompactionView (Optional Read Model)
 
@@ -546,7 +551,7 @@ A precomputed coarsened view of any series, created on user request. Not a sourc
 | Field | Type | Description |
 |---|---|---|
 | `id` | `UUID` | Primary key |
-| `referenceId` | `UUID` | FK to parent VolumeReference (or VolumeSeries for PROFILE) |
+| `referenceId` | `UUID` | FK to parent VolumeReference |
 | `baseVolume` | `BigDecimal` | Base volume in MW (for flat profiles) |
 | `minVolume` | `BigDecimal` | Tolerance band floor (MW) |
 | `maxVolume` | `BigDecimal` | Tolerance band cap (MW) |
@@ -580,6 +585,15 @@ A precomputed coarsened view of any series, created on user request. Not a sourc
 | `absoluteAdj` | `BigDecimal` | Additive MW adjustment |
 
 Application order: `adjustedVolume = (baseVolume x multiplier) + absoluteAdj`.
+
+### 3.5 Implementation Note: ID Strategy (Dual-Key Pattern)
+
+This spec uses `UUID` for all entity IDs at the domain model level. The persistence layer (`VOLUME_SERIES_DATA_ARCHITECTURE-V2_0.md`) uses a **dual-key pattern**:
+
+- **Internal PK**: `BIGINT` with sequence-based generation (`allocationSize=50`) — used for all foreign keys, joins, and indexes. Provides optimal B-tree performance and smaller index footprint.
+- **External identifier**: Separate `_uuid UUID NOT NULL UNIQUE` column — used for API exposure, cross-service references, and idempotency checks. Never used in JOINs.
+
+This is a persistence optimization transparent to the domain model. All domain-level references use the logical UUID; the persistence layer maps internally.
 
 ---
 

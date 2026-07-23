@@ -165,7 +165,7 @@ We never automatically crunch hourly data into 15-minute data, or vice versa. If
 
 ### 3.4 Handling Long Contracts (Rolling Window)
 
-A 10-year solar contract has ~3.5 million time slots. We don't create them all at once. Instead:
+A 10-year solar contract has ~3.5 million time slots (10 years × 365 days × 96 quarter-hours/day). A single year has ~350K slots. We don't create them all at once. Instead:
 
 1. Create the next 3 months of slots immediately
 2. Each month, create the next month's slots
@@ -199,7 +199,7 @@ Each series type tracks data quality:
 |---|---|---|
 | PROFILE (fixed trades) | EFFECTIVE → AMENDED | "This is the active deal" vs "This was superseded by a change" |
 | FORECAST (asset-linked) | CURRENT → SUPERSEDED | "This is the latest forecast" vs "A newer one replaced it" |
-| Metered Actual | PROVISIONAL → VALIDATED → ESTIMATED | "Rough reading (D+1)" → "Confirmed by the grid operator (D+7 to D+30)" → "Estimated by TSO when actual reading unavailable" |
+| Metered Actual | PROVISIONAL → VALIDATED; ESTIMATED (parallel) | "Rough reading (D+1)" → "Confirmed by the grid operator (D+7 to D+30)"; ESTIMATED is a **peer/substitute** state used when the TSO provides a gap-fill estimate instead of an actual reading — it is not a step after VALIDATED |
 
 ---
 
@@ -215,11 +215,27 @@ The Position Ledger is the **legal record of our trading obligations**. For each
 - At what delivery point (which part of the grid)
 - In which portfolio/book
 
-**Critical property: Full audit trail (bitemporality)**
+### Critical property: Full audit trail (bitemporality)
 
 The ledger answers not just "what's our position now?" but "what did we THINK our position was last Tuesday at 3pm?" This is required by European regulators (REMIT, MiFID II).
 
 Example: If we correct a trade on Wednesday, we can still reconstruct what we believed on Monday — because the old version is never deleted, only superseded.
+
+### Why bitemporal, not denormalized snapshots?
+
+An alternative design would store a flat snapshot of every position × interval × value for each point in time — like taking a photo of the entire trading book every day. Here's why that doesn't work:
+
+| Concern | Bitemporal ledger | Denormalized snapshots |
+|---|---|---|
+| **Storage per deal** | ~480–1,200 rows (10-year PPA) | ~12.8 billion rows (daily snapshots × 350K intervals/year × 10 years) |
+| **"What did we know on date K?"** | Two-axis filter on existing rows | Requires a complete copy at every possible audit point |
+| **Backdated correction** | Append a new version, close the old one | Either rewrite all historical snapshots (losing the original fact) or store both versions in every snapshot (reinventing bitemporality, but worse) |
+| **Forward marks** | Ephemeral — zero durable rows | O(10⁹) rows per deal (every curve tick × every open interval) |
+| **Fast current-state grid** | Slot cache + trade interval cache (rebuildable) | Native — but at massive storage cost |
+
+The key insight: the ledger stores **facts** (what changed and when we knew it), not **views** (what the world looked like at time T). Facts are compact — a 10-year deal has ~24 ledger rows per year, multiplied by an amendment factor of 2–5×. Views are redundant — every snapshot duplicates all unchanged positions.
+
+Where snapshot-like access is needed (the trader's grid, the EOD risk report), the system provides **rebuildable caches** (S6 slot cache, S6b trade interval cache) and one **deliberately frozen snapshot** (S5c EOD struck mark). These give the same fast reads without making redundant copies the source of truth.
 
 ### 4.2 Price Expressions (How to Calculate the Price)
 
@@ -244,6 +260,453 @@ The system stores the **recipe** (the formula), not pre-calculated prices. Price
 | **End-of-Day struck mark** | "Official daily snapshot of our risk exposure." | Permanently, per month bucket per business day | Never (it's a frozen snapshot) |
 
 **Why this split matters:** Without it, storing live marks for every 15-minute slot for every trade would create billions of rows. By keeping forward marks ephemeral (just the latest number), we avoid a storage explosion.
+
+**Why volume intervals are NOT bitemporal (and how to see past values)**
+
+The position ledger uses full bitemporality (two time axes — see §4.1 above) because trade amendments are frequent, often backdated, and must be audit-reconstructable at any point. Volume intervals have a simpler lifecycle, so they use a lighter versioning model:
+
+| Series type | How it versions | "What was the value 1 month ago?" |
+|---|---|---|
+| **PROFILE** (DA/bilateral) | **Immutable** — intervals never change after creation | Look at the same row — it hasn't changed. If the trade was amended, a new series version was created alongside the old one (the old intervals still exist). Query by `transaction_time` on the series header. |
+| **FORECAST** (asset forecasts) | **Whole-series replacement** — each re-forecast creates a new version | Find the series version whose `transaction_time` is before your target date. That version's intervals are the answer. |
+| **METERED_ACTUAL** (meter data) | **Forward-link chain** — corrections append new interval rows with `supersedes_id` pointing to the old | Follow the chain backward from the current interval to the version that existed before your target date. |
+
+The key insight: versioning happens at the **series header level** (which version was active at time T?), not at the interval level (no `known_from/known_to` on each 15-minute row). A 10-year deal has maybe 5–10 series versions but ~3.5 million intervals — adding bitemporal columns to every interval would multiply storage by the amendment factor for no benefit, since the series header already tells you which version was active when.
+
+When a settlement cell needs to be reproduced ("what inputs did we use?"), it records the volume `version_id` in its input-version-set. The position ledger's bitemporality and the volume series' version chain work together — two mechanisms, each suited to its lifecycle.
+
+**Real-world PPA amendment frequency (why series-level versioning is sufficient)**
+
+A typical 7–15 year PPA sees 5–15 amendments over its entire life — far fewer than might be assumed:
+
+| Amendment type | How often (over contract life) | Affects volume? |
+|---|---|---|
+| Counterparty / admin corrections | 2–5× | No — ledger + expression only |
+| Allocation changes (multiplier ramp-up, partial unwind) | 1–3× | Yes — new VolumeReference, not new intervals |
+| Price expression amendments (cap/floor, index rebasing) | 1–2× | No — expression only |
+| Delivery window changes (extension, early termination) | 0–1× | Yes — new series version |
+| Novation (counterparty M&A, credit event) | 0–1× | No — ledger only |
+| Force majeure / regulatory | 0–1× | Possibly — new series version |
+
+Most amendments (counterparty fixes, price changes) **don't touch volume at all**. Of those that do, allocation changes update the `VolumeReference.multiplier` — the underlying intervals stay the same. Only delivery window changes and trade restructurings create new series versions with new intervals.
+
+This means a 10-year PPA realistically has **2–3 volume series versions**, not dozens. The storage math:
+
+| Approach | Rows for a 10-year PPA |
+|---|---|
+| Series-version chain (current design) | 3 versions × 3.5M intervals = **~10.5M rows** (only latest queried on hot path) |
+| Interval-level bitemporality | 3.5M intervals × 4 extra timestamp columns × 3 versions = **same row count but 30% wider rows**, with complex query filters on every read |
+
+Series-level versioning gives the same audit capability with simpler queries, smaller rows, and no overhead on the hot-path reads that happen thousands of times per second.
+
+### Worked example: 15-year wind PPA with 12 amendments — full row-count calculation**
+
+Reference deal: 15-year PPA on asset WP-NORDSEE, 30% allocation, 15-min granularity, delivery 2026–2041.
+
+*Step 1: Base interval count*
+
+```
+Intervals per year = 365 days × 96 intervals/day     = 35,040   (normal year)
+                     366 days × 96 intervals/day     = 35,136   (leap year)
+DST adjustment:      +4 intervals (autumn) −4 (spring) = net 0/year
+
+15 years (2026–2041, including leap years 2028/2032/2036/2040):
+  11 normal years × 35,040  = 385,440
+   4 leap years   × 35,136  =  140,544
+                    Total   =  525,984 intervals ≈ 526K per series version
+```
+
+*Step 2: Which amendments create new volume series versions?*
+
+Assume 12 amendments over 15 years (middle of the 8–15 range):
+
+```
+Amendment timeline                              Volume series version?
+─────────────────────────────────────────────── ─────────────────────
+Year 1:  Counterparty EIC code correction       No  (ledger only)
+Year 2:  Multiplier ramp-up 0.20 → 0.30        No  (VolumeReference only — same intervals)
+Year 3:  Price cap renegotiated to 92 EUR       No  (expression only)
+Year 4:  Portfolio reassignment                 No  (ledger only)
+Year 5:  Grid connection delay → delivery       YES — new PROFILE version (v2)
+         start shifts 6 months forward               ~509K intervals (15.5yr→14.5yr remaining)
+Year 6:  Partial unwind of 10% allocation       No  (new VolumeReference with multiplier 0.20,
+                                                     effectiveTo shortened — same intervals)
+Year 8:  Novation to new counterparty (M&A)     No  (ledger only)
+Year 9:  HICP index base year rebased           No  (expression only)
+Year 10: Delivery extended 1 year (to 2042)     YES — new PROFILE version (v3)
+                                                     ~561K intervals (adds ~35K for extra year)
+Year 11: Price floor removed                    No  (expression only)
+Year 13: Force majeure curtails last 2 years    YES — new PROFILE version (v4)
+                                                     ~491K intervals (delivery_end pulled back)
+Year 14: Counterparty legal entity rename       No  (ledger only)
+```
+
+Result: **12 amendments → only 3 create new PROFILE series versions**
+
+*Step 3: PROFILE interval row count (per trade)*
+
+```
+Version 1 (original, years 1–5):     526K intervals  (quality_state = AMENDED after v2)
+Version 2 (grid delay, years 5–10):  509K intervals  (quality_state = AMENDED after v3)
+Version 3 (extension, years 10–13):  561K intervals  (quality_state = AMENDED after v4)
+Version 4 (curtailment, years 13+):  491K intervals  (quality_state = EFFECTIVE — current)
+                                     ─────
+                              Total: ~2.09M rows in volume_interval table
+```
+
+Only version 4 (491K rows) is queried on the hot path. Versions 1–3 are retained for audit but never touched by live queries.
+
+*Step 4: FORECAST series (per asset — shared across all trades on WP-NORDSEE)*
+
+The FORECAST series is independent of trade amendments. It's driven by weather model refreshes (NWP — Numerical Weather Prediction). The refresh cadence depends on asset type and time horizon:
+
+```
+                        Solar asset              Wind asset
+                        ───────────              ──────────
+Near-term (M+0…M+2):   Daily (satellite/NWP)    Daily–weekly (NWP model runs)
+Medium-term (M+3…M+12):Weekly–monthly (P50/P75) Monthly (calibrated yield)
+Far-term (M+13+):      Quarterly (TMY-based)    Quarterly (TMY-based)
+
+The CTRM does NOT store every intraday NWP run. It stores the
+"best-available generation forecast for forward valuation" — typically
+the latest day-ahead or week-ahead forecast that the asset operator
+publishes into the system.
+```
+
+**Solar worst-case calculation (daily near-term refresh):**
+
+```
+Near-term (3 months × 15 years):
+  Daily refresh × 3 months materialized = 365 versions/year
+  But: only the near-term window triggers daily refreshes.
+  Near-term intervals per version: ~3 months × 30.4 × 96 = ~8,755
+
+Medium-term (9 months × 15 years):
+  Monthly refresh = 12 versions/year
+  Each covers a 9-month window but only the CHANGED intervals
+  are re-materialized (partial supersession, not full replacement).
+  Medium intervals per version: ~9 × 30.4 × 96 = ~26,266
+  However: partial supersession means ~30% of intervals change
+  per refresh → ~7,880 net new rows per version
+
+Far-term (remaining years):
+  Quarterly refresh = 4 versions/year
+  Intervals per version: remainder of delivery window
+  At far dates, rolling materialization means few intervals
+  are actually materialized. ~2,000 per version.
+
+Blended annual version count:
+  Near:   365 versions × 8,755 intervals  = ~3.20M/year
+  Medium: 12  versions × 7,880 intervals  = ~0.09M/year
+  Far:    4   versions × 2,000 intervals  = ~0.01M/year
+                                    Total  = ~3.30M/year
+
+Over 15 years: ~3.30M × 15 = ~49.5M rows (SOLAR WORST CASE)
+```
+
+**Wind realistic calculation (weekly near-term refresh):**
+
+```
+Near:   52 versions/year × 8,755 intervals = ~0.46M/year
+Medium: 12 versions/year × 7,880 intervals = ~0.09M/year
+Far:     4 versions/year × 2,000 intervals = ~0.01M/year
+                                      Total = ~0.56M/year
+
+Over 15 years: ~0.56M × 15 = ~8.4M rows (WIND TYPICAL)
+```
+
+Only the **latest version's** intervals are queried for forward marks. Old versions are SUPERSEDED and retained for audit. Crucially, the forecast is shared by ALL trade-legs on this asset — not duplicated per trade. If 5 PPAs share one solar asset, the 49.5M rows serve all 5 trades.
+
+*Step 5: METERED_ACTUAL intervals (per asset — accumulates progressively)*
+
+Meter data arrives after delivery, not all at once:
+
+```
+Years with metered data:    Assume 10 years delivered so far (years 1–10 of 15)
+Intervals per year:         ~35,040
+Quality transitions:        Most intervals get v1 (PROVISIONAL) + v2 (VALIDATED)
+                           ~5% get a v3 (ESTIMATED gap-fill or late correction)
+Average version factor:     ~2.05 per interval
+
+Total METERED_ACTUAL:       10 × 35,040 × 2.05 = ~718K rows
+```
+
+*Step 6: Full row count for this deal*
+
+```
+Layer                   Table                         Rows        Notes
+──────────────────────  ─────────────────────────── ──────────  ─────────────────────────
+PROFILE intervals       volume_interval               2.09M     4 versions; only latest queried
+FORECAST intervals      volume_interval              8.4–49.5M  Wind (weekly) to solar (daily);
+  (per asset, shared)                                            shared across all trades on asset
+METERED_ACTUAL          metered_actual_interval        0.72M     Progressive; shared across trades
+Series headers          volume_series                      4     One per PROFILE version
+Series headers          volume_series (FORECAST)     840–5,475   Wind (weekly) to solar (daily)
+Series headers          metered_actual_volume_series     ~20     One per meter batch version
+VolumeReference         volume_reference                 2–3     Original + partial unwind
+Position ledger         (separate module)               ~720     180 months × ~4× amendment factor
+                                                    ──────────
+                                        Total:  11.2–52.3M rows (intervals only)
+
+Solar worst case dominates. But: the FORECAST rows are PER ASSET, not per
+trade. 5 PPAs on the same solar asset share the 49.5M FORECAST rows.
+Per-trade exclusive storage is only ~2.09M (PROFILE) + share of FORECAST.
+```
+
+*Step 7: What if we had used interval-level bitemporality instead?*
+
+```
+Solar worst case: ~52.3M interval rows, with bitemporality:
+  + 4 extra TIMESTAMPTZ columns per row (valid_from, valid_to, known_from, known_to)
+  + 32 bytes × 52.3M = ~1.67 GB additional raw storage (per asset)
+  + Composite index on (tenant_id, series_key, interval_start, known_from, known_to)
+    adds ~100 bytes per row = ~5.23 GB additional index storage
+  + Every hot-path query gains:  AND known_from <= :asOf AND known_to > :asOf
+    — an extra range filter on the highest-volume read path
+
+Cost of bitemporality:  ~6.9 GB extra storage per asset + query complexity
+Benefit:                Zero — series-header transaction_time already answers
+                        "which version was active at time T?"
+
+For 200 tenants × ~5 solar assets each = 1,000 assets:
+  6.9 GB × 1,000 = ~6.9 TB of unnecessary index/column overhead
+```
+
+The series-version chain achieves the same audit capability at zero additional per-row cost. The high FORECAST version count for solar assets makes this decision even more impactful than for wind.
+
+*Step 8: What if we had used denormalized position snapshots instead?*
+
+The most common alternative to bitemporality is a **position snapshot** — a flat table storing `(trade, interval, position_mw, volume, price, value, snapshot_date)` for every interval at every observation point. Think of it as "taking a photograph of the entire trading book" at regular intervals.
+
+**What triggers a new snapshot?**
+
+In a snapshot design, you must re-snapshot the full interval set whenever ANY input changes:
+
+```
+Trigger                         Frequency (solar PPA, 15yr)
+──────────────────────────────  ──────────────────────────────
+Trade amendment                 12 over contract life
+Forecast refresh (solar)        Daily → 5,475 over 15 years
+Meter data arrival              Daily (delivered periods) → ~3,650
+Price curve tick (DA/forward)   Daily EOD at minimum → 5,475
+                                ─────────────────────────────
+Total snapshot events:          ~14,600 (many overlap on the same day)
+De-duplicated to daily EOD:     ~5,475 unique snapshot days
+```
+
+**How many intervals per snapshot?**
+
+At any given snapshot point, the deal has ~526K intervals spanning its full delivery window. Each snapshot must capture the resolved position for every interval:
+
+```
+Snapshot row = (trade_leg_id, interval_start, interval_end,
+               position_mw, resolved_volume, multiplier,
+               price, settlement_value, forward_mark_value,
+               snapshot_date)
+
+Rows per snapshot:              ~526K (full delivery window)
+Snapshots over 15 years:        5,475 (daily EOD)
+                                ──────
+Rows per trade:                 526K × 5,475 = ~2.88 BILLION rows
+```
+
+**Platform-scale comparison (200 tenants × 20 PPA trades each = 4,000 trades):**
+
+```
+Approach                    Per trade     Per asset      Platform total
+──────────────────────────  ───────────   ────────────   ─────────────────
+CURRENT DESIGN
+  Position ledger (S1)      720 rows      —              2.88M rows
+  PROFILE intervals         2.09M         —              8.36B rows
+  FORECAST intervals        (shared) →    49.5M          49.5B rows (1K assets)
+  METERED_ACTUAL            (shared) →    718K           718M rows (1K assets)
+  S6b trade interval cache  ~500K         —              2.0B rows (rebuildable)
+                            ─────────     ────────────   ─────────────────
+  Total:                    ~2.8M/trade   ~50.2M/asset   ~60.8B rows
+
+DENORMALIZED SNAPSHOTS
+  Position+interval snapshot 2.88B/trade  —              11.5 TRILLION rows
+                            ─────────     ────────────   ─────────────────
+  Ratio:                    ~1,029×                      ~189×
+```
+
+**Why the explosion happens:**
+
+The snapshot approach has a fundamental problem: it **multiplies the number of intervals by the number of observation points**. In the current design:
+
+1. **Position ledger** is sparse (~24 rows/year) and versioned only on amendment (~12 over 15 years) → ~720 rows
+2. **Volume intervals** are versioned at the series level (only 2–4 versions over 15 years for PROFILE) → ~2.09M rows
+3. **Forecast changes** create new series versions but the old intervals stay — they're not duplicated into every trade → shared 49.5M rows across all trades on the asset
+
+In the snapshot approach, a daily forecast refresh forces a re-snapshot of 526K intervals × 4,000 trades that reference forecasts. That's 2.1 billion new rows per day just from forecast updates.
+
+```
+Daily write load comparison:
+  Current:    ~8,755 new FORECAST intervals (one series version, shared)
+  Snapshots:  526K intervals × 4,000 trades = ~2.1 BILLION rows/day
+
+Storage after 1 year:
+  Current:    ~3.3M FORECAST rows (solar asset) + ~2.09M PROFILE (per trade)
+  Snapshots:  365 days × 526K × 4,000 trades = ~769 BILLION rows
+
+Storage cost (Aurora @ $0.10/GB-month, ~200 bytes/row):
+  Current:    ~1.1 GB → ~$0.11/month
+  Snapshots:  ~143 TB → ~$14,300/month
+```
+
+**What you lose beyond storage:**
+
+- **Query complexity:** "What was the position on July 1?" requires scanning the snapshot for that date — O(intervals) per query. The bitemporal ledger answers with O(1) version lookup.
+- **Write amplification:** Every forecast update writes 526K × N_trades rows. The current design writes ~8,755 rows (one series version).
+- **No sharing:** Each trade gets its own copy of the forecast × multiplier result. The current design stores the forecast once per asset and applies the multiplier at read time.
+- **Backdated corrections:** Rewriting historical snapshots corrupts the audit trail. The bitemporal ledger appends a new version without touching old rows.
+
+**Expected query performance comparison (structural analysis — no production data exists yet)**
+
+There are no benchmarks for this system (it's in design phase). The numbers below are **structural estimates** based on PostgreSQL B-tree index lookup characteristics on Aurora, not measured timings. They illustrate the architectural difference, not a performance guarantee.
+
+```
+Query: "What is trade T-7788's resolved volume for Aug 15, 2026?"
+        (96 quarter-hour intervals for one day)
+
+CURRENT DESIGN (3-join: volume_reference → volume_series → volume_interval)
+─────────────────────────────────────────────────────────────────────────────
+  1. Index lookup on volume_reference (trade_leg_id)    → 1 row       O(log n), n ≈ 5K
+  2. Index lookup on volume_series (series_key, ver)    → 1 row       O(log n), n ≈ 5.5K
+  3. Range scan on volume_interval (series_id, start)   → 96 rows     O(log n + 96)
+  Total rows touched: 98
+  Index depth: 2–3 levels per lookup (B-tree on thousands of rows)
+  Design-target SLA: p95 = 15 ms, p99 = 40 ms (V2.0 §14.3)
+
+DENORMALIZED SNAPSHOT
+─────────────────────────────────────────────────────────────────────────────
+  1. Index lookup on snapshot table (trade_leg, snapshot_date, interval_start)
+     → 96 rows, BUT index is over 2.88 BILLION rows (15-year deal)
+  Total rows touched: 96
+  Index depth: 6–7 levels (B-tree on billions of rows)
+  Estimated: 3–5× slower per lookup due to deeper index tree +
+             larger working set that won't fit in Aurora buffer cache
+
+Query: "What was T-7788's position as known on July 1?" (audit/regulatory)
+        (all 526K intervals, resolved at a historical point)
+
+CURRENT DESIGN
+─────────────────────────────────────────────────────────────────────────────
+  1. Bitemporal filter on position_ledger (known_from ≤ July 1)  → ~12 rows
+     (180 month-blocks, but only ~12 affected by amendments before July 1)
+  2. Version lookup on volume_series (transaction_time ≤ July 1) → 1 header
+  3. Full scan of that version's intervals                       → 526K rows
+  Total rows touched: ~526K (the intervals themselves — unavoidable)
+  The ledger + version lookup is O(log n) on small tables (~720 and ~5.5K rows)
+
+DENORMALIZED SNAPSHOT
+─────────────────────────────────────────────────────────────────────────────
+  1. Scan snapshot table where snapshot_date = July 1, trade = T-7788
+     → 526K rows, BUT index is over 2.88B rows
+  Total rows touched: 526K (same interval count)
+  The difference: index lookup into a 2.88B-row table vs a 720-row table +
+  5.5K-row table. Buffer cache pressure is orders of magnitude higher.
+  On cold storage (audit queries hit warm/cold data), the snapshot approach
+  may require disk I/O for index pages that the current design never needs.
+
+Query: "Net position for zone DE_LU, portfolio Wind, Aug 15"
+        (slot cache / grid display — the trader's primary screen)
+
+CURRENT DESIGN
+─────────────────────────────────────────────────────────────────────────────
+  Read from pre-built S6 slot cache or S6b trade interval cache.
+  Direct index lookup → 96 rows. No joins. No version filtering.
+  Design-target SLA: p95 = 5 ms (S6b), p95 = 30 ms (full 3-join, §14.3)
+
+DENORMALIZED SNAPSHOT
+─────────────────────────────────────────────────────────────────────────────
+  Same query, but the snapshot table IS the "cache" — and it's 11.5T rows
+  platform-wide. No separation between hot-path reads and audit history.
+  Every trader grid query competes with audit scans in the same table.
+```
+
+**Important caveat:** These are structural comparisons (index depth, rows touched, working set size), not benchmarked timings. Actual performance depends on Aurora instance size, buffer pool hit rates, concurrent load, and query plan choices. The design-target SLAs in V2.0 §14 will be validated during the implementation phase.
+
+The current design achieves the same query capability — "show me the position as of date T" — by combining the bitemporal ledger's `known_from/known_to` filter with the volume series' `transaction_time` + `version_id` chain. Two lightweight mechanisms that together replace trillions of redundant snapshot rows.
+
+### 4.3a Regulatory Reporting — What Regulators Actually Ask For
+
+A common question is: "Do regulators need 15-minute interval data?" The answer is **no — regulators ask at trade and position grain, not interval grain.** Understanding this validates why the bitemporal ledger is grained at trade-leg × delivery-month (not at intervals), and why interval-level bitemporality is unnecessary.
+
+#### EU energy trading regulatory landscape
+
+| Regulation | What it governs | Reporting grain | Frequency |
+|---|---|---|---|
+| **REMIT** (EU 1227/2011) | Wholesale energy market integrity | **Trade-level** | T+1 (next business day) to ACER |
+| **REMIT Art. 8** (on request) | Market surveillance investigations | **Position-level** (reconstruct at any historical point) | Ad hoc — ACER can request at any time |
+| **EMIR** (EU 648/2012) | OTC derivative clearing & reporting | **Trade-level** + **daily valuation** | T+1 (trade), daily (mark-to-market) |
+| **MiFID II / MiFIR** | Transaction reporting & position limits | **Trade-level** (T+1); **aggregated position** (daily/weekly to NCA) | T+1 transactions; weekly public position reports |
+| **MAR** (EU 596/2014) | Market abuse prevention | **Reconstruct-on-demand** | Ad hoc investigation — "show your position at time T" |
+| **BNetzA** (German national) | Energy market oversight | **Operational** (nominations, schedules) | Varies — volume-series-side, not position |
+| **GDPR** | Data retention limits | **Retention ceiling** | Ongoing — delete after 5–7 year regulatory period |
+
+#### What regulators never ask
+
+No regulator asks: *"What was your MW at 14:15 on August 15?"*
+
+What they do ask:
+
+```
+REMIT trade report:
+  "Report all trades executed today."
+  → Trade-level: parties, product, price, quantity, delivery period, venue
+  → NOT per-interval. A 15-year PPA is ONE trade report, not 5.26M interval reports.
+
+EMIR daily valuation:
+  "What is the current mark-to-market of each derivative position?"
+  → Per trade × delivery-month bucket × business day = ~180 rows for a 15-year deal
+  → This maps directly to the EOD struck mark (S5c)
+
+ACER market surveillance:
+  "Reconstruct your net position for DE_LU power, August 2026, as known on September 5."
+  → Bitemporal filter: valid_from ≤ Aug-01, valid_to > Aug-01, known_from ≤ Sep-05
+  → Returns ~1 row per trade in that delivery month
+  → The regulator wants the POSITION, not the 2,976 quarter-hours behind it
+
+Position limits (MiFID II):
+  "What is your aggregate net long/short position in this commodity derivative?"
+  → Sum of net positions across all delivery months
+  → Monthly grain, aggregated across trades
+
+MAR investigation:
+  "Reproduce the exact state of your trading book at 14:00 on July 3."
+  → Bitemporal filter at knowledge-time = July 3 14:00
+  → Returns all positions as they were believed at that moment
+  → This is the core REMIT/MAR use case that REQUIRES bitemporality (FR-007)
+```
+
+#### How each regulatory question maps to the system
+
+| Regulatory question | System component | Grain | Rows touched (15-year PPA) |
+|---|---|---|---|
+| REMIT trade report | Trade entity (external to volume module) | 1 row per trade | 1 |
+| EMIR daily valuation | S5c EOD struck mark | position × month-bucket × business day | ~180 (15yr × 12 months) |
+| Position reconstruction at date K | S1 Position Ledger (bitemporal) | trade-leg × delivery-month | ~720 (~180 blocks × ~4 versions) |
+| Settlement reproduction | S5a settlement cell + input-version-set | position × interval (delivered only) | ~526K intervals, but only for the specific period requested |
+| Position limits | S6/S7 rollups, or re-aggregate from ledger | aggregated net per contract | ~180 rows (monthly buckets) |
+| MAR full book reconstruction | S1 bitemporal filter at knowledge-time K | all positions as-of K | O(active trades × months), typically <100K rows |
+
+#### Why interval-level data is NOT regulatory — it's operational
+
+Interval-level data (the 526K quarter-hours in a 15-year PPA) serves **internal** purposes:
+
+1. **Computing** the settlement value (interval × price → value, summed into the settlement cell that IS reported)
+2. **Resolving** the forward mark (forecast × multiplier → per-interval exposure, rolled up into the struck mark that IS reported)
+3. **Displaying** the trader grid (slot cache — a convenience view, never reported)
+4. **Reconciliation** between TSO meter data and traded positions
+
+The regulatory output is always **aggregated**: a trade report, a monthly mark, a net position. The intervals are the ingredients; the regulation asks for the finished dish.
+
+This is precisely why:
+- The **position ledger** is bitemporal at trade-leg × delivery-month grain (D-1) — that's the grain regulators ask for
+- **Volume intervals** use series-level version chains (FR-009c) — regulators never query intervals directly; they're consumed through the settlement cell's input-version-set (FR-056) when reproducing a specific settlement
+- **EOD struck marks** (S5c) are the one sanctioned snapshot (FR-079) — because EMIR daily valuation is genuinely a daily snapshot requirement, but at monthly-bucket grain, not interval grain
+- **Forward marks** are ephemeral (FR-075) — because no regulator asks "what was your intraday mark at 14:32?" (that question has no regulatory standing)
 
 ### 4.4 The Slot Cache (The Grid Display)
 
@@ -365,6 +828,7 @@ We use **Amazon Aurora PostgreSQL 16** — a managed cloud database. Data is spl
 | Regulation | Requirement |
 |---|---|
 | REMIT / MiFID II | Keep for 5-7 years |
+| EMIR | Trade reporting records; 5-year minimum |
 | GDPR | Delete after that |
 
 After 7 years, monthly partitions are automatically dropped.
@@ -428,7 +892,8 @@ This section gives the team a mental map of the database tables, their relations
 │  │  - effective_from/to   (OWN date range — not derived from trade)        │ │
 │  │  - volume_series_key   (points to the VolumeSeries)                     │ │
 │  │  - metered_series_key  (points to MeteredActual — null for DA)          │ │
-│  │  - formula             (tolerance band, seasonal adjustments)           │ │
+│  │  - volume_formula_id   (→ separate volume_formula table: tolerance,     │ │
+│  │                          seasonal adjustments, shaping entries)         │ │
 │  │                                                                         │ │
 │  │  *** EVERY trade goes through this table ***                            │ │
 │  │  Volume = series_interval × multiplier (computed at read time)          │ │
@@ -524,6 +989,8 @@ Think of these as the **cover page** of a document — metadata about the whole 
 **Two kinds of VolumeSeries in one table:**
 - `series_type=FORECAST`: per asset (shared), weather-model-sourced, frequently updated
 - `series_type=PROFILE`: per trade-leg (dedicated), created once at trade capture, few intervals, immutable
+
+**Volume layer:** The `volume_layer` enum (VOLUME or METERED_ACTUAL) distinguishes which layer a supersession event refers to — VOLUME covers both FORECAST and PROFILE series, while METERED_ACTUAL covers meter data. This is used in event payloads (`VolumeSuperseded`, `VolumePublished`) and in the `compaction_view` table.
 
 #### The Link Table: `volume_reference` (THE most important table — ALL trades have one)
 
@@ -1096,6 +1563,7 @@ Not all data is treated equally. The system maintains a temperature model:
 │  - Event-driven updates active                                       │
 │  - Redis-cached for sub-millisecond reads                            │
 │  - This is what traders interact with                                │
+│  - Reconciliation runs compare hot-window cache against source       │
 ├──────────────────────────────────────────────────────────────────────┤
 │  WARM (delivered months within 12–14 month regulatory window)        │
 │                                                                      │
@@ -1170,7 +1638,7 @@ When something changes (e.g., a new meter reading), we don't recalculate everyth
 | **Atomic interval** | The smallest time slot (usually 15 minutes in Germany) |
 | **Bidding zone** | A region of the electricity grid where one price applies (e.g., Germany-Luxembourg) |
 | **Bitemporal** | Tracking two timelines: "when was it true?" AND "when did we know it?" |
-| **Cascade** | Breaking a large block (e.g., yearly) into smaller ones (quarterly → monthly) |
+| **Cascade** | (V1.3 concept, removed in V3.0) Previously meant breaking a large block (e.g., yearly) into smaller ones. V3.0 stores intervals as-uploaded; no cascade tiers |
 | **DST** | Daylight Saving Time — clocks changing twice a year |
 | **Ephemeral** | Temporary; overwritten and not kept as history |
 | **Fan-out** | Expanding one big interval into many small ones |

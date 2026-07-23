@@ -12,6 +12,9 @@ docs/
     VOLUME_SERIES_SPEC-V3_0.md                    # Volume series domain model (unified V3.0)
   spec-in-layman-language/
     README.md                                     # Plain-language guide (~1100 lines)
+  technical-spec/
+    VOLUME_SERIES_DATA_ARCHITECTURE-V2_0.md        # Persistence layer spec (Aurora PG 16, DDL, indexes)
+    VOLUME_SERIES_DATA_ARCHITECTURE-V1_3.md        # Superseded (historical reference only)
   context/
     CONTEXT-position-valuation-design.md          # Design rationale & decisions
 ```
@@ -52,7 +55,7 @@ Java 21 / Spring Boot 3.3 / Aurora PostgreSQL 16 (NO TimescaleDB) / Kafka 3.7 KR
 - Reference deal: T-7788, tenant TN_0042, EPEX DE_LU wind PPA
 - Context doc explains rationale; functional spec is binding
 - Layman README is for non-technical stakeholders (product, QA, ops)
-- Technical spec NOT yet authored — deferred until functional review completes
+- Technical data architecture V2.0 authored — persistence spec for S3 + S6b
 
 ## Multi-commodity extensibility
 The core model is commodity-neutral. `VolumeReference × multiplier` pattern works for:
