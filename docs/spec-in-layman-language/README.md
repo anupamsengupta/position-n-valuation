@@ -199,7 +199,7 @@ Each series type tracks data quality:
 |---|---|---|
 | PROFILE (fixed trades) | EFFECTIVE → AMENDED | "This is the active deal" vs "This was superseded by a change" |
 | FORECAST (asset-linked) | CURRENT → SUPERSEDED | "This is the latest forecast" vs "A newer one replaced it" |
-| Metered Actual | PROVISIONAL → VALIDATED | "Rough reading (D+1)" vs "Confirmed by the grid operator (D+7 to D+30)" |
+| Metered Actual | PROVISIONAL → VALIDATED → ESTIMATED | "Rough reading (D+1)" → "Confirmed by the grid operator (D+7 to D+30)" → "Estimated by TSO when actual reading unavailable" |
 
 ---
 
@@ -268,17 +268,20 @@ The Position & Valuation side **consumes** volume data from the Volume Series si
 
 **Unified resolution — same for all trades:**
 
-| Valuation purpose | What the system reads | How |
-|---|---|---|
-| Forward marks (future) | `VolumeReference.volumeSeriesKey` × multiplier | For PPAs: asset forecast × 0.30. For DA: trade profile × 1.0 |
-| Settlement (past) | `VolumeReference.meteredSeriesKey` × multiplier (if set) | For PPAs: asset meter × 0.30 |
-| Settlement (past, no meter) | Falls back to `volumeSeriesKey` × multiplier | For DA: profile × 1.0 (the traded volume IS the settled volume) |
+| Valuation purpose | Trade type | What the system reads | How |
+|---|---|---|---|
+| Forward marks (future) | PPA (asset-linked) | `VolumeReference.volumeSeriesKey` → FORECAST × multiplier | Asset forecast × 0.30 |
+| Forward marks (future) | DA / bilateral | `VolumeReference.volumeSeriesKey` → PROFILE × 1.0 | Trade profile × 1.0 |
+| Settlement (past) | PPA (asset-linked) | `VolumeReference.meteredSeriesKey` → METERED_ACTUAL × multiplier | Asset meter × 0.30 |
+| Settlement (past) | DA / bilateral | `VolumeReference.volumeSeriesKey` → PROFILE × 1.0 | The traded volume IS the settled volume (no meter exists by design) |
 
 The system always looks up the `VolumeReference` to find the volume series key AND the multiplier, then computes `series_volume × multiplier`.
 
+**Important:** DA/bilateral trades reading their PROFILE series for settlement is NOT a "fallback" — it is their designed resolution path. These trades have no physical meter (`meteredSeriesKey` is null by design), so the traded profile volume is the settled volume.
+
 ### 5.2 No Mixing
 
-If meter data isn't available yet, the system does NOT substitute the forecast. It just says "no settlement value yet — waiting for meter." Each stream answers a different question, and mixing them would corrupt the numbers.
+For asset-linked trades (PPAs), if meter data isn't available yet, the system does NOT substitute the forecast. It just says "no settlement value yet — waiting for meter." Each volume source answers a different question (what is expected vs what was measured), and mixing them would corrupt the realized/unrealized classification.
 
 ### 5.3 Events (Notifications)
 
@@ -364,7 +367,7 @@ We use **Amazon Aurora PostgreSQL 16** — a managed cloud database. Data is spl
 | REMIT / MiFID II | Keep for 5-7 years |
 | GDPR | Delete after that |
 
-After 7.5 years, monthly partitions are automatically dropped.
+After 7 years, monthly partitions are automatically dropped.
 
 ### 8.3 Scale
 
@@ -716,21 +719,23 @@ Note how T-7788 and T-8899 read the **same** volume_interval row (same asset for
   AND vi.interval_start <  '2026-07-22 00:00:00'
 ```
 
-**For settlement (using metered actuals instead of forecast):**
+**For settlement — two separate queries by trade type (no mixing/fallback):**
 
 ```sql
+-- PPA / asset-linked trades (meteredSeriesKey IS NOT NULL):
 -- Replace the forecast join with metered actual:
 JOIN   metered_actual_volume_series mas
        ON  mas.series_key = vr.metered_series_key       -- metered, not forecast
-       AND mas.quality_state IN ('PROVISIONAL', 'VALIDATED')
+       AND mas.quality_state IN ('PROVISIONAL', 'VALIDATED', 'ESTIMATED')
 JOIN   metered_actual_interval mai
        ON  mai.series_id = mas.id
        AND mai.interval_start = '2026-07-21 14:00:00'
+WHERE  vr.metered_series_key IS NOT NULL                -- only asset-linked trades
 
--- Note: DA trades have metered_series_key = NULL, so they
--- fall back to the PROFILE volume_series (same query as above).
--- In practice, the service handles this with a COALESCE:
---   COALESCE(vr.metered_series_key, vr.volume_series_key)
+-- DA / bilateral trades (meteredSeriesKey IS NULL by design):
+-- Use the PROFILE volume_series directly (same query as the forward marks query above).
+-- The traded volume IS the settled volume — this is the designed path, not a fallback.
+WHERE  vr.metered_series_key IS NULL                    -- only fixed-profile trades
 ```
 
 **Why `quantity_ref` helps but doesn't replace `volume_reference`:**
@@ -746,7 +751,7 @@ One row per delivered time slot per trade. This is where most of the data lives:
 |---|---|---|
 | `position_id` | POS-5501 | Which position block |
 | `interval_start` | 2026-08-15 18:45 | Which 15-min slot |
-| `value_eur` | 777.48 | Computed: price × volume for this slot |
+| `value` | 777.48 (EUR) | Computed: price × volume for this slot (in settlement currency) |
 | `status` | FINAL | PROVISIONAL (rough) → FINAL (confirmed) |
 | `input_version_set` | {DA:v1, CPI:v1, MET:v2, expr:v1} | Exactly which inputs produced this number |
 | `active_leaves` | {DA15, METER} | Which formula inputs actually mattered |
@@ -762,9 +767,11 @@ Only current state, no history. Overwritten constantly:
 |---|---|---|
 | `position_id` | POS-5508 | Which position |
 | `interval_start` | 2027-03-15 10:00 | Which future slot |
-| `mark_value_eur` | 892.50 | Current estimated value (curve × forecast) |
+| `mark_value` | 892.50 (EUR) | Current estimated value in settlement currency (curve × forecast) |
 
 **Row count:** Only exists for undelivered slots in the "hot window" (next ~60 days). When a slot is delivered and settles, its forward mark is deleted and a settlement cell replaces it.
+
+**Initial state:** When a new trade is booked, its positions appear in the slot cache immediately but carry `UNVALUED` forward marks until curve data is applied. This ensures the grid shows the position exists even before the first valuation run.
 
 #### EOD Struck Marks (S5c) — Official Daily Snapshots
 
@@ -827,7 +834,7 @@ ORDER BY trade_leg_id, interval_start
 ```
 
 **Rebuild triggers (event-driven):**
-- `VolumePublished` → rebuild intervals for all trades referencing that volume series
+- `VolumeSuperseded` → rebuild intervals for all trades referencing that volume series
 - `VolumeReference` changed (multiplier update, new allocation) → rebuild that trade's intervals
 - Trade amended → rebuild affected trade-leg's intervals
 
@@ -941,7 +948,7 @@ volume_interval
 
 **Why monthly?**
 - Queries almost always ask "show me August data" — the database only looks in one partition
-- Cleanup is easy: drop the whole partition after 7.5 years (instead of deleting rows one by one)
+- Cleanup is easy: drop the whole partition after 7 years (instead of deleting rows one by one)
 - New months are pre-created 6 months ahead (so we're never caught off guard)
 
 **Tenant isolation:** Every query includes `tenant_id` as the first filter. The database uses this + delivery month to find data instantly without scanning everything.
@@ -961,13 +968,15 @@ volume_interval
 
 ### 10.4 Sizing — Real Numbers (with formulas)
 
-**Starting assumptions:**
+**Starting assumptions (fleet-average tenant):**
 ```
 T  = 200 tenants
 A  = 8 assets (wind/solar farms) per tenant
 N  = 2.5 trade-legs per asset (how many buyers share one farm)
 P  = T × A × N = 200 × 8 × 2.5 = 4,000 PPAs total
 Bf = 5 fixed-profile trades per tenant = 1,000 total
+     → 25 trade-legs per average tenant (8×2.5 + 5)
+     → Large tenants may have ~300 deals (see functional spec §15 worst-case sizing)
 M  = 12 hot months
 D  = 30.4 avg days per month
 I  = 96 intervals per day (15-min)
@@ -1082,18 +1091,24 @@ Not all data is treated equally. The system maintains a temperature model:
 ┌──────────────────────────────────────────────────────────────────────┐
 │  HOT (today → T+60 days + current delivery month)                    │
 │                                                                      │
-│  - Slot cache populated (fast grid display)                          │
+│  - Slot cache + trade interval cache populated (fast grid display)   │
 │  - Forward marks live (constantly updating)                          │
 │  - Event-driven updates active                                       │
 │  - Redis-cached for sub-millisecond reads                            │
 │  - This is what traders interact with                                │
 ├──────────────────────────────────────────────────────────────────────┤
-│  WARM (delivered months within 7-year retention window)               │
+│  WARM (delivered months within 12–14 month regulatory window)        │
 │                                                                      │
 │  - Settlement cells durable (audit/regulatory)                       │
 │  - No slot cache (grid reads from rollups)                           │
 │  - No forward marks (past = settled only)                            │
 │  - Queried for audit, recon, disputes                                │
+├──────────────────────────────────────────────────────────────────────┤
+│  COLD (beyond regulatory window, within 7-year retention)            │
+│                                                                      │
+│  - Archived to S3/Glacier                                            │
+│  - Derived layers (S5–S8) can be re-derived from archived S1/S2/S4  │
+│  - Latency-relaxed access (minutes, not milliseconds)                │
 ├──────────────────────────────────────────────────────────────────────┤
 │  PURGE (> 7 years post-settlement)                                   │
 │                                                                      │

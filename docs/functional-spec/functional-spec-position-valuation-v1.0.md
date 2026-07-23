@@ -30,7 +30,7 @@ This document specifies the functional model for **position generation, price ex
 
 ### 1.3 Out of scope (owned elsewhere or deferred)
 
-- The Volume Series module internals (all layers including PLAN, STRESS, scenario overlays, and BAV computation — specified in Data Architecture V1.4/V1.5). This document specifies only the **interface contract** for the three layers consumed by position/valuation: CONTRACTUAL, FORECAST, METERED_ACTUAL (§7). The upstream module may use different internal naming; the names in §7 are the canonical contract names for this boundary.
+- The Volume Series module internals (all layers including PLAN, STRESS, scenario overlays, and BAV computation — specified in `VOLUME_SERIES_SPEC-V3_0.md`). This document specifies only the **interface contract** for the volume data consumed by position/valuation (§7): unified `VolumeSeries` (seriesType = FORECAST | PROFILE) consumed via `VolumeReference × multiplier`, plus `MeteredActualVolumeSeries` for delivered metering.
 - Trade capture, confirmations, nominations, settlement/cashflow generation, regulatory report generation — this document specifies only the **data they must be able to obtain** from the structures herein.
 - Non-power commodities. The core is designed to be commodity-neutral (§2.6), but gas/oil/ags plug-ins (gas-day calendar, parcel model, grade/quality) are explicitly deferred.
 - UI/UX specification — covered by UX Spec V1.0/V1.1. This document specifies the **data contracts** the grid and boards consume (§13).
@@ -131,6 +131,7 @@ A cooperative export contract ("Wheat-Export-Q4-2027", 10,000 MT) is modeled wit
 
 - Farm A: 15% → `VolumeReference(multiplier=0.15)`
 - Farm B: 20% → `VolumeReference(multiplier=0.20)`
+- Farm C: 30% → `VolumeReference(multiplier=0.30)`
 - Resolution: `pool_allocation_interval.volume × 0.15` — same pattern
 
 Plug-in changes: `volume_unit` extends to `MT_PER_PERIOD` / `MT`; intervals are crop-month windows; DeliveryPoint adds `Warehouse` / `SiloPoint`; PriceExpression adds basis + grade quality adjustment operators. Core unchanged.
@@ -186,7 +187,7 @@ The position/valuation model depends on four reference structures. Their interna
 |---|---|---|---|---|---|---|
 | S1 | Position Ledger | Entity (source of truth) | Trade-leg obligation × delivery-month block | Bitemporal | Sparse | Durable, append-only |
 | S2 | PriceExpression | Entity | Expression version per trade leg | Bitemporal (with trade lifecycle) | Sparse | Durable, append-only |
-| S3 | Volume Series (interface) | Entity (external module) | Series × layer × atomic interval, supersession-versioned | Versioned (supersession per layer: CONTRACTUAL, FORECAST, METERED_ACTUAL) | Dense per layer per delivered/forecast range | Owned by VolumeSeries module; consumed via §7 contract |
+| S3 | Volume Series (interface) | Entity (external module) | Series × atomic interval, supersession-versioned | Versioned (supersession per series: VolumeSeries FORECAST/PROFILE, MeteredActualVolumeSeries) | Dense per series per delivered/forecast range | Owned by VolumeSeries module (V3.0); consumed via VolumeReference × multiplier (§7) |
 | S4 | Market Data Store | Shared reference facts | Series × interval × as-of | As-of / bitemporal per series | Dense per series | Durable |
 | S5a | Settlement valuation cells | Measure (derived) | Position × atomic interval | Bitemporal | Dense over delivered past only | Durable |
 | S5b | Forward/MtM marks | Measure (derived) | Position × atomic interval | None (current-state) | Dense over open future | **Ephemeral** (cache + overwrite) |
@@ -323,21 +324,22 @@ The VolumeSeries module (Data Architecture V1.4/V1.5) owns operational volume la
 
 ### 7.2 Series layers consumed and their purpose
 
-**FR-051.** The position/valuation model consumes three volume-series layers by reference. Each serves a distinct valuation purpose and no layer may be substituted for another:
+**FR-051.** The position/valuation model consumes volume data via the unified V3.0 resolution pattern (D-11): every trade resolves volume through `VolumeReference → VolumeSeries × multiplier`. Three volume sources serve distinct valuation purposes:
 
-| Layer | Series example | Consumed by | Purpose | Availability |
+| Source | Series type / entity | Consumed by | Purpose | Availability |
 |---|---|---|---|---|
-| **CONTRACTUAL** | `VS-3312:CONTRACTUAL` | Ledger fan-out (§5), slot cache (§10), trade interval cache (§10.4) | Shape of the obligation for shaped/profiled deals — the MW per interval that the trade commits to deliver/receive. For flat-block deals this layer is absent; the ledger's fixed `quantity` suffices. | Available from trade booking; constant unless the trade is amended. |
-| **FORECAST** | `VS-3312:FORECAST` | Forward valuation (S5b, §9.3), EOD strike (S5c, §9.4), trade interval cache (§10.4) | Expected generation/consumption for **undelivered** intervals — the volume assumption behind forward marks. | Available from asset onboarding; updated periodically (weather model refresh, re-forecast). |
-| **METERED_ACTUAL** | `VS-3312:METERED_ACTUAL` | Settlement valuation (S5a, §9.2), trade interval cache (§10.4) | Delivered volume as measured — the volume fact behind settlement cells. Progresses through provisional→validated states. | Arrives D+1 or later; superseded as validated data replaces provisional. |
+| **PROFILE** (VolumeSeries, `seriesType=PROFILE`) | Per trade-leg, dedicated | Slot cache fan-out (§10), trade interval cache (§10.4), settlement for fixed-profile trades (DA/bilateral) | Shape of the obligation — the MW per interval the trade commits to deliver/receive. For flat-block deals the ledger's fixed `quantity` suffices; for shaped-but-firm deals (profiled offtake) and DA fills, this is the per-trade volume series with `multiplier=1.0`. | Created at trade booking; constant unless the trade is amended. |
+| **FORECAST** (VolumeSeries, `seriesType=FORECAST`) | Per asset, shared | Forward valuation (S5b, §9.3), EOD strike (S5c, §9.4), trade interval cache (§10.4) | Expected generation/consumption for **undelivered** intervals — the volume assumption behind forward marks. Shared across all trades on the asset; each trade's share = `forecast × multiplier`. | Available from asset onboarding; updated periodically (weather model refresh, re-forecast). |
+| **METERED_ACTUAL** (MeteredActualVolumeSeries) | Per asset, separate entity | Settlement valuation (S5a, §9.2), trade interval cache (§10.4) | Delivered volume as measured — the volume fact behind settlement cells. Shared across all trades on the asset; each trade's share = `metered × multiplier`. Progresses through provisional→validated→estimated states. | Arrives D+1 or later; superseded as validated data replaces provisional. |
 
-**FR-051a.** The position ledger references a volume series by `quantity_ref` (e.g., `VS-3312`). The valuation layer resolves which **layer** to read based on valuation type and interval delivery status:
+**FR-051a.** The position ledger references a volume series by `quantity_ref` (the `volumeSeriesKey` from VolumeReference, denormalized for convenience). The valuation layer resolves which **source** to read based on valuation type, interval delivery status, and whether the trade has a `meteredSeriesKey`:
 
-- **Delivered interval, settlement cell (S5a):** read METERED_ACTUAL. If metered data is not yet available for a delivered interval, the cell is not created — settlement is data-driven, never assumption-driven.
-- **Undelivered interval, forward mark (S5b):** read FORECAST. If no forecast exists, the interval is marked with zero volume and flagged `VOLUME_MISSING` (visible in grid as a data-quality indicator, not silently zero-valued).
-- **Fan-out for slot cache / grid display:** read CONTRACTUAL for shaped deals; use the ledger's fixed `quantity` for flat-block deals.
+- **Delivered interval, settlement cell (S5a), asset-linked trade (PPA):** read `VolumeReference.meteredSeriesKey` → MeteredActualVolumeSeries × multiplier. If metered data is not yet available for a delivered interval, the cell is not created — settlement is data-driven, never assumption-driven.
+- **Delivered interval, settlement cell (S5a), fixed-profile trade (DA/bilateral):** `meteredSeriesKey` is null by design — these trades have no physical meter. Settlement reads `VolumeReference.volumeSeriesKey` → VolumeSeries(PROFILE) × 1.0. The traded volume IS the settled volume; this is not a "fallback" but the designed resolution path for trades without metering.
+- **Undelivered interval, forward mark (S5b):** read `VolumeReference.volumeSeriesKey` → VolumeSeries(FORECAST) × multiplier for asset-linked trades; → VolumeSeries(PROFILE) × 1.0 for fixed-profile trades. If no forecast exists, the interval is marked with zero volume and flagged `VOLUME_MISSING` (visible in grid as a data-quality indicator, not silently zero-valued).
+- **Fan-out for slot cache / grid display:** read VolumeSeries(PROFILE) for shaped/profiled deals; use the ledger's fixed `quantity` for flat-block deals.
 
-**FR-051b.** The fallback rule is explicit and strict: there is **no automatic fallback** from one layer to another (e.g., no "use forecast if meter is missing"). Each layer answers a different question (what was promised, what is expected, what was measured), and blending them silently would corrupt the realized/unrealized classification (FR-07A). A missing layer produces an explicit gap, not a substituted value.
+**FR-051b.** The no-mixing rule is explicit and strict: there is **no automatic fallback** from one volume source to another for the same trade type. Specifically: for asset-linked trades (PPAs), if metered data is not yet available, the system does NOT substitute the forecast for settlement — it produces an explicit gap. Each source answers a different question (what is the obligation shape, what is expected, what was measured), and blending them silently would corrupt the realized/unrealized classification (FR-07A). A missing source produces an explicit gap, not a substituted value. Note: fixed-profile trades reading their PROFILE series for settlement is not a fallback — it is their designed resolution path (they have no meter by definition).
 
 **FR-053.** The trade's MW shape legitimately exists in two projections — risk (position/valuation) and operations (BAV/nominations). They share sources (same trade, same series) but are materialized independently; neither is derived from the other's materialization. This means a forecast update flows to both the forward-mark computation (via §7.5) and to the operational BAV (via the VolumeSeries module's own logic) — but these are independent consumers, not a chain.
 
@@ -349,23 +351,23 @@ The VolumeSeries module (Data Architecture V1.4/V1.5) owns operational volume la
 - `volume_mw` — average MW for the interval (the canonical unit; this is what the position ledger's MW_CAPACITY semantics expect)
 - `volume_mwh` — energy for the interval (= `volume_mw` × interval duration in hours; provided by the module, not recomputed by consumers — avoids DST arithmetic errors on the 100/92-interval days)
 - `version_id` — the series-version identifier for this data point (used in input-version-set stamping, §7.6)
-- `quality_state` — for METERED_ACTUAL: PROVISIONAL | VALIDATED | ESTIMATED; for FORECAST: CURRENT | SUPERSEDED; for CONTRACTUAL: EFFECTIVE | AMENDED
+- `quality_state` — for MeteredActualVolumeSeries: PROVISIONAL | VALIDATED | ESTIMATED; for VolumeSeries(FORECAST): CURRENT | SUPERSEDED; for VolumeSeries(PROFILE): EFFECTIVE | AMENDED
 
 **FR-054a.** Intervals are aligned to the market's atomic grid as defined by MarketCalendar (FR-024/025). The VolumeSeries module must never return data at a grain finer or coarser than the market's floor for that delivery point — grain conversion is the consumer's responsibility via the slot cache (§10, FR-085), not the series module's.
 
 ### 7.4 Version model and supersession
 
-**FR-055.** Each volume-series layer is independently versioned using a **supersession model**: a new version for a (series, layer, interval_range) supersedes the prior version for that range. Supersession is range-scoped — a validated meter batch for Oct 1–7 supersedes only provisional data for those intervals, not the entire month.
+**FR-055.** Each volume series is independently versioned using a **supersession model**: a new version for a (series_key, interval_range) supersedes the prior version for that range. Supersession is range-scoped — a validated meter batch for Oct 1–7 supersedes only provisional data for those intervals, not the entire month.
 
-**FR-055a.** Version identity: each supersession produces a monotonically increasing `version_id` scoped to (series_key, layer). The version_id is opaque to the position/valuation model — it is recorded in the valuation cell's input-version-set for reproducibility but never interpreted or compared except for equality (same version = same data).
+**FR-055a.** Version identity: each supersession produces a monotonically increasing `version_id` scoped to `series_key`. The version_id is opaque to the position/valuation model — it is recorded in the valuation cell's input-version-set for reproducibility but never interpreted or compared except for equality (same version = same data).
 
-**FR-055b.** Supersession semantics by layer:
+**FR-055b.** Supersession semantics by volume source:
 
-| Layer | What triggers supersession | Typical frequency | Range granularity |
+| Source | What triggers supersession | Typical frequency | Range granularity |
 |---|---|---|---|
-| CONTRACTUAL | Trade amendment (new delivery profile) | Rare (amendment lifecycle) | Full delivery period of the trade |
-| FORECAST | Weather model refresh, re-forecast, asset re-rating | Daily to weekly | Varies: full remaining period or sub-range |
-| METERED_ACTUAL | Provisional→validated meter data; TSO corrections | D+1 provisional, D+5…D+30 validated; occasional late corrections | Day or sub-day batch |
+| VolumeSeries (PROFILE) | Trade amendment (new delivery profile) | Rare (amendment lifecycle) | Full delivery period of the trade |
+| VolumeSeries (FORECAST) | Weather model refresh, re-forecast, asset re-rating | Daily to weekly | Varies: full remaining period or sub-range |
+| MeteredActualVolumeSeries | Provisional→validated→estimated meter data; TSO corrections | D+1 provisional, D+5…D+30 validated; occasional late corrections | Day or sub-day batch |
 
 ### 7.5 Event contract (supersession → revaluation trigger)
 
@@ -375,12 +377,12 @@ The VolumeSeries module (Data Architecture V1.4/V1.5) owns operational volume la
 
 | Field | Content |
 |---|---|
-| `series_key` | e.g., `VS-3312` |
-| `layer` | CONTRACTUAL / FORECAST / METERED_ACTUAL |
+| `series_key` | e.g., `FCST-WP-NORDSEE` or `MTR-WP-NORDSEE` |
+| `series_type` | FORECAST / PROFILE (for VolumeSeries) or METERED_ACTUAL (for MeteredActualVolumeSeries) |
 | `affected_range` | Half-open interval range `[start, end)` — the intervals whose volume changed |
 | `old_version_id` | Version being superseded (nullable for first publication) |
 | `new_version_id` | New version identifier |
-| `quality_state` | New quality state (for METERED_ACTUAL: PROVISIONAL→VALIDATED transitions) |
+| `quality_state` | New quality state (for METERED_ACTUAL: PROVISIONAL→VALIDATED→ESTIMATED transitions) |
 | `event_time` | Processing timestamp (becomes `known_from` on any resulting valuation-cell version) |
 
 **FR-052b.** On receiving `VolumeSuperseded`, the valuation layer:
@@ -388,11 +390,11 @@ The VolumeSeries module (Data Architecture V1.4/V1.5) owns operational volume la
 1. Locates affected valuation cells via the dependency index (FR-102): all cells whose position references `series_key` AND whose interval falls within `affected_range` AND whose dependency edge is active for the volume leaf.
 2. For **METERED_ACTUAL** supersession on settlement cells (S5a): re-resolves the price expression with the new metered volume, producing a new cell version (knowledge-time supersession per FR-072). If `quality_state` transitions to VALIDATED and all other inputs are final, the cell status advances to FINAL.
 3. For **FORECAST** supersession on forward marks (S5b): re-resolves with the new forecast volume and overwrites the current mark (ephemeral, FR-075). No bitemporal versioning.
-4. For **CONTRACTUAL** supersession (trade amendment): the ledger itself is versioned first (FR-037); the downstream fan-out and valuation follow from the ledger event, not from the volume event alone. The `VolumeSuperseded` event for contractual changes is informational to the volume-side consumers; the position/valuation cascade is driven by the trade-amendment event.
+4. For **PROFILE** supersession (trade amendment): the ledger itself is versioned first (FR-037); the downstream fan-out and valuation follow from the ledger event, not from the volume event alone. The `VolumeSuperseded` event for PROFILE changes is informational to the volume-side consumers; the position/valuation cascade is driven by the trade-amendment event.
 
 ### 7.6 Volume version in the input-version-set
 
-**FR-056.** Every valuation cell's input-version-set (FR-071) includes the volume `version_id` used in resolution, keyed by (series_key, layer). This is what makes settlement cells reproducible: "show the exact inputs" (FR-116) includes the specific meter version and forecast version, not just the price-side inputs.
+**FR-056.** Every valuation cell's input-version-set (FR-071) includes the volume `version_id` used in resolution, keyed by `series_key`. This is what makes settlement cells reproducible: "show the exact inputs" (FR-116) includes the specific meter version and forecast version, not just the price-side inputs.
 
 **FR-056a.** For flat-block deals (no volume-series reference — fixed `quantity` on the ledger), the volume input is implicit in the position version itself; no separate volume version_id is recorded. The position's own `version` in the input-version-set is sufficient.
 
@@ -400,8 +402,8 @@ The VolumeSeries module (Data Architecture V1.4/V1.5) owns operational volume la
 
 **FR-057.** Volume-series references create dependency-index edges (FR-102) just like market-data references:
 
-- METERED_ACTUAL → settlement cell edges (active while the delivery month is in the hot store)
-- FORECAST → forward mark edges (active while the interval is undelivered; pruned on settlement handover per FR-104)
+- MeteredActualVolumeSeries → settlement cell edges (active while the delivery month is in the hot store)
+- VolumeSeries(FORECAST) → forward mark edges (active while the interval is undelivered; pruned on settlement handover per FR-104)
 
 **FR-057a.** Volume edges carry `active_leaves` membership. For the reference deal (collar PPA), the METER leaf is in `active_leaves` for all non-gated intervals (DA ≥ 0) — a meter supersession recomputes those cells. For gated intervals (DA < 0, amount = 0), the METER leaf is inactive — meter supersession does not recompute them, since the volume is irrelevant when the gate produces zero. Note: the DA leaf remains **active** on gated intervals (it is the gate-determining input; a DA restatement above zero would change the result). This is a direct application of the blast-radius optimization (FR-103) to volume inputs: only leaves that cannot affect the output are marked inactive.
 
@@ -504,7 +506,7 @@ Interval 2026-08-15 QH 18:45 CEST. Inputs: DA15 = 68.20 (DA:v1), HICP 2025-11 = 
 | **Delivered** (past) | Ledger fixed `quantity` (MW replicated per FR-035) | METERED_ACTUAL from S3 (realized shape) |
 | **Undelivered** (future, within hot window) | Ledger fixed `quantity` | FORECAST from S3 (expected shape) |
 
-For pay-as-produced deals (e.g., wind PPAs) where no fixed contractual profile exists, the FORECAST layer is the sole source of undelivered slot-cache volume. If no forecast is available for an interval, the cell is populated with zero and flagged `VOLUME_MISSING` (FR-051a applies to the cache as well as to valuation). The CONTRACTUAL layer is used only for deals that have a defined delivery profile (baseload, peak-shaped blocks) where it equals the ledger's fixed quantity — effectively redundant for flat blocks but necessary for shaped-but-firm deals (e.g., a profiled offtake agreement with a guaranteed shape).
+For pay-as-produced deals (e.g., wind PPAs) where the volume comes from a shared asset FORECAST series, the FORECAST is the sole source of undelivered slot-cache volume (each trade's share = forecast × multiplier). If no forecast is available for an interval, the cell is populated with zero and flagged `VOLUME_MISSING` (FR-051a applies to the cache as well as to valuation). For fixed-profile trades (DA fills, shaped bilateral), the VolumeSeries(PROFILE) provides the per-trade volume at multiplier=1.0 — this is the designed resolution for trades with a dedicated delivery profile.
 
 **FR-081.** Dual units are materialized **only here and in rollups** (never in the ledger, which stores one canonical form — FR-035): the cache is where interval duration is fixed and known, so both `net_mw` and `net_mwh` are precomputable without a runtime consistency invariant on the source of truth.
 
@@ -530,7 +532,7 @@ For pay-as-produced deals (e.g., wind PPAs) where no fixed contractual profile e
 
 **FR-086a.** Grain: (trade_leg_id × atomic interval). Content per cell: `resolved_mw` (= `volume_interval.volume × volume_reference.multiplier`), `resolved_mwh` (= `volume_interval.energy × volume_reference.multiplier`), `multiplier` (stored for auditability), `series_key` (which volume series was used), `version_hash` (staleness detection).
 
-**FR-086b.** S6b is populated by the same event-driven path as S6: `VolumePublished` events trigger rebuild of affected trade intervals; `VolumeReference` changes (multiplier update, new allocation) trigger rebuild of that trade-leg's intervals; trade amendments trigger rebuild of affected intervals. All rebuilds are idempotent (re-derive from source per FR-106).
+**FR-086b.** S6b is populated by the same event-driven path as S6: `VolumeSuperseded` events trigger rebuild of affected trade intervals; `VolumeReference` changes (multiplier update, new allocation) trigger rebuild of that trade-leg's intervals; trade amendments trigger rebuild of affected intervals. All rebuilds are idempotent (re-derive from source per FR-106).
 
 **FR-086c.** Without S6b, per-trade interval-level volume requires a runtime join: `position_ledger → volume_reference → volume_interval`, applying the multiplier at query time. This is acceptable for small result sets (a few trades × one day = ~500 rows) but degrades for portfolio-detail dashboards showing many trades across extended periods (200 trades × 2,976 intervals = ~595K rows joined and multiplied on the fly). S6b reduces this to a single-table indexed scan.
 
@@ -638,11 +640,11 @@ All figures derive from the reference deal and scale linearly; the tech spec mus
 
 ### 15.1 Ledger (S1)
 
-Rows = delivery months × versions. Reference deal: 12 blocks × ~2 versions = **24 rows** per full-year 15-min PPA. Tenant at ~300 comparable live deals with amendment factor ≤5: ≤ 300 × 12 × 5 = **18,000 rows** — negligible. Derivation shows bitemporality multiplies by the amendment factor (2–5×), never by intervals: this is the direct payoff of FR-004/030.
+Rows = delivery months × versions. Reference deal: 12 blocks × ~2 versions = **24 rows** per full-year 15-min PPA. Sizing uses the **large-tenant scenario** (~300 live deals, amendment factor ≤5) as the worst-case bound: ≤ 300 × 12 × 5 = **18,000 rows** — negligible. The fleet-average tenant is smaller (~25 trade-legs: 8 assets × 2.5 trades/asset + 5 fixed-profile trades; see README §10.4 sizing assumptions); fleet-wide at 200 average tenants: ~120K rows. Derivation shows bitemporality multiplies by the amendment factor (2–5×), never by intervals: this is the direct payoff of FR-004/030.
 
 ### 15.2 Settlement cells (S5a) — the dominant durable term
 
-Rows ≈ delivered intervals × supersession factor. Reference deal lifetime: 35,040 QH × ~1.3 (provisional→final + occasional restatement) ≈ **45,500 rows**. Tenant (300 deals): ≈ **13.7M rows** per delivered year; the hot store holds ≤ the 12–14-month regulatory window of this. Fleet (200 tenants): ≈ **2.7B rows total across all tiers** — a storage figure, not a query figure (see 15.5).
+Rows ≈ delivered intervals × supersession factor. Reference deal lifetime: 35,040 QH × ~1.3 (provisional→final + occasional restatement) ≈ **45,500 rows**. Large tenant (300 deals): ≈ **13.7M rows** per delivered year; the hot store holds ≤ the 12–14-month regulatory window of this. Fleet at average tenant size (200 tenants × 25 trade-legs): ≈ **2.7B rows total across all tiers** — a storage figure, not a query figure (see 15.5).
 
 **5-min granularity sensitivity:** At 5-min settlement (Nordic markets today; Central EU proposed ~2028), the same reference deal produces 105,120 intervals × 1.3 ≈ **136,700 rows** (×3). Tenant at 300 deals: ≈ **41M rows/delivered year**; fleet: ≈ **8.2B total**. The partition/index strategy (delivery-month, tenant-leading key, current-state filter) remains viable — worst monthly scan grows from ~1.1M to ~3.3M candidates, well within Aurora's indexed-scan capability. The hot-window length (FR-083) becomes the primary control knob at finer floors and must be validated per market before 5-min activation.
 
@@ -721,14 +723,14 @@ The technical spec inherits the platform's technology decisions. These are not r
 | Block | One delivery-month slice of a trade-leg obligation; the ledger row grain |
 | Cascade | Exchange decomposition of coarse products into finer delivery obligations (Cal→Q→M→…) |
 | Cell | One (position, interval, type) valuation record |
-| CONTRACTUAL / FORECAST / METERED_ACTUAL | The three volume-series layers consumed by position/valuation (§7.2); contractual = obligation shape, forecast = expected generation, metered = delivered measurement |
+| PROFILE / FORECAST / METERED_ACTUAL | The three volume sources consumed by position/valuation (§7.2): PROFILE (VolumeSeries, seriesType=PROFILE) = obligation shape per trade-leg; FORECAST (VolumeSeries, seriesType=FORECAST) = expected generation per asset; METERED_ACTUAL (MeteredActualVolumeSeries) = delivered measurement per asset. All consumed via VolumeReference × multiplier (D-11). |
 | Entity / measure | §2.1; lifecycle-bearing object vs coordinate-identified number |
 | Fan-out / roll-up | Granularity conversion downward/upward per FR-085 |
 | Grid descriptor | MarketCalendar-generated interval list + peak/DST metadata driving display |
 | Hot window | The date range over which the slot cache is densely materialized |
 | Input version set | The stamped versions of every series + expression + volume used to resolve a cell |
 | Struck mark | The immutable official EOD MtM per position × month bucket |
-| Trade Interval Cache (S6b) | Optional rebuildable per-trade pre-multiplied volume cache (resolved_mw = volume × multiplier); commodity-neutral; event-driven rebuild on VolumePublished / reference change (§10.4) |
+| Trade Interval Cache (S6b) | Optional rebuildable per-trade pre-multiplied volume cache (resolved_mw = volume × multiplier); commodity-neutral; event-driven rebuild on VolumeSuperseded / reference change (§10.4) |
 | Supersession | Version replacement by closing knowledge time and appending, never editing |
 | VOLUME_MISSING | Data-quality flag on a slot-cache or forward-mark cell indicating no forecast volume was available for the interval |
 | VolumeSuperseded | Event emitted by the VolumeSeries module when a layer's data is replaced for a range of intervals (§7.5) |

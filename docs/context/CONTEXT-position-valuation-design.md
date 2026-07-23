@@ -82,7 +82,7 @@ Both, same derivation logic, two cadences. **Event path**: incremental, dependen
 | S5b | Forward marks | position × atomic interval | EPHEMERAL current-state; zero durable rows |
 | S5c | EOD struck marks | position × month-bucket × business day | durable immutable frozen projection |
 | S6 | Slot Cache | (point×portfolio×type) × atomic interval | rebuildable netted materialization; hot window only (default T+60d); net_mw + net_mwh + is_peak + version_hash |
-| S6b | Trade Interval Cache | trade-leg × atomic interval | **optional** rebuildable per-trade pre-multiplied volume (resolved_mw/mwh); event-driven rebuild on VolumePublished / reference change; serves portfolio-detail dashboards; ~29M rows in 2-month hot window |
+| S6b | Trade Interval Cache | trade-leg × atomic interval | **optional** rebuildable per-trade pre-multiplied volume (resolved_mw/mwh); event-driven rebuild on VolumeSuperseded / reference change; serves portfolio-detail dashboards; ~29M rows in 2-month hot window |
 | S7 | Rollups | hour/day/month × peak split | rebuildable; serves far-dated + reporting |
 | S8 | Dependency index | input-series → cell edges | with active-flag; restatement blast-radius; pruned to open exposure |
 
@@ -182,6 +182,7 @@ Cooperative contract "Wheat-Export-Q4-2027" (10,000 MT)
   └── VolumeReference(s):
          Farm A: 15% of pool (multiplier=0.15)
          Farm B: 20% (multiplier=0.20)
+         Farm C: 30% (multiplier=0.30)
          → resolved volume = pool_allocation × multiplier
          → PriceExpression = CBOT front-month + basis + quality premium/discount
 ```
