@@ -761,16 +761,16 @@ public class SettlementCellEntity {
     private String cellStatus;     // PROVISIONAL, FINAL
 
     // Resolved values
-    @Column(name = "price", precision = 15, scale = 6, nullable = false)
+    @Column(name = "price", nullable = false)            // precision/scale: NumericPrecision.PRICE (TR-047)
     private BigDecimal price;
 
-    @Column(name = "volume_mw", precision = 15, scale = 6, nullable = false)
+    @Column(name = "volume_mw", nullable = false)       // precision/scale: NumericPrecision.VOLUME (TR-047)
     private BigDecimal volumeMw;
 
-    @Column(name = "volume_mwh", precision = 18, scale = 6, nullable = false)
+    @Column(name = "volume_mwh", nullable = false)      // precision/scale: NumericPrecision.ENERGY (TR-047)
     private BigDecimal volumeMwh;
 
-    @Column(name = "amount", precision = 18, scale = 4, nullable = false)
+    @Column(name = "amount", nullable = false)          // precision/scale: NumericPrecision.MONETARY (TR-047)
     private BigDecimal amount;     // price × volume_mwh (or appropriate calc)
 
     @Column(name = "currency", length = 3, nullable = false)
@@ -899,7 +899,7 @@ public class StruckMarkEntity {
     @Column(name = "strike_date", nullable = false)
     private LocalDate strikeDate;       // business day of the close
 
-    @Column(name = "mark_value", precision = 18, scale = 4, nullable = false)
+    @Column(name = "mark_value", nullable = false)       // precision/scale: NumericPrecision.MONETARY (TR-047)
     private BigDecimal markValue;
 
     @Column(name = "currency", length = 3, nullable = false)
@@ -1339,13 +1339,13 @@ public class TradeIntervalCacheEntity {
     @Column(name = "interval_end", nullable = false)
     private Instant intervalEnd;
 
-    @Column(name = "resolved_qty", precision = 15, scale = 6, nullable = false)
+    @Column(name = "resolved_qty", nullable = false)     // precision/scale: NumericPrecision.VOLUME (TR-047)
     private BigDecimal resolvedQty;
 
-    @Column(name = "resolved_energy", precision = 18, scale = 6, nullable = false)
+    @Column(name = "resolved_energy", nullable = false)  // precision/scale: NumericPrecision.ENERGY (TR-047)
     private BigDecimal resolvedEnergy;
 
-    @Column(name = "multiplier", precision = 8, scale = 6, nullable = false)
+    @Column(name = "multiplier", nullable = false)       // precision/scale: NumericPrecision.MULTIPLIER (TR-047)
     private BigDecimal multiplier;
 
     @Column(name = "series_key", length = 128, nullable = false)
@@ -1520,7 +1520,8 @@ public final class Aggregators {
      * Time-weighted average MW.
      * FR-085: weights = interval minutes; mandatory for DST-correct aggregation.
      */
-    public static IntervalAggregator<BigDecimal> timeWeightedMw() {
+    /** NumericPrecision injected — scale resolved per domain (TR-048). */
+    public static IntervalAggregator<BigDecimal> timeWeightedMw(NumericPrecision np) {
         return intervals -> {
             BigDecimal weightedSum = BigDecimal.ZERO;
             long totalMinutes = 0;
@@ -1533,7 +1534,7 @@ public final class Aggregators {
             }
             return totalMinutes == 0 ? BigDecimal.ZERO
                 : weightedSum.divide(BigDecimal.valueOf(totalMinutes),
-                    6, RoundingMode.HALF_UP);
+                    np.scale(NumericPrecision.Domain.VOLUME), np.roundingMode());
         };
     }
 

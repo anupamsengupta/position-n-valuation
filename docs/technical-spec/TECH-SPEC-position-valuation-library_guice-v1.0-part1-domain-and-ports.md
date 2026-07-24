@@ -43,7 +43,7 @@ This specification defines:
 | DDL, partitioning SQL, RLS policies | `VOLUME_SERIES_DATA_ARCHITECTURE-V2_0.md` (V2.0) |
 | Grid rendering, UX interactions | UX Spec (future) |
 | Trade capture upstream events | Trade service spec (future) |
-| Numeric precision conventions | V2.0 §5.0 |
+| Numeric precision DDL (column types) | V2.0 §5.0 — defaults governed by `NumericPrecision` port (§5.0) |
 | Aurora cluster topology, cost model | V2.0 §3 |
 | Retention policy, partition drop | V2.0 §9 |
 
@@ -267,6 +267,114 @@ power-position-valuation/
 
 ## §5 — Domain Model: Value Objects, Events, Commands (`pv-domain`)
 
+### 5.0 Numeric Precision Configuration — Pattern #33, FR-036, D-2, S1/S2/S3/S5a/S5c/S6/S6b/S7
+
+> **TR-046** — All numeric scale and precision values are **system-wide configurable** per semantic domain via the `NumericPrecision` port interface. No domain or adapter code shall hardcode scale literals (e.g., `setScale(4, …)`); all rounding and column-precision references resolve through `NumericPrecision`. This enables commodity-specific or regulatory-driven precision overrides without code changes. (Extends FR-036, D-2, D-12.)
+
+The system defines **six semantic precision domains**. Each domain carries an independent `scale` (decimal digits after the point) and `precision` (total significant digits) that govern both in-memory `BigDecimal` arithmetic and JPA `@Column` annotations.
+
+| Domain | Semantic Scope | Default Scale | Default Precision | Examples |
+|--------|---------------|---------------|-------------------|----------|
+| `MONETARY` | Currency amounts, settlement values, mark-to-market | 4 | 18 | `Money.amount`, `SettlementCellEntity.amount`, `StruckMarkEntity.markValue` |
+| `PRICE` | Price-per-unit values (EUR/MWh, USD/therm) |8| 15 | `SettlementCellEntity.price`, `PriceEvaluator` leaf results |
+| `VOLUME` | Power capacity (MW), commodity quantity |8| 15 | `VolumeIntervalEntity.volume`, `PositionLedgerEntryEntity.quantity`, `CachedInterval.netMw` |
+| `ENERGY` | Energy delivered (MWh), commodity energy equivalent |8| 18 | `VolumeIntervalEntity.energy`, `SettlementCellEntity.volumeMwh`, `CachedInterval.netMwh` |
+| `MULTIPLIER` | Ratios, shares, allocation factors (0 < m ≤ 1) |8| 8 | `VolumeReference.multiplier`, `TradeIntervalCacheEntity.multiplier` |
+| `INTERMEDIATE` | Scratch values during multi-step computation; not persisted | 10 | 20 | `PriceEvaluator` sub-expression results, time-weighted averages |
+
+#### Port Interface (`pv-domain/port/`)
+
+```java
+/**
+ * System-wide numeric scale and precision configuration.
+ * Implementations are singletons bound in Guice; overrides per commodity
+ * or regulatory regime are supported via named bindings or tenant-scoped providers.
+ *
+ * FR-036: precision conventions are externalized, not hardcoded.
+ * D-12: commodity-neutral core — precision can vary per commodity deployment.
+ */
+public interface NumericPrecision {
+
+    /** Decimal scale (digits after point) for the given domain. */
+    int scale(Domain domain);
+
+    /** Total precision (significant digits) for the given domain. */
+    int precision(Domain domain);
+
+    /** Default rounding mode applied system-wide. */
+    default RoundingMode roundingMode() {
+        return RoundingMode.HALF_UP;
+    }
+
+    /** Convenience: apply scale + rounding to a BigDecimal value. */
+    default BigDecimal round(BigDecimal value, Domain domain) {
+        return value.setScale(scale(domain), roundingMode());
+    }
+
+    /**
+     * Semantic precision domains.
+     * Each domain independently governs scale/precision for a category of numeric values.
+     */
+    enum Domain {
+        /** Currency amounts: settlement values, mark-to-market, invoiced amounts. */
+        MONETARY,
+        /** Price-per-unit: EUR/MWh, USD/therm, index references. */
+        PRICE,
+        /** Power capacity / commodity quantity: MW, m³/h. */
+        VOLUME,
+        /** Energy delivered / commodity energy: MWh, therms. */
+        ENERGY,
+        /** Allocation ratios, shares, multipliers (0 < m ≤ 1). */
+        MULTIPLIER,
+        /** Scratch values in multi-step computation; never persisted. */
+        INTERMEDIATE
+    }
+}
+```
+
+#### Default Implementation (`pv-domain`)
+
+```java
+/**
+ * Immutable default precision configuration.
+ * Suitable for EU power (EPEX/EEX/NORDPOOL/XBID) deployments.
+ * Override via Guice @Named binding for commodity-specific precision
+ * (e.g., gas = VOLUME scale 3, oil = PRICE scale 4).
+ */
+public record DefaultNumericPrecision() implements NumericPrecision {
+
+    @Override
+    public int scale(Domain domain) {
+        return switch (domain) {
+            case MONETARY    -> 4;
+            case PRICE       -> 8;
+            case VOLUME      -> 8;
+            case ENERGY      -> 8;
+            case MULTIPLIER  -> 8;
+            case INTERMEDIATE -> 10;
+        };
+    }
+
+    @Override
+    public int precision(Domain domain) {
+        return switch (domain) {
+            case MONETARY    -> 20;
+            case PRICE       -> 20;
+            case VOLUME      -> 18;
+            case ENERGY      -> 20;
+            case MULTIPLIER  -> 10;
+            case INTERMEDIATE -> 24;
+        };
+    }
+}
+```
+
+> **TR-047** — JPA `@Column` annotations on numeric fields reference the configured precision/scale values **by documentation convention**: the annotated values must match the `NumericPrecision` defaults for the given domain. DDL generation and Flyway migrations source precision from the same configuration. When a tenant or commodity requires non-default precision, a `@Named("gas")` or tenant-scoped `NumericPrecision` binding overrides the default. (Extends FR-036, V2.0 §5.0.)
+
+> **TR-048** — All `BigDecimal.setScale()` and `BigDecimal.divide(…, scale, …)` calls in domain code, adapters, and aggregators **must** resolve their scale argument through `NumericPrecision.scale(domain)` or `NumericPrecision.round(value, domain)`. Direct numeric literals for scale are prohibited outside of the `DefaultNumericPrecision` record itself. (Extends FR-036.)
+
+---
+
 ### 5.1 Value Object Records — Pattern #3, #8, S1/S2/S3
 
 > **TR-002** — All value objects are Java `record` types with validation at construction (static factories or compact constructors). No `Optional<T>` fields inside records. (Extends FR-036, D-2.)
@@ -335,7 +443,7 @@ public record SeriesKey(String value) {
 
 ```java
 /**
- * Monetary amount with currency. Scale 4 for EUR/MWh precision (V2.0 §5.0).
+ * Monetary amount with currency. Scale governed by NumericPrecision.MONETARY (§5.0).
  * Arithmetic operations preserve currency; cross-currency arithmetic is a type error.
  */
 public record Money(BigDecimal amount, Currency currency) {
@@ -344,12 +452,13 @@ public record Money(BigDecimal amount, Currency currency) {
         Objects.requireNonNull(currency, "currency");
     }
 
-    public static Money of(BigDecimal amount, Currency currency) {
-        return new Money(amount.setScale(4, RoundingMode.HALF_UP), currency);
+    /** Factory: rounds to MONETARY scale via NumericPrecision (TR-048). */
+    public static Money of(BigDecimal amount, Currency currency, NumericPrecision np) {
+        return new Money(np.round(amount, NumericPrecision.Domain.MONETARY), currency);
     }
 
-    public static Money eur(BigDecimal amount) {
-        return of(amount, Currency.getInstance("EUR"));
+    public static Money eur(BigDecimal amount, NumericPrecision np) {
+        return of(amount, Currency.getInstance("EUR"), np);
     }
 
     public Money add(Money other) {
@@ -357,8 +466,9 @@ public record Money(BigDecimal amount, Currency currency) {
         return new Money(amount.add(other.amount), currency);
     }
 
-    public Money multiply(BigDecimal factor) {
-        return new Money(amount.multiply(factor).setScale(4, RoundingMode.HALF_UP), currency);
+    /** Multiply and round to MONETARY scale (TR-048). */
+    public Money multiply(BigDecimal factor, NumericPrecision np) {
+        return new Money(np.round(amount.multiply(factor), NumericPrecision.Domain.MONETARY), currency);
     }
 
     private void requireSameCurrency(Money other) {
@@ -731,20 +841,22 @@ public enum SeriesType {
 public enum VolumeUnit {
     /** Power capacity in MW. Energy = volume × elapsed_hours. */
     MW_CAPACITY {
-        @Override public BigDecimal toEnergy(BigDecimal volume, Duration elapsed) {
+        @Override public BigDecimal toEnergy(BigDecimal volume, Duration elapsed, NumericPrecision np) {
             BigDecimal hours = BigDecimal.valueOf(elapsed.getSeconds())
-                .divide(BigDecimal.valueOf(3600), 6, RoundingMode.HALF_UP);
-            return volume.multiply(hours).setScale(6, RoundingMode.HALF_UP);
+                .divide(BigDecimal.valueOf(3600),
+                    np.scale(NumericPrecision.Domain.ENERGY), np.roundingMode());
+            return np.round(volume.multiply(hours), NumericPrecision.Domain.ENERGY);
         }
     },
     /** Energy delivered per period in MWh. Energy = volume. */
     MWH_PER_PERIOD {
-        @Override public BigDecimal toEnergy(BigDecimal volume, Duration elapsed) {
+        @Override public BigDecimal toEnergy(BigDecimal volume, Duration elapsed, NumericPrecision np) {
             return volume;
         }
     };
 
-    public abstract BigDecimal toEnergy(BigDecimal volume, Duration elapsed);
+    /** Convert volume to energy; scale governed by NumericPrecision.ENERGY (TR-048). */
+    public abstract BigDecimal toEnergy(BigDecimal volume, Duration elapsed, NumericPrecision np);
 
     public boolean isFixedDuration() { return true; }
 }
@@ -939,10 +1051,10 @@ public class VolumeIntervalEntity {
     @Column(name = "interval_end", nullable = false)
     private Instant intervalEnd;
 
-    @Column(name = "volume", precision = 15, scale = 6, nullable = false)
+    @Column(name = "volume", nullable = false)      // precision/scale: NumericPrecision.VOLUME (TR-047)
     private BigDecimal volume;
 
-    @Column(name = "energy", precision = 18, scale = 6, nullable = false)
+    @Column(name = "energy", nullable = false)      // precision/scale: NumericPrecision.ENERGY (TR-047)
     private BigDecimal energy;
 
     @Column(name = "version", nullable = false)
@@ -1074,7 +1186,7 @@ public class PositionLedgerEntryEntity {
     @Column(name = "delivery_timezone", length = 64, nullable = false)
     private String deliveryTimezone;
 
-    @Column(name = "quantity", precision = 15, scale = 6, nullable = false)
+    @Column(name = "quantity", nullable = false)     // precision/scale: NumericPrecision.VOLUME (TR-047)
     private BigDecimal quantity;
 
     @Enumerated(EnumType.STRING)
@@ -1301,6 +1413,9 @@ public interface PriceEvaluator {
  * Representative tree-walker excerpt (pv-domain service, not adapter).
  * Shows exhaustive dispatch for 6 of the 13 types.
  */
+/** NumericPrecision injected at construction (TR-048). */
+private final NumericPrecision np;
+
 public PriceResolution evaluate(
         PriceExpression expr,
         DeliveryPeriod interval,
@@ -1312,7 +1427,8 @@ public PriceResolution evaluate(
 
     BigDecimal result = eval(expr, interval, purpose, marketData, activeLeaves, versions);
 
-    return new PriceResolution(result, Set.copyOf(activeLeaves), Map.copyOf(versions));
+    return new PriceResolution(np.round(result, NumericPrecision.Domain.PRICE),
+            Set.copyOf(activeLeaves), Map.copyOf(versions));
 }
 
 private BigDecimal eval(
@@ -1367,7 +1483,7 @@ private BigDecimal eval(
         case Escalate e -> {
             BigDecimal base = eval(e.base(), interval, purpose, md, activeLeaves, versions);
             BigDecimal ratio = eval(e.ratio(), interval, purpose, md, activeLeaves, versions);
-            yield base.multiply(ratio).setScale(4, RoundingMode.HALF_UP);
+            yield np.round(base.multiply(ratio), NumericPrecision.Domain.PRICE);
         }
 
         case ConditionalGate g -> {
@@ -1397,15 +1513,18 @@ private BigDecimal eval(
             eval(s.left(), interval, purpose, md, activeLeaves, versions)
                 .subtract(eval(s.right(), interval, purpose, md, activeLeaves, versions));
 
-        case Multiply mu ->
-            eval(mu.left(), interval, purpose, md, activeLeaves, versions)
-                .multiply(eval(mu.right(), interval, purpose, md, activeLeaves, versions))
-                .setScale(4, RoundingMode.HALF_UP);
+        case Multiply mu -> {
+            BigDecimal product = eval(mu.left(), interval, purpose, md, activeLeaves, versions)
+                .multiply(eval(mu.right(), interval, purpose, md, activeLeaves, versions));
+            yield np.round(product, NumericPrecision.Domain.INTERMEDIATE);
+        }
 
-        case Divide d ->
-            eval(d.numerator(), interval, purpose, md, activeLeaves, versions)
+        case Divide d -> {
+            BigDecimal quotient = eval(d.numerator(), interval, purpose, md, activeLeaves, versions)
                 .divide(eval(d.denominator(), interval, purpose, md, activeLeaves, versions),
-                        4, RoundingMode.HALF_UP);
+                        np.scale(NumericPrecision.Domain.INTERMEDIATE), np.roundingMode());
+            yield quotient;
+        }
 
         case TimeAverage ta -> {
             // Delegate to MarketDataPort for windowed average
@@ -1416,7 +1535,7 @@ private BigDecimal eval(
         case FxConvert fx -> {
             BigDecimal val = eval(fx.value(), interval, purpose, md, activeLeaves, versions);
             BigDecimal rate = eval(fx.fxRate(), interval, purpose, md, activeLeaves, versions);
-            yield val.multiply(rate).setScale(4, RoundingMode.HALF_UP);
+            yield np.round(val.multiply(rate), NumericPrecision.Domain.MONETARY);
         }
     };
 }

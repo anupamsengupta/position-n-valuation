@@ -339,6 +339,11 @@ public class DomainModule extends AbstractModule {
 
     @Override
     protected void configure() {
+        // Numeric precision configuration (§5.0, TR-046)
+        // Default: EU power conventions. Override with @Named("gas") for commodity-specific.
+        bind(NumericPrecision.class)
+            .toInstance(new DefaultNumericPrecision());
+
         // Volume resolution (Pattern #9)
         bind(ProfileResolver.class).in(Singleton.class);
         bind(ForecastResolver.class).in(Singleton.class);
@@ -1054,7 +1059,7 @@ public class PositionValuationApp {
 | Decision | Description | Patterns | Spec Artifacts |
 |----------|-------------|----------|----------------|
 | D-1 | Ledger grain = trade-leg × delivery-month block; signed qty; no interval fan-out in S1 | #1, #2, #6, #17, #34, #35 | `PositionLedgerEntry`, `PositionLedgerEntryEntity`, `PositionLedgerRepository`, `TradeCaptureHandler`, `BitemporalAuditListener` |
-| D-2 | Price = expression ref; fixed price = degenerate expression | #3, #5, #8, #10, #12 | `PriceExpression` (sealed, 13 types), `PriceEvaluator`, `ConstantLeaf`, `MarketDataLeaf`, `IndexLeaf`, `Clamp`, `Escalate`, `ConditionalGate`, pattern-matching `switch` |
+| D-2 | Price = expression ref; fixed price = degenerate expression | #3, #5, #8, #10, #12, #33 | `PriceExpression` (sealed, 13 types), `PriceEvaluator`, `ConstantLeaf`, `MarketDataLeaf`, `IndexLeaf`, `Clamp`, `Escalate`, `ConditionalGate`, pattern-matching `switch`, `NumericPrecision` |
 | D-3 | Forward marks ephemeral; settlement bitemporal; EOD strike = month-bucket with stamps | #1, #15, #28 | `SettlementCellEntity`, `ForwardMarkStore`, `StruckMarkEntity`, `AbstractMaterializationJob` |
 | D-4 | Optimized version-binding; `active_leaves` | #12, #15 | `PriceResolution.activeLeaves()`, `DependencyEdge.activeLeaves()`, `SettlementCellEntity.activeLeaves` |
 | D-5 | Peak is interval-dimension data | #1, #33 | `CachedInterval.isPeak()`, `RollupCell.isPeak()` |
@@ -1074,7 +1079,7 @@ public class PositionValuationApp {
 | FR-004–FR-005 | Grain follows lifecycle | `PositionLedgerEntry` (trade-leg × month), `VolumeSeries` (aggregate root) |
 | FR-006–FR-009 | Bitemporality | `PositionLedgerEntryEntity`, `SettlementCellEntity` (bitemporal columns), `BitemporalAuditListener`, `JpaPositionLedgerRepository.findAsOf()` (JPQL text-block), bitemporal reconstruction test |
 | FR-020–FR-025 | Market, DeliveryPoint, Calendar | `DeliveryPeriod`, `MarketDataPort`, `PriceEvaluator` |
-| FR-030–FR-037 | Position Ledger attributes | `PositionLedgerEntry` (signed qty, Builder, delivery-month blocks), `TradeCaptureHandler`, `TradeAmendHandler`, `TradeCancelHandler` |
+| FR-030–FR-037 | Position Ledger attributes | `PositionLedgerEntry` (signed qty, Builder, delivery-month blocks), `TradeCaptureHandler`, `TradeAmendHandler`, `TradeCancelHandler`, `NumericPrecision` (FR-036: configurable precision) |
 | FR-040–FR-048h | PriceExpression | `PriceExpression` sealed hierarchy (13 types), `PriceEvaluator.evaluate()`, pattern-matching `switch`, `PriceResolution` (value, activeLeaves, inputVersionSet) |
 | FR-050–FR-057a | Volume Series | `VolumeSeries`, `VolumeInterval`, `VolumeResolver`, `VolumeSeriesFactory`, `VolumeSeriesRepository`, `VolumeSeriesSpec`, `MaterializationStrategy`, `BatchWriter`, `VolumePublished`, `VolumeSuperseded` |
 | FR-060–FR-063 | Market Data Store | `MarketDataPort` (read-only, version pinning), `MarketDataLookup` |
@@ -1266,6 +1271,9 @@ Extends functional-spec §16 (O-1 through O-8) with implementation-specific item
 | TR-043 | V2.0 §14 | §18a.1 | JMH microbenchmark regression gates |
 | TR-044 | V2.0 §14 | §18a.2 | Gatling load test targets |
 | TR-045 | ADR-001 §3.1 | §19.1 | Bootstrap module composition order |
+| TR-046 | FR-036, D-2, D-12 | §5.0 | System-wide configurable numeric precision via `NumericPrecision` port |
+| TR-047 | FR-036, V2.0 §5.0 | §5.0 | JPA column precision/scale governed by `NumericPrecision` defaults |
+| TR-048 | FR-036 | §5.0 | No hardcoded scale literals — all `setScale`/`divide` resolve through `NumericPrecision` |
 
 ---
 
