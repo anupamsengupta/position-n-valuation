@@ -48,7 +48,7 @@ docs/
 - VolumeReference has own effectiveFrom/To (not derived from trade)
 
 ## Platform constants
-Java 21 / Spring Boot 3.3 / Aurora PostgreSQL 16 (NO TimescaleDB) / Kafka 3.7 KRaft / Redis 7 / pg_partman + pg_cron / Flyway DDL / per-tenant Hikari + PgBouncer
+Java 21 / Spring Boot 4.0.7 (Spring Framework 7.x, Hibernate 7.x, Jakarta EE 11) / Aurora PostgreSQL 16 (NO TimescaleDB) / Kafka 3.7 KRaft / Redis 7 / pg_partman + pg_cron / Flyway DDL / per-tenant Hikari + PgBouncer
 
 ## Working conventions
 - Cite FR-nnn / D-nn numbers when referencing spec rules

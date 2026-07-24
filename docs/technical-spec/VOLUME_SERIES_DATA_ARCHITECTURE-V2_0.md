@@ -88,7 +88,9 @@ V2.0 is a **complete rewrite**, not an incremental patch. The V1.3 document was 
 | Layer | Technology | Version |
 |---|---|---|
 | Language | Java | 21 (LTS) |
-| Framework | Spring Boot | 3.3 |
+| Framework | Spring Boot | 4.0.7 |
+| ORM | Hibernate | 7.x (managed by Spring Boot) |
+| Specification | Jakarta EE | 11 (JPA 3.2, Servlet 6.1) |
 | Database | Aurora PostgreSQL | 16 |
 | Messaging | Kafka (KRaft mode) | 3.7 |
 | Cache | Redis | 7 |
@@ -1892,7 +1894,7 @@ The position module consumes volume data; it does not own or manage it.
 | 5 | Indexes match README §10.3 | `(series_id, interval_start)`, `(tenant_id, series_key, version_id)`, `(trade_leg_id)`, `(asset_id)`, `(tenant_id, delivery_start, delivery_end)`, `(trade_leg_id, interval_start)` for S6b |
 | 6 | Sizing matches README §10.4 | ~56M FORECAST, ~35M PROFILE, ~28M metered, ~29M S6b, ~5K volume_reference |
 | 7 | Events match V3.0 §8 | VolumePublished and VolumeSuperseded with correct payloads |
-| 8 | Platform constants match context doc §12 | Aurora PG 16, pg_partman, pg_cron, Kafka 3.7 KRaft, Redis 7, Java 21, Spring Boot 3.3 |
+| 8 | Platform constants match context doc §12 | Aurora PG 16, pg_partman, pg_cron, Kafka 3.7 KRaft, Redis 7, Java 21, Spring Boot 4.0.7 |
 | 9 | Quality states match FR-054 | EFFECTIVE, AMENDED, CURRENT, SUPERSEDED, PROVISIONAL, VALIDATED, ESTIMATED |
 | 10 | VolumeReference DDL has all V3.0 fields | trade_leg_id, trade_id, asset_id, multiplier, volume_series_key, metered_series_key, effective_from/to |
 | 11 | D-11 unified resolution documented | P8 principle + VolumeReference DDL + §18.3 interface |

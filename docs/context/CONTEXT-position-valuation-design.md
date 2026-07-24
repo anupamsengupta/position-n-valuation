@@ -257,7 +257,7 @@ O-1 hot-window length per market · O-2 event path in phase 1 vs batch-only (big
 
 ## 12. Platform constants (from prior architecture work — apply here too)
 
-Java 21 / Spring Boot 3.3 / Aurora PostgreSQL 16 (NO TimescaleDB — invalid on RDS/Aurora; declarative partitioning + pg_partman + pg_cron + matviews) / Kafka 3.7 KRaft (batch listeners for high-volume consumers, manual commit, InFlightOffsetTracker at-least-once) / Redis 7 (pipeline + MULTI-EXEC compose independently) / `GenerationType.SEQUENCE` allocationSize=50 (never IDENTITY — kills JDBC batching) / Flyway owns all DDL incl. partition mgmt / per-tenant Hikari partitioning + PgBouncer transaction pooling + WFQ producer-side token buckets for noisy-neighbour isolation.
+Java 21 / Spring Boot 4.0.7 (Spring Framework 7.x, Hibernate 7.x, Jakarta EE 11, JPA 3.2, Jackson 3.x) / Aurora PostgreSQL 16 (NO TimescaleDB — invalid on RDS/Aurora; declarative partitioning + pg_partman + pg_cron + matviews) / Kafka 3.7 KRaft (batch listeners for high-volume consumers, manual commit, InFlightOffsetTracker at-least-once) / Redis 7 (pipeline + MULTI-EXEC compose independently) / `GenerationType.SEQUENCE` allocationSize=50 (never IDENTITY — kills JDBC batching) / Flyway owns all DDL incl. partition mgmt / per-tenant Hikari partitioning + PgBouncer transaction pooling + WFQ producer-side token buckets for noisy-neighbour isolation.
 
 ---
 

@@ -17,7 +17,7 @@ The system comprises eight subsystems (S1–S8 plus S6b) spanning domain entitie
 
 **Why this ADR:** As we move from specification to Java 21 implementation, we need a single reference mapping each implementation pattern to specific spec requirements, subsystems, and Java 21 language features. This catalog bridges spec and code — every pattern traces to at least one FR-nnn or D-nn reference, and every subsystem is covered.
 
-**Platform:** Java 21 / Spring Boot 3.3 / Aurora PostgreSQL 16 / Kafka 3.7 (KRaft) / Redis 7 / pg_partman + pg_cron / Flyway / HikariCP + PgBouncer.
+**Platform:** Java 21 / Spring Boot 4.0.7 (Spring Framework 7.x, Hibernate 7.x, Jakarta EE 11, JPA 3.2, Jackson 3.x) / Aurora PostgreSQL 16 / Kafka 3.7 (KRaft) / Redis 7 / pg_partman + pg_cron / Flyway / HikariCP + PgBouncer.
 
 ---
 
@@ -31,7 +31,7 @@ The system comprises eight subsystems (S1–S8 plus S6b) spanning domain entitie
 | 2 | Aggregate Root | `VolumeSeries` (root) → `VolumeInterval` (child, ordered by `intervalStart`); `MeteredActualVolumeSeries` → `MeteredActualInterval`; `PositionLedgerEntry` as standalone root | V3.0 §3.1, §3.3.1, FR-050 | `SequencedCollection` for ordered children |
 | 3 | Value Object (Java `record`) | `DeliveryPeriod`, `TimeGranularity`, `SeriesKey`, `Money`, `TimeRange`, `DeliveryRange` — immutable, equality by value, validated at construction | FR-001, FR-036, D-2, V3.0 §3.2 | `record` types |
 | 4 | Enum with behavior | `QualityState` with allowed transition guards (PROVISIONAL→VALIDATED→FINAL for metered; EFFECTIVE→AMENDED for profile; CURRENT→SUPERSEDED for forecast); `SeriesType`, `VolumeUnit` with `isFixedDuration()`, `isSubDaily()` | FR-054, V3.0 §3.2.4–§3.2.6 | Enhanced `enum` with methods |
-| 5 | Sealed type hierarchy | `PriceExpression` sealed interface: `Fixed`, `Index`, `Formula`, `Spread`, `Composite` — every leg carries a `price_expression_ref` (D-2); fixed price is the degenerate single-constant expression | D-2, FR-040, FR-020–FR-025 | `sealed interface … permits` + pattern matching `switch` |
+| 5 | Sealed type hierarchy | `PriceExpression` sealed interface with leaf types (`ConstantLeaf`, `MarketDataLeaf`, `IndexLeaf`) and operator types (`Add`, `Subtract`, `Multiply`, `Divide`, `Clamp`, `Escalate`, `ConditionalGate`, `ConditionalPassThrough`, `TimeAverage`, `FxConvert`). A fixed price is a degenerate tree with a single `ConstantLeaf`. A full PPA formula composes 5+ leaves and 4+ operators (collar + CPI escalation + neg-price gate). One tree walker resolves all expression types; `active_leaves` output drives blast-radius optimization (D-4) | D-2, FR-040, FR-048–FR-048h, FR-020–FR-025 | `sealed interface … permits` + pattern matching `switch` |
 
 ### 2.2 Category 2 — Creational Patterns (3 patterns)
 
@@ -46,9 +46,9 @@ The system comprises eight subsystems (S1–S8 plus S6b) spanning domain entitie
 | # | Pattern | Where Applied | Spec Reference | Java 21 Feature |
 |---|---|---|---|---|
 | 9 | Strategy — Volume Resolution | `VolumeResolver` interface with `ProfileResolver` (per-trade PROFILE series, `multiplier=1.0`) and `ForecastResolver` (shared asset FORECAST series, `multiplier < 1.0`). In practice, one code path — the "strategy" is the data properties, not branching code (D-11: no category branching) | D-11, FR-050–FR-051, V3.0 §2.3 | `sealed interface` |
-| 10 | Strategy — Price Evaluation | `PriceEvaluator` interface: `FixedEvaluator` (constant), `IndexEvaluator` (market data lookup), `FormulaEvaluator` (tree walk with collar, neg-price gate, HICP escalation, FX). Expression tree nodes dispatch to evaluators | D-2, FR-020, FR-040, §6.4 | Pattern matching `switch` over `sealed` types |
+| 10 | Strategy — Price Evaluation | Tree walker dispatches per node type via pattern matching `switch`: `ConstantLeaf` → return value; `MarketDataLeaf` → lookup from S4 at correct version; `IndexLeaf` → lookup macro index with ref-month mapping; `Clamp` → floor/cap/collar; `Escalate` → base × CPI ratio; `ConditionalGate` → neg-price zeroing (FR-042a variant a); `ConditionalPassThrough` → neg-price pass-through (FR-042a variant b); `FxConvert` → cross-currency. Purpose-based leaf resolution (FR-048e): forward marks use forward curve, settlement uses DA settlement series | D-2, FR-020, FR-040, FR-048–FR-048f, §6.4–§6.5 | Pattern matching `switch` over `sealed` types |
 | 11 | Strategy — Materialization | `MaterializationStrategy` interface: `EagerStrategy` (DA fills, short blocks — full materialization), `RollingHorizonStrategy` (long-tenor PPAs — 3 months ahead, monthly extension), `ChunkStrategy` (Kafka message per month chunk) | FR-056, V3.0 §4.1–§4.3, S6b | — |
-| 12 | Composite | `PriceExpression` tree — recursive `evaluate(interval, marketData)`. Collar wraps sub-expression; escalation multiplies sub-expression by HICP factor; neg-price gate overrides floor; FX converts. Clause precedence encoded per expression (contract law), not hard-coded | D-2, FR-025, §6.2, §2.9 | Pattern matching for tree traversal |
+| 12 | Composite | `PriceExpression` tree — recursive `evaluate(interval, marketData)`. Leaf nodes are terminals (`ConstantLeaf`, `MarketDataLeaf`, `IndexLeaf`); operator nodes compose children (`Clamp` for collar, `Escalate` for CPI, `ConditionalGate` for neg-price zeroing, `FxConvert` for cross-currency). Clause precedence encoded per expression (contract law, not hard-coded — FR-042). Resolution emits `(value, active_leaves, input_version_set)` per FR-048f: collar-inside → CPI inactive; neg-gate fires → everything below inactive. Complexity ranges from 1 leaf / 0 operators (fixed price) to 6+ leaves / 5+ operators (full PPA — FR-048d) | D-2, FR-025, FR-042, FR-048d–FR-048g, §6.2, §6.5 | Pattern matching for tree traversal |
 | 13 | Decorator / Filter Chain | `TenantContextFilter` → `AuditFilter` → `RequestHandler`. Tenant filter sets `app.tenant_id` session variable (P1, V2.0 §11.1); audit filter logs bitemporal mutation context; request handler proceeds | O-2, FR-075, V2.0 §11, P1 | — |
 
 ### 2.4 Category 4 — Behavioral Patterns (4 patterns)
@@ -105,8 +105,8 @@ The system comprises eight subsystems (S1–S8 plus S6b) spanning domain entitie
 | # | Java 21 Feature | Application | Code Example |
 |---|---|---|---|
 | 1 | Records | All value objects: `DeliveryPeriod`, `SeriesKey`, `Money`, `TimeRange`, `DeliveryRange`. Event payloads: `VolumePublished`, `VolumeSuperseded`. Command payloads: `TradeCapture`, `TradeAmend` | `record DeliveryPeriod(ZonedDateTime start, ZonedDateTime end, ZoneId zone) { }` |
-| 2 | Sealed interfaces | `PriceExpression` hierarchy (5 subtypes), `VolumeResolutionStrategy`, `MaterializationStrategy`. Compiler-enforced exhaustive matching in `switch` | `sealed interface PriceExpression permits Fixed, Index, Formula, Spread, Composite { }` |
-| 3 | Pattern matching (`switch`) | PriceExpression tree walker: dispatch evaluation per node type. Event routing: dispatch handler per event type. QualityState transitions | `case Fixed f -> f.price(); case Index i -> lookupMarketData(i); case Formula f -> evaluateTree(f);` |
+| 2 | Sealed interfaces | `PriceExpression` hierarchy (3 leaf types + 10 operator types per FR-048h), `VolumeResolutionStrategy`, `MaterializationStrategy`. Compiler-enforced exhaustive matching in `switch` — adding a new operator produces compile errors at every unhandled dispatch | `sealed interface PriceExpression permits ConstantLeaf, MarketDataLeaf, IndexLeaf, Add, Subtract, Multiply, Divide, Clamp, Escalate, ConditionalGate, ConditionalPassThrough, TimeAverage, FxConvert { }` |
+| 3 | Pattern matching (`switch`) | PriceExpression tree walker: dispatch evaluation per node type (FR-048h). Event routing: dispatch handler per event type. QualityState transitions | `case ConstantLeaf c -> c.value(); case MarketDataLeaf m -> lookupMarketData(m, purpose); case Clamp cl -> clamp(eval(cl.min()), eval(cl.max()), eval(cl.inner()));` |
 | 4 | Text blocks | JPQL queries, SQL fragments for complex bitemporal filters, Flyway migration SQL, outbox payload templates | `String jpql = """ SELECT v FROM VolumeSeries v WHERE v.seriesKey = :key AND v.qualityState = 'CURRENT' """;` |
 | 5 | Virtual threads (future consideration) | I/O-bound chunk materialization workers — each chunk (one delivery month, ~2,976 intervals) is independent. Virtual threads enable high-concurrency materialization without thread-pool tuning | `try (var executor = Executors.newVirtualThreadPerTaskExecutor()) { chunks.forEach(c -> executor.submit(() -> materialize(c))); }` |
 | 6 | `SequencedCollection` | Ordered interval lists on `VolumeSeries.intervals` (ordered by `intervalStart`), version chains on audit history (`getFirst()` / `getLast()` for boundary access) | `SequencedSet<VolumeInterval> intervals = new TreeSet<>(Comparator.comparing(VolumeInterval::intervalStart));` |
@@ -123,14 +123,14 @@ All 35 patterns in a single reference view:
 | 2 | Aggregate Root | Domain Model | S3, S1 | V3.0 §3.1, FR-050 | `SequencedCollection` |
 | 3 | Value Object (record) | Domain Model | S1, S2, S3 | FR-001, FR-036, D-2 | `record` |
 | 4 | Enum with behavior | Domain Model | S3, S5a | FR-054, V3.0 §3.2.6 | Enhanced `enum` |
-| 5 | Sealed type hierarchy | Domain Model | S2 | D-2, FR-020–FR-025 | `sealed interface` |
+| 5 | Sealed type hierarchy | Domain Model | S2 | D-2, FR-040, FR-048–FR-048h | `sealed interface` |
 | 6 | Builder | Creational | S1, S3 | D-1, D-11, FR-030 | — |
 | 7 | Factory Method | Creational | S3 | D-11, FR-050 | — |
 | 8 | Static Factory | Creational | S1, S2 | D-2, FR-036 | `record` static factory |
 | 9 | Strategy — Volume Resolution | Structural | S3, S6b | D-11, FR-050–FR-051 | `sealed interface` |
-| 10 | Strategy — Price Evaluation | Structural | S2, S5a | D-2, FR-020, FR-040 | Pattern matching `switch` |
+| 10 | Strategy — Price Evaluation | Structural | S2, S5a | D-2, FR-020, FR-040, FR-048 | Pattern matching `switch` |
 | 11 | Strategy — Materialization | Structural | S3, S6b | FR-056, V3.0 §4 | — |
-| 12 | Composite | Structural | S2 | D-2, FR-025 | Pattern matching |
+| 12 | Composite | Structural | S2 | D-2, FR-025, FR-042, FR-048d–g | Pattern matching |
 | 13 | Decorator / Filter Chain | Structural | Cross-cutting | O-2, V2.0 §11 | — |
 | 14 | Observer / Domain Events | Behavioral | S3, S5a, S5b, S8 | V3.0 §8, FR-052a–c | `record` |
 | 15 | Template Method | Behavioral | S5a, S5b, S6, S6b | FR-056 | — |
@@ -177,7 +177,7 @@ All 35 patterns in a single reference view:
 ### Neutral
 
 - **Pattern scope.** 35 patterns is a high count, but each is narrowly scoped to a specific spec requirement. No pattern is speculative — every one traces to at least one FR-nnn or D-nn.
-- **Virtual threads.** Listed as a consideration, not a commitment. The chunk materialization use case (I/O-bound, independent tasks) is a natural fit, but adoption depends on Spring Boot 3.3 virtual thread support maturity and connection pool compatibility.
+- **Virtual threads.** Listed as a consideration, not a commitment. The chunk materialization use case (I/O-bound, independent tasks) is a natural fit. Spring Boot 4.0 has mature virtual thread support via `spring.threads.virtual.enabled=true`; HikariCP and Hibernate 7.x are compatible.
 
 ---
 
@@ -188,7 +188,7 @@ All 35 patterns in a single reference view:
 | Decision | Description | Implementing Patterns |
 |---|---|---|
 | D-1 | Ledger grain = trade-leg × delivery-month block; signed qty; no interval fan-out in S1 | #1 Entity vs Measure, #2 Aggregate Root, #6 Builder, #34 Immutability, #35 Bitemporal Audit |
-| D-2 | Price = expression ref; fixed price = degenerate expression | #3 Value Object, #5 Sealed Hierarchy, #8 Static Factory, #10 Strategy (Price), #12 Composite |
+| D-2 | Price = expression ref; fixed price = degenerate expression (FR-048: full taxonomy from ConstantLeaf to multi-index PPA) | #3 Value Object, #5 Sealed Hierarchy, #8 Static Factory, #10 Strategy (Price), #12 Composite |
 | D-3 | Forward marks ephemeral; settlement bitemporal; EOD strike = month-bucket with stamps | #1 Entity vs Measure, #15 Template Method, #28 CQRS |
 | D-4 | Optimized version-binding; `active_leaves` captured at first resolution | #12 Composite, #15 Template Method |
 | D-5 | Peak is interval-dimension data, calendar-versioned; never on position rows | #1 Entity vs Measure, #33 Functional Interfaces |
@@ -226,6 +226,7 @@ All 35 patterns in a single reference view:
 | FR-020–FR-025 | Market, DeliveryPoint, MarketCalendar | #3, #5, #10, #12 |
 | FR-030–FR-039 | Position Ledger attributes & lifecycle | #6, #17, #34 |
 | FR-040 | PriceExpression reference | #5, #10, #12 |
+| FR-048–FR-048h | PriceExpression taxonomy, leaf/operator types, active_leaves | #5, #10, #12 |
 | FR-050–FR-056 | Volume series interface & resolution | #2, #7, #9, #11, #15, #19 |
 | FR-054 | QualityState transitions | #4, #16 |
 | FR-075 | Forward marks ephemeral | #1, #28 |
@@ -263,7 +264,11 @@ All 35 patterns in a single reference view:
 | Component | Version | Constraint Source |
 |---|---|---|
 | Java | 21 (LTS) | V2.0 §1.4, Context §11 |
-| Spring Boot | 3.3 | V2.0 §1.4 |
+| Spring Boot | 4.0.7 | V2.0 §1.4 |
+| Spring Framework | 7.x | Managed by Spring Boot 4.0.7 |
+| Hibernate ORM | 7.x | Managed by Spring Boot 4.0.7 |
+| Jakarta EE | 11 (JPA 3.2, Servlet 6.1) | Required by Spring Boot 4.0.7 |
+| Jackson | 3.x (`tools.jackson` packages) | Managed by Spring Boot 4.0.7 |
 | Aurora PostgreSQL | 16 | V2.0 §1.4, P0 |
 | Kafka | 3.7 (KRaft) | V2.0 §1.4 |
 | Redis | 7 | V2.0 §1.4 |

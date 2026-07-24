@@ -239,17 +239,177 @@ Where snapshot-like access is needed (the trader's grid, the EOD risk report), t
 
 ### 4.2 Price Expressions (How to Calculate the Price)
 
-Simple trades have a fixed price (e.g., "65 EUR per MWh"). But many deals — especially renewables — have **formula prices**:
+Every trade has a price — but "price" means very different things depending on the deal. The system uses a single **PriceExpression** model that handles the full spectrum, from a trivial fixed price to a multi-index PPA formula. The key design insight: a fixed price is just a degenerate (simplest possible) formula. One code path handles everything.
+
+#### The Spectrum: From Simple to Complex
+
+**Level 1 — Fixed price (the simplest case)**
+
+A day-ahead exchange fill or a bilateral block trade has a single agreed price:
 
 ```
-Example: Wind PPA pricing formula
-  1. Start with the day-ahead auction price
-  2. Apply an annual inflation adjustment (CPI index)
-  3. Set a floor (minimum 42 EUR) and cap (maximum 95 EUR)
-  4. BUT: if the day-ahead price is negative, pay nothing (overrides the floor)
+Trade T-5500 (DA fill, 50 MW baseload for Apr 24, 2026):
+  PriceExpression = Fixed(85.00 EUR/MWh)
+
+  For every 15-minute interval:
+    price = 85.00 EUR/MWh   (always the same number)
+    value = 85.00 × volume × 0.25 hours
 ```
 
-The system stores the **recipe** (the formula), not pre-calculated prices. Prices are computed per interval when needed, using the actual market data available at that time.
+This is stored as a PriceExpression with a single constant leaf — a "tree" with just one node. The system processes it through the same formula engine as a complex PPA; it just happens to return the same number every time.
+
+**Level 2 — Indexed price (one market reference)**
+
+Some bilateral contracts tie the price to a market index:
+
+```
+Trade T-6600 (monthly forward, indexed to DA settlement):
+  PriceExpression = Index(series="EPEX-DE-LU-DA15", lag=0)
+
+  For each 15-minute interval:
+    price = DA settlement price for that interval (looked up from Market Data Store S4)
+    value = DA_price × volume × 0.25 hours
+```
+
+The expression has one leaf that references a market data series. The price is different for every interval — it depends on whatever the day-ahead auction cleared at.
+
+**Level 3 — Indexed with spread/differential**
+
+A common variation adds a fixed premium or discount to a market index:
+
+```
+Trade T-6700 (bilateral, DA + 3.50 EUR premium):
+  PriceExpression = Add(
+    Index(series="EPEX-DE-LU-DA15"),
+    Fixed(3.50)
+  )
+
+  For each interval:
+    price = DA_price + 3.50
+```
+
+Now the expression is a tree with two leaves (one index, one constant) and an arithmetic operator node.
+
+**Level 4 — PPA with collar (floor + cap)**
+
+Renewable PPAs typically add a price collar — a floor and cap that protect both parties:
+
+```
+Trade T-7000 (solar PPA, collar 40/90):
+  PriceExpression = Clamp(
+    min = Fixed(40.00),    ← floor: generator guaranteed at least 40 EUR
+    max = Fixed(90.00),    ← cap: offtaker never pays more than 90 EUR
+    inner = Index(series="EPEX-DE-LU-DA15")
+  )
+
+  For each interval:
+    if DA_price < 40.00 → price = 40.00  (floor kicks in)
+    if DA_price > 90.00 → price = 90.00  (cap kicks in)
+    otherwise           → price = DA_price (pass-through)
+```
+
+**Level 5 — Full PPA formula (the reference deal)**
+
+The reference deal (T-7788) shows the full complexity of a real-world wind PPA:
+
+```
+Trade T-7788 (wind PPA, collar + CPI escalation + negative-price gate):
+  PriceExpression =
+    NegativePriceGate(                          ← Step 4: if DA < 0, price = 0
+      gate_input = Index("EPEX-DE-LU-DA15"),              (OVERRIDES the floor!)
+      inner =
+        Clamp(                                  ← Step 3: apply floor and cap
+          min = Escalate(                       ← Floor = 42.00 × (CPI/base)
+                  Fixed(42.00),
+                  ratio = Divide(
+                    Index("HICP", ref_month=delivery_year-1, month=November),
+                    Fixed(105.2)
+                  )
+                ),
+          max = Escalate(                       ← Cap = 95.00 × (CPI/base)
+                  Fixed(95.00),
+                  ratio = same CPI ratio
+                ),
+          inner = Index("EPEX-DE-LU-DA15")      ← Step 1: start with DA price
+        )
+    )
+```
+
+Worked example for interval 2026-08-15 18:45:
+
+```
+Step 1: DA price = 68.20 EUR/MWh
+Step 2: CPI factor = HICP(2025-11) / 105.2 = 128.4 / 105.2 = 1.22053
+         → Escalated floor = 42.00 × 1.22053 = 51.26 EUR
+         → Escalated cap   = 95.00 × 1.22053 = 115.95 EUR
+Step 3: Collar check: 51.26 ≤ 68.20 ≤ 115.95 → inside collar → price = 68.20
+Step 4: Neg-price gate: DA ≥ 0 → gate does not fire → price stays 68.20
+Result: 68.20 EUR/MWh × 11.40 MWh (metered) = 777.48 EUR
+```
+
+Contrast with interval 2026-08-15 03:15 (negative DA price):
+
+```
+Step 1: DA price = -14.90 EUR/MWh
+Step 4: Neg-price gate: DA < 0 → gate FIRES → price = 0.00 EUR/MWh
+         (the floor of 51.26 EUR is OVERRIDDEN — contract law, not math)
+Result: 0.00 EUR × volume = 0.00 EUR
+```
+
+**Level 6 — Multi-index PPA (multiple market references)**
+
+Some PPAs reference multiple curves — one for forward valuation, a different one for settlement:
+
+```
+Trade T-8200 (PPA with different forward and settlement curves):
+  PriceExpression for FORWARD valuation:
+    Clamp(
+      min = Escalate(Fixed(38.00), CPI ratio),
+      max = Escalate(Fixed(88.00), CPI ratio),
+      inner = Index("EEX-DE-POWER-FRONT-MONTH")    ← forward curve for undelivered
+    )
+
+  PriceExpression for SETTLEMENT:
+    Clamp(
+      min = Escalate(Fixed(38.00), CPI ratio),
+      max = Escalate(Fixed(88.00), CPI ratio),
+      inner = Index("EPEX-DE-LU-DA15")              ← DA settlement for delivered
+    )
+```
+
+The expression tree can reference ANY number of market data series as leaves. Each leaf points to a specific curve/index in the Market Data Store (S4), with its own publication frequency, quotation window, and version history.
+
+#### How It All Fits Together
+
+```
+THE PRICE EXPRESSION MODEL
+═══════════════════════════
+
+Fixed price           Index price          PPA collar         Full PPA formula
+(simplest)            (one curve)          (floor + cap)      (reference deal)
+
+  [85.00]              [DA15]             Clamp               NegGate
+                                         ╱  │  ╲             ╱      ╲
+                                      [40] [DA15] [90]    [DA15]   Clamp
+                                                                  ╱  │  ╲
+                                                          Escalate [DA15] Escalate
+                                                          ╱    ╲          ╱    ╲
+                                                       [42]  CPI_ratio [95]  CPI_ratio
+                                                              ╱  ╲           ╱  ╲
+                                                          [HICP] [105.2] [HICP] [105.2]
+
+    ↓                    ↓                  ↓                  ↓
+ 1 leaf               1 leaf             3 leaves           5+ leaves
+ 0 operators          0 operators        1 operator         4+ operators
+ Same code path for ALL of them — the "tree walker" just has less to walk.
+```
+
+**Why this matters:**
+- **One code path** resolves all prices — no `if (fixedPrice) ... else if (indexed) ... else if (PPA) ...`
+- Adding a new operator (e.g., time-of-use shaping, basis differential for gas) means adding a new node type to the tree — existing formulas are untouched
+- Every resolved value records **which leaves actually mattered** (`active_leaves`): if the collar is inside, CPI was referenced but didn't change the result; if the neg-gate fired, nothing below it mattered. This drives the dependency index — when HICP is restated, only cells where CPI was active need recomputation
+
+The system stores the **recipe** (the formula tree), not pre-calculated prices. Prices are computed per interval when needed, using the actual market data available at that time. Same inputs always produce the same output — this is what makes settlement values reproducible for regulatory audits.
 
 ### 4.3 Three Types of Valuation
 
@@ -1399,7 +1559,7 @@ DA Fill T-5500 (SAME pattern, just simpler):
 | Scheduled jobs | pg_cron extension | Runs retention cleanup, materialization extension |
 | Event streaming | Kafka 3.7 (KRaft mode) | Volume events, trade events, chunk processing |
 | Hot cache | Redis 7 | Forward marks, slot cache hot tier |
-| Application | Java 21 / Spring Boot 3.3 | Platform standard |
+| Application | Java 21 / Spring Boot 4.0.7 | Platform standard |
 
 ### 10.2 Partitioning Strategy (How Data Is Split)
 
@@ -1652,6 +1812,7 @@ When something changes (e.g., a new meter reading), we don't recalculate everyth
 | **MWh** | Megawatt-hour — an amount of energy (like distance: km) |
 | **Netting** | Adding up buys and sells to get the net position |
 | **PPA** | Power Purchase Agreement — a long-term renewable energy contract |
+| **PriceExpression** | A formula tree that computes the price for each interval. Can be as simple as a single constant (fixed price) or as complex as a collar + CPI escalation + negative-price gate with multiple market data references. Fixed price = degenerate expression (one leaf, zero operators). See §4.2. |
 | **Roll-up** | Summing fine-grained data into coarser summaries |
 | **Settlement** | The final financial reconciliation after power is actually delivered |
 | **Supersession** | Replacing old data with new data (but keeping the old for audit) |

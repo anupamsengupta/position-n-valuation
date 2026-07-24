@@ -549,6 +549,138 @@ Demonstrates that the same business date returns different answers as knowledge 
 
 **FR-047.** Resolution is a pure function of (expression version, input versions, interval). Same inputs ⇒ same output, always — this purity underwrites idempotent recomputation and replay safety (§12.4).
 
+### 6.5 Expression taxonomy: from fixed price to multi-index PPA
+
+**FR-048.** The PriceExpression model handles the full spectrum of pricing structures through a single typed tree representation. A fixed price is the degenerate expression (one constant leaf, zero operators). Complex PPA formulas compose the same leaf and operator types into deeper trees. There is no type branching on expression complexity — the tree walker processes all expressions identically, and the resulting `active_leaves` set naturally captures which inputs mattered.
+
+**FR-048a.** Leaf types (terminals in the expression tree):
+
+| Leaf type | Content | Example | Resolution |
+|---|---|---|---|
+| `ConstantLeaf` | A fixed numeric value with unit | `85.00 EUR/MWh`, `42.00 EUR/MWh`, `105.2` (base index) | Returns the constant; always in `active_leaves` unless pruned by an ancestor gate |
+| `MarketDataLeaf` | Reference to a market data series (S4) with quotation parameters | `{series: "EPEX-DE-LU-DA15", lag: 0, window: SINGLE_INTERVAL}` | Looks up the series at the correct version for the interval's fixing date; the version_id is recorded in the input-version-set |
+| `IndexLeaf` | Reference to a macro index with reference-month mapping | `{series: "HICP-DE", refMonth: deliveryYear-1 + November}` | Looks up the index value for the mapped reference month; restatements (FR-061) trigger re-resolution |
+
+**FR-048b.** Operator types (non-terminal nodes):
+
+| Operator | Semantics | Arity | Example use |
+|---|---|---|---|
+| `Add` / `Subtract` / `Multiply` / `Divide` | Arithmetic on child results | Binary | `DA + 3.50` (premium); `CPI_value / base` (ratio for escalation) |
+| `Clamp` (min, max, inner) | `max(min, min(max, inner))` — floor/cap/collar | Ternary | Collar: `Clamp(42.00, 95.00, DA_price)` |
+| `ConditionalGate` | If `gate_input` meets condition → override result; else → evaluate inner | Binary + condition | Negative-price zeroing: `if DA < 0 then 0.00 else inner` |
+| `ConditionalPassThrough` | If `gate_input` meets condition → pass `gate_input` as result; else → evaluate inner | Binary + condition | Negative-price pass-through: `if DA < 0 then DA else inner` (post-2024 German PPAs, FR-042a) |
+| `Escalate` | `base × ratio` where ratio is typically `index / base_value` | Binary (base, ratio) | `42.00 × (HICP / 105.2)` — floor escalated by CPI |
+| `TimeAverage` | Average of child over a quotation window | Unary + window spec | Monthly average of daily fixings for settlement at monthly granularity |
+| `FxConvert` | `child × FX_rate` for cross-currency | Binary (value, FX leaf) | EUR → GBP conversion on a UK-delivered PPA |
+
+**FR-048c.** The operator set above constitutes the **v1 expression language** (per O-3). Future extensions (basket operators, options-like payoffs, time-of-use shaping) add new operator types without modifying existing ones — the tree walker dispatches by operator type.
+
+**FR-048d.** Expression complexity spectrum — canonical forms for each deal type. Each column shows the complete expression tree for that deal type. All share the same resolution logic; only the tree depth and leaf count differ.
+
+| Deal type | Expression tree | Leaf count | Operator count | Market data inputs |
+|---|---|---|---|---|
+| **Fixed-price bilateral** | `ConstantLeaf(85.00)` | 1 | 0 | None — price is contract-fixed |
+| **DA-indexed bilateral** | `MarketDataLeaf("EPEX-DE-LU-DA15")` | 1 | 0 | 1 curve (DA settlement) |
+| **DA + spread** | `Add(MarketDataLeaf("DA15"), ConstantLeaf(3.50))` | 2 | 1 | 1 curve |
+| **Simple collar PPA** | `Clamp(ConstantLeaf(40), ConstantLeaf(90), MarketDataLeaf("DA15"))` | 3 | 1 | 1 curve |
+| **Collar + CPI escalation** | `Clamp(Escalate(ConstantLeaf(42), Divide(IndexLeaf("HICP"), ConstantLeaf(105.2))), Escalate(ConstantLeaf(95), same_ratio), MarketDataLeaf("DA15"))` | 5 | 4 | 1 curve + 1 index |
+| **Full PPA (reference deal)** | `ConditionalGate(DA<0→0, Clamp(escalated_floor, escalated_cap, DA15))` | 6 | 5 | 1 curve + 1 index (+ degenerate FX) |
+| **Multi-curve PPA** | Same structure but with different `MarketDataLeaf` per valuation purpose: forward curve for S5b, DA settlement for S5a | 6+ | 5+ | 2+ curves + 1+ indices |
+
+**FR-048e.** Forward vs settlement curve selection. Some PPAs use different market data series depending on whether the interval is being valued for forward marks (undelivered, S5b) or settlement (delivered, S5a). This is modeled by the valuation layer's **purpose-based leaf resolution**, not by having two separate expression trees:
+
+- The expression tree is version-controlled and shared — one `PriceExpression` entity per trade leg.
+- Each `MarketDataLeaf` carries an optional `settlementSeries` alongside its primary `series` reference.
+- During resolution, the valuation layer passes the **purpose** (FORWARD or SETTLEMENT) to the tree walker. If `purpose == SETTLEMENT` and the leaf has a `settlementSeries`, the settlement series is used; otherwise the primary series is used.
+- This keeps the expression structure identical for both purposes while allowing curve-appropriate resolution.
+
+Example:
+
+| Leaf | Primary series (forward) | Settlement series | Used for forward marks (S5b) | Used for settlement cells (S5a) |
+|---|---|---|---|---|
+| DA price | `EEX-DE-POWER-FRONT-MONTH` (forward curve pillar) | `EPEX-DE-LU-DA15` (DA auction result) | EEX forward | EPEX DA settlement |
+| HICP | `HICP-DE` | same | Same index for both | Same index for both |
+| FX | `ECB-EURUSD` | same | Same for both | Same for both |
+
+**FR-048f.** `active_leaves` determination follows tree semantics. At resolution time, the tree walker tracks which leaves actually influenced the output:
+
+| Scenario | Tree path | `active_leaves` | Inactive leaves |
+|---|---|---|---|
+| Collar inside (DA between floor and cap) | DA passes through Clamp untouched | `{DA}` | CPI (referenced by Escalate for floor/cap but the bounds didn't bind) |
+| Floor binding (DA below escalated floor) | Clamp returns floor value | `{DA, CPI}` (CPI determined the floor value) | — |
+| Cap binding (DA above escalated cap) | Clamp returns cap value | `{DA, CPI}` (CPI determined the cap value) | — |
+| Neg-price gate fires (DA < 0) | ConditionalGate returns 0 | `{DA}` (gate-determining input) | CPI, METER (irrelevant — output is zero regardless) |
+
+This is the foundation of blast-radius optimization (D-4, FR-046): when HICP is restated, only cells where CPI was in `active_leaves` need re-resolution. Cells where the collar was inside (CPI inactive) are provably unaffected.
+
+**FR-048g.** Worked examples across the spectrum.
+
+**Example 1 — Fixed price, interval 2026-04-24 08:00:**
+
+```
+Expression: ConstantLeaf(85.00 EUR/MWh)
+Resolution: 85.00
+Value:      85.00 × 12.50 MWh (50 MW × 0.25h) = 1,062.50 EUR
+active_leaves: {FIXED_85}
+input_version_set: {expr:v1}
+```
+
+No market data inputs — the price is invariant across all intervals. Settlement and forward valuation produce the same price. The `input_version_set` contains only the expression version.
+
+**Example 2 — DA-indexed, interval 2026-04-24 08:00:**
+
+```
+Expression: MarketDataLeaf("EPEX-DE-LU-DA15")
+Resolution: DA15(2026-04-24 08:00) = 72.50 EUR/MWh
+Value:      72.50 × 12.50 MWh = 906.25 EUR
+active_leaves: {DA15}
+input_version_set: {expr:v1, DA:v3}
+```
+
+One market data lookup. Every curve tick (`CurveTick` event) for this series triggers re-resolution of affected forward marks. Settlement uses the published DA auction result, which is authoritative (rare corrections).
+
+**Example 3 — Reference deal PPA, interval 2026-08-15 18:45 (collar inside, DA positive):**
+
+```
+Expression: ConditionalGate(DA<0→0, Clamp(Escalate(42, CPI_ratio), Escalate(95, CPI_ratio), DA15))
+Step 1: DA15(18:45) = 68.20
+Step 2: CPI_ratio = HICP(2025-11) / 105.2 = 128.4 / 105.2 = 1.22053
+Step 3: Escalated floor = 42.00 × 1.22053 = 51.26; cap = 95.00 × 1.22053 = 115.95
+Step 4: Clamp(51.26, 115.95, 68.20) = 68.20 (inside collar)
+Step 5: Gate check: 68.20 ≥ 0 → pass → result = 68.20
+Value:  68.20 × 1.0 (FX) × 11.40 MWh (metered × multiplier) = 777.48 EUR
+active_leaves: {DA15, METER}
+input_version_set: {expr:v1, DA:v1, CPI:v1, FX:v1, MET:v2}
+```
+
+CPI is **inactive** — it was used to compute the floor/cap bounds, but since the DA price fell inside the collar, changing CPI would not change the result. If HICP is later restated (128.4→128.9), this cell is **not recomputed** — the dependency index sees CPI ∉ `active_leaves` and skips it (D-4).
+
+**Example 4 — Reference deal PPA, interval 2026-08-15 03:15 (negative DA price):**
+
+```
+Expression: same tree as Example 3
+Step 1: DA15(03:15) = -14.90
+Step 5: Gate check: -14.90 < 0 → gate FIRES → result = 0.00
+Value:  0.00 EUR
+active_leaves: {DA15}
+input_version_set: {expr:v1, DA:v1}
+```
+
+The gate fires, overriding everything below it in the tree. METER, CPI, floor, cap — none can affect the output. Only DA is active (it determined the gate). If DA is restated to +2.50, the gate would not fire, and the entire sub-tree (collar, escalation) would activate — requiring full re-resolution.
+
+**FR-048h.** Implementation note: the expression tree is a **sealed type hierarchy** in Java 21.
+
+```
+sealed interface PriceExpression permits
+    ConstantLeaf, MarketDataLeaf, IndexLeaf,
+    Add, Subtract, Multiply, Divide,
+    Clamp, Escalate,
+    ConditionalGate, ConditionalPassThrough,
+    TimeAverage, FxConvert { }
+```
+
+Pattern matching `switch` in the tree walker ensures exhaustive handling — adding a new operator type produces compile errors at every unhandled dispatch point. Each leaf and operator is a `record` (immutable, value-equality, compact). The expression version (`expr:vN`) is the version of the entire tree; sub-trees are not independently versioned.
+
 ---
 
 ## 7. S3 — Volume Series Interface
@@ -919,7 +1051,7 @@ Edges ≈ open (position × interval) cells × ~4 leaves, bounded by FR-104 prun
 
 ### 16.0 Platform constraints (binding on the technical spec)
 
-The technical spec inherits the platform's technology decisions. These are not revisited here but must be respected: Java 21 / Spring Boot 3.3 / Aurora PostgreSQL 16 (declarative partitioning + pg_partman + pg_cron; NO TimescaleDB — invalid on RDS/Aurora) / Kafka 3.7 KRaft (batch listeners, manual commit, at-least-once with idempotent effect per FR-106) / Redis 7 / `GenerationType.SEQUENCE` allocationSize=50 (never IDENTITY) / Flyway-managed DDL including partition lifecycle / per-tenant Hikari partitioning + PgBouncer transaction pooling. Full platform constants are documented in `CONTEXT-position-valuation-design.md` §11.
+The technical spec inherits the platform's technology decisions. These are not revisited here but must be respected: Java 21 / Spring Boot 4.0.7 (Spring Framework 7.x, Hibernate 7.x, Jakarta EE 11, JPA 3.2, Jackson 3.x) / Aurora PostgreSQL 16 (declarative partitioning + pg_partman + pg_cron; NO TimescaleDB — invalid on RDS/Aurora) / Kafka 3.7 KRaft (batch listeners, manual commit, at-least-once with idempotent effect per FR-106) / Redis 7 / `GenerationType.SEQUENCE` allocationSize=50 (never IDENTITY) / Flyway-managed DDL including partition lifecycle / per-tenant Hikari partitioning + PgBouncer transaction pooling. Full platform constants are documented in `CONTEXT-position-valuation-design.md` §11.
 
 ### 16.1 Decisions this spec fixes (tech spec must comply)
 
