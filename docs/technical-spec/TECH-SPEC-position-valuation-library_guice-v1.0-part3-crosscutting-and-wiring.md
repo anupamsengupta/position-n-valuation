@@ -988,6 +988,391 @@ Reproduced from V2.0 §14 for reference — these are the binding targets:
 
 ---
 
+## §18b — Telemetry & Observability
+
+### 18b.1 Observability Strategy — NFR Overview
+
+> **TR-049** — The Position & Valuation system implements three-pillar observability: (1) structured metrics exported to Prometheus via Micrometer, (2) distributed traces via OpenTelemetry (OTLP export), (3) structured JSON logging with correlation IDs and tenant context. All telemetry is tenant-tagged for per-tenant SLA monitoring and cost attribution. The instrumentation layer lives in `pv-guice` (interceptors + providers) and adapter modules — `pv-domain` remains zero-dependency. (Extends V2.0 §14.)
+
+**Design constraints:**
+
+| Constraint | Rationale |
+|------------|-----------|
+| `pv-domain` has zero telemetry imports | ADR-001 §1.1 (TR-001): domain module is framework-free. Observability is injected via port wrappers or Guice interceptors. |
+| Tenant ID on every metric/span/log | FR-120: multitenancy isolation extends to telemetry. Per-tenant dashboards and alerts are first-class. |
+| Cardinality budget: ≤ 500 unique metric series per tenant | Prevents Prometheus label explosion. Bounded by subsystem × operation × status. |
+| Trace sampling: 100% for errors, 10% for success in production | Balances storage cost against debuggability. 100% in staging/dev. |
+
+### 18b.2 Metrics — Micrometer / Prometheus
+
+> **TR-050** — Metrics are emitted via Micrometer's `MeterRegistry` (Prometheus backend). The `MeterRegistry` is provided as a Guice singleton and injected into adapter classes. Domain services are instrumented via decorating interceptors, never by direct Micrometer calls inside `pv-domain`. (Extends V2.0 §14.)
+
+#### 18b.2.1 Subsystem Metrics
+
+| Metric Name | Type | Labels | Subsystem | Description |
+|-------------|------|--------|-----------|-------------|
+| `pv.trade.capture.total` | Counter | `tenant_id`, `status` | S1 | Trade captures processed (success/failure) |
+| `pv.trade.capture.duration` | Timer | `tenant_id` | S1 | End-to-end trade capture latency (command → ledger write → outbox) |
+| `pv.trade.amend.total` | Counter | `tenant_id`, `reason` | S1 | Trade amendments by reason (BACKDATED/FORWARD) |
+| `pv.trade.cancel.total` | Counter | `tenant_id` | S1 | Trade cancellations |
+| `pv.position.ledger.entries` | Gauge | `tenant_id`, `status` | S1 | Current ledger entry count by status (ACTIVE/SUPERSEDED/CANCELLED) |
+| `pv.price.evaluation.duration` | Timer | `tenant_id`, `expression_depth` | S2 | Price expression tree evaluation latency |
+| `pv.price.evaluation.active_leaves` | Histogram | `tenant_id` | S2 | Distribution of active leaf count per evaluation (FR-048f blast-radius signal) |
+| `pv.volume.resolution.duration` | Timer | `tenant_id`, `resolver_type`, `purpose` | S3 | Volume resolution latency by resolver (PROFILE/FORECAST) and purpose (SETTLEMENT/FORWARD) |
+| `pv.volume.resolution.intervals` | Histogram | `tenant_id` | S3 | Intervals resolved per call (capacity planning signal) |
+| `pv.materialization.chunk.duration` | Timer | `tenant_id`, `strategy` | S3 | Chunk materialization wall-clock time |
+| `pv.materialization.chunk.intervals` | Counter | `tenant_id`, `strategy` | S3 | Intervals materialized per chunk |
+| `pv.settlement.computation.duration` | Timer | `tenant_id` | S5a | Settlement cell computation latency |
+| `pv.settlement.computation.total` | Counter | `tenant_id`, `status` | S5a | Settlement computations (PROVISIONAL/FINAL) |
+| `pv.forward_mark.write.total` | Counter | `tenant_id` | S5b | Forward mark writes to Redis |
+| `pv.eod_strike.batch.duration` | Timer | `tenant_id` | S5c | EOD strike batch wall-clock time |
+| `pv.eod_strike.batch.positions` | Counter | `tenant_id` | S5c | Positions struck per batch |
+
+#### 18b.2.2 Cache Metrics
+
+| Metric Name | Type | Labels | Subsystem | Description |
+|-------------|------|--------|-----------|-------------|
+| `pv.cache.volume.hit` | Counter | `tenant_id` | S6 | Volume cache hits |
+| `pv.cache.volume.miss` | Counter | `tenant_id` | S6 | Volume cache misses (triggers read-through) |
+| `pv.cache.volume.hit_ratio` | Gauge | `tenant_id` | S6 | Rolling 5-minute hit ratio (derived) |
+| `pv.cache.volume.eviction` | Counter | `tenant_id`, `reason` | S6 | Cache evictions by reason (TTL/INVALIDATION/CAPACITY) |
+| `pv.cache.volume.invalidation.duration` | Timer | `tenant_id`, `scope` | S6 | Invalidation latency by scope (RANGE/ALL) |
+| `pv.cache.volume.mget.keys` | Histogram | `tenant_id` | S6 | Keys per MGET call (capacity signal; expected ~2,976 for monthly chunk) |
+| `pv.cache.volume.mget.duration` | Timer | `tenant_id` | S6 | MGET round-trip latency |
+| `pv.cache.trade_interval.rebuild.duration` | Timer | `tenant_id` | S6b | S6b rebuild wall-clock time per trade-leg |
+| `pv.cache.trade_interval.rebuild.months` | Histogram | `tenant_id` | S6b | Months rebuilt per invocation (virtual thread parallelism signal) |
+
+#### 18b.2.3 Infrastructure Metrics
+
+| Metric Name | Type | Labels | Subsystem | Description |
+|-------------|------|--------|-----------|-------------|
+| `pv.outbox.depth` | Gauge | — | Outbox | Unpublished outbox row count (`WHERE published_at IS NULL`) |
+| `pv.outbox.relay.duration` | Timer | — | Outbox | Relay poll-to-ACK latency |
+| `pv.outbox.relay.published` | Counter | `event_type` | Outbox | Events successfully relayed to Kafka |
+| `pv.outbox.relay.failures` | Counter | `event_type` | Outbox | Relay failures (increments `publish_attempts`) |
+| `pv.outbox.age.seconds` | Gauge | — | Outbox | Age of oldest unpublished row (staleness signal) |
+| `pv.kafka.consumer.lag` | Gauge | `topic`, `partition` | Kafka | Consumer group lag (records behind head) |
+| `pv.kafka.consumer.process.duration` | Timer | `topic`, `consumer` | Kafka | Per-message processing latency |
+| `pv.kafka.consumer.idempotent.skip` | Counter | `topic`, `consumer` | Kafka | Messages skipped by idempotency guard |
+| `pv.db.connection.active` | Gauge | `pool` | HikariCP | Active connections by pool (writer/reader) |
+| `pv.db.connection.pending` | Gauge | `pool` | HikariCP | Pending connection requests |
+| `pv.db.connection.timeout` | Counter | `pool` | HikariCP | Connection acquisition timeouts |
+| `pv.db.query.duration` | Timer | `repository`, `method` | JPA | Repository method execution time |
+| `pv.batch_writer.flush.duration` | Timer | `entity_type` | BatchWriter | Flush+clear cycle latency |
+| `pv.batch_writer.flush.entities` | Histogram | `entity_type` | BatchWriter | Entities per flush cycle |
+| `pv.tenant.context.set` | Counter | `tenant_id` | Tenant | Tenant context activations (request volume per tenant) |
+
+#### 18b.2.4 Metric Port Interface
+
+```java
+/**
+ * Port interface for metrics emission. Lives in pv-domain/port/telemetry/.
+ * Allows domain services to signal metric-worthy events without
+ * importing Micrometer. Implementation in pv-guice binds to MeterRegistry.
+ *
+ * Only used for domain-originated signals that cannot be captured
+ * by adapter-level instrumentation (e.g., active_leaves count from
+ * PriceEvaluator, resolution purpose branching from VolumeResolver).
+ */
+public interface MetricsPort {
+
+    /** Record a timed duration for a named operation. */
+    void recordDuration(String metricName, java.time.Duration duration,
+                        String... tagKeyValuePairs);
+
+    /** Increment a counter. */
+    void increment(String metricName, String... tagKeyValuePairs);
+
+    /** Record a distribution value (histogram). */
+    void recordValue(String metricName, double value,
+                     String... tagKeyValuePairs);
+}
+```
+
+**Guice binding:**
+
+```java
+// In DomainModule or a dedicated ObservabilityModule
+bind(MetricsPort.class)
+    .to(MicrometerMetricsAdapter.class)   // lives in pv-guice
+    .in(Singleton.class);
+```
+
+### 18b.3 Distributed Tracing — OpenTelemetry
+
+> **TR-051** — Distributed traces use OpenTelemetry SDK with OTLP exporter (Jaeger/Tempo backend). Span context propagates through Kafka headers (`traceparent`, `tracestate` per W3C Trace Context) and ThreadLocal for in-process calls. Virtual thread fork-join in `TradeIntervalCacheRebuilder` creates child spans per month chunk. (Extends V2.0 §14.)
+
+#### 18b.3.1 Trace Hierarchy
+
+```
+trade.capture                                    [root span]
+├── position.ledger.decompose                    [month-block split]
+├── position.ledger.save                         [JPA persist × N blocks]
+├── outbox.write                                 [same-tx outbox insert]
+└── kafka.produce.PositionCaptured               [relay, async]
+    └── volume.materialization                   [consumer span]
+        ├── volume.resolve (×N months)           [VolumeResolver]
+        │   ├── db.query.findCurrentBySeriesKey
+        │   └── volume.multiply                  [× multiplier]
+        ├── cache.populate (×N months)           [RedisVolumeCache.putAll]
+        └── s6b.rebuild                          [TradeIntervalCacheRebuilder]
+            ├── chunk.month.2025-03              [virtual thread child span]
+            ├── chunk.month.2025-04
+            └── chunk.month.2025-05
+
+settlement.computation                           [root span]
+├── volume.resolve                               [purpose=SETTLEMENT]
+├── price.evaluate                               [expression tree walk]
+│   ├── leaf.MarketDataLeaf.EPEX-DE-LU-DA15     [market data fetch]
+│   └── leaf.ConstantLeaf.floor                  [collar bound]
+├── settlement.cell.persist                      [bitemporal JPA write]
+└── dependency.index.upsert                      [blast-radius edge]
+
+eod.strike.batch                                 [root span, batch]
+├── position.query                               [findByDeliveryRange]
+└── strike.position[0..N]                        [per-position child]
+    ├── price.evaluate
+    └── struck_mark.persist
+```
+
+#### 18b.3.2 Span Attributes (Mandatory)
+
+| Attribute | Type | Source | Example |
+|-----------|------|--------|---------|
+| `tenant.id` | string | `TenantContext` | `TN_0042` |
+| `trade.id` | string | Command payload | `T-7788` |
+| `trade.leg_id` | string | Command payload | `LEG-1` |
+| `trade.version` | int | Command payload | `2` |
+| `series.key` | string | VolumeReference | `FCST-WP-NORDSEE` |
+| `delivery.start` | string (ISO-8601) | DeliveryRange | `2025-03-01T00:00:00+01:00` |
+| `delivery.end` | string (ISO-8601) | DeliveryRange | `2025-04-01T00:00:00+02:00` |
+| `resolution.purpose` | string | ResolutionPurpose enum | `SETTLEMENT` |
+| `resolver.type` | string | VolumeResolver class | `ForecastResolver` |
+| `expression.depth` | int | PriceExpression tree | `4` |
+| `expression.leaf_count` | int | PriceExpression tree | `6` |
+| `active_leaves.count` | int | PriceResolution | `3` |
+| `cache.hit` | boolean | VolumeCache | `true` |
+| `batch.size` | int | BatchWriter / batch operations | `96` |
+
+#### 18b.3.3 Kafka Header Propagation
+
+```java
+/**
+ * Outbox relay injects trace context into Kafka headers.
+ * Consumers extract and continue the trace.
+ */
+// Producer side (OutboxRelayProducer):
+var headers = record.headers();
+W3CTraceContextPropagator.inject(Context.current(), headers,
+    (h, key, value) -> h.add(key, value.getBytes(UTF_8)));
+
+// Consumer side (IdempotentConsumer):
+Context extracted = W3CTraceContextPropagator.extract(
+    Context.current(), record.headers(),
+    (h, key) -> new String(h.lastHeader(key).value(), UTF_8));
+try (Scope scope = extracted.makeCurrent()) {
+    process(event);
+}
+```
+
+### 18b.4 Structured Logging
+
+> **TR-052** — All log output uses structured JSON format (Logback + `logstash-logback-encoder`). Every log line carries `tenant_id`, `correlation_id`, and `trace_id` in the MDC. The `TenantInterceptor` (§14.3) sets MDC context alongside the PostgreSQL session variable. Domain services log via SLF4J — no direct framework dependency. (Extends V2.0 §14.)
+
+#### 18b.4.1 MDC Fields
+
+| MDC Key | Source | Lifecycle |
+|---------|--------|-----------|
+| `tenant_id` | `TenantInterceptor` | Set on method entry, cleared on exit |
+| `correlation_id` | Kafka header `event_id` or generated UUID | Per-request / per-message |
+| `trace_id` | OpenTelemetry `Span.current().getSpanContext().getTraceId()` | Injected by OTEL agent or manual bridge |
+| `span_id` | OpenTelemetry span context | Same as trace_id lifecycle |
+| `trade_id` | Command payload (when available) | Set in command handler, cleared after |
+| `series_key` | Volume resolution context | Set during volume resolution |
+
+#### 18b.4.2 Log Level Conventions
+
+| Level | Usage | Examples |
+|-------|-------|---------|
+| `ERROR` | Unrecoverable failures requiring operator attention | Outbox relay exhausted retries; settlement computation failed with missing mandatory inputs; DB connection pool exhausted |
+| `WARN` | Degraded operation, self-recovering or actionable | Cache miss rate > 50% sustained; Kafka consumer lag > 1000; idempotent skip on known event; bitemporal update guard triggered |
+| `INFO` | Business-significant lifecycle events (one per operation) | Trade captured (T-7788, 12 blocks); Settlement batch completed (10,247 cells, 2.3s); EOD strike completed (TN_0042, 487 positions) |
+| `DEBUG` | Per-interval / per-entity detail for troubleshooting | Individual VolumeRecord resolved; cache key written; JPQL parameter values |
+| `TRACE` | Wire-level detail (never in production) | Full Kafka message payload; Redis command/response; expression tree node visits |
+
+#### 18b.4.3 Structured Log Example
+
+```json
+{
+  "timestamp": "2026-08-01T14:23:07.412Z",
+  "level": "INFO",
+  "logger": "c.p.p.d.s.DefaultTradeCaptureHandler",
+  "message": "Trade captured",
+  "tenant_id": "TN_0042",
+  "correlation_id": "a1b2c3d4-5678-90ab-cdef-1234567890ab",
+  "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+  "trade_id": "T-7788",
+  "trade_leg_id": "LEG-1",
+  "trade_version": 1,
+  "delivery_start": "2025-03-01",
+  "delivery_end": "2026-03-01",
+  "month_blocks": 12,
+  "duration_ms": 47
+}
+```
+
+### 18b.5 Health Checks
+
+> **TR-053** — Health checks expose system readiness for load balancers and orchestrators. Two endpoints: `/health/live` (process alive) and `/health/ready` (all dependencies reachable). Each dependency check has a 2-second timeout to prevent cascading slowdowns. (Extends V2.0 §14.)
+
+| Check | Endpoint | Component | Failure Semantics |
+|-------|----------|-----------|-------------------|
+| Database writer pool | `/health/ready` | HikariCP (`writer`) | `SELECT 1` on writer DataSource; failure → not ready |
+| Database reader pool | `/health/ready` | HikariCP (`reader`) | `SELECT 1` on reader DataSource; failure → degraded (reads fail over to writer) |
+| Redis connectivity | `/health/ready` | Lettuce `RedisCommands` | `PING` command; failure → not ready (cache is critical path) |
+| Kafka broker connectivity | `/health/ready` | `KafkaProducer` | `AdminClient.describeCluster()`; failure → not ready (outbox relay blocked) |
+| EntityManagerFactory | `/health/ready` | JPA | `emf.isOpen()`; failure → not ready |
+| Outbox backlog depth | `/health/ready` | Outbox | `COUNT(*) WHERE published_at IS NULL`; > 10,000 → degraded warning |
+| Outbox staleness | `/health/ready` | Outbox | Age of oldest unpublished row; > 30 seconds → degraded warning |
+
+```java
+/**
+ * Health check port interface. Lives in pv-domain/port/telemetry/.
+ * Implementation in pv-guice aggregates all dependency checks.
+ */
+public interface HealthCheck {
+
+    enum Status { UP, DEGRADED, DOWN }
+
+    record Result(Status status, String component, String detail) {}
+
+    /** Check a single dependency. Must complete within 2 seconds. */
+    Result check();
+}
+```
+
+### 18b.6 Alerting Thresholds
+
+> **TR-054** — Alerting rules are defined as Prometheus alert expressions. Alerts route to PagerDuty (P1/P2) or Slack (P3/P4) based on severity. All thresholds are per-tenant where applicable. (Extends V2.0 §14.)
+
+#### 18b.6.1 Critical Alerts (P1 — PagerDuty, immediate)
+
+| Alert | Condition | Duration | Action |
+|-------|-----------|----------|--------|
+| `OutboxStalled` | `pv.outbox.age.seconds > 60` | 2 min sustained | Investigate relay process; check Kafka broker health |
+| `DatabaseConnectionExhausted` | `pv.db.connection.pending{pool="writer"} > 0` AND `pv.db.connection.active{pool="writer"} == max_pool_size` | 1 min sustained | Scale connection pool or investigate long-running transactions |
+| `SettlementFailureRate` | `rate(pv.settlement.computation.total{status="FAILURE"}[5m]) / rate(pv.settlement.computation.total[5m]) > 0.05` | 5 min sustained | Missing market data inputs; check MarketDataPort availability |
+| `RedisDown` | Redis health check returning DOWN | 30 sec sustained | All cache reads fail; system falls back to DB (degraded mode) |
+
+#### 18b.6.2 Warning Alerts (P2 — PagerDuty, 15 min response)
+
+| Alert | Condition | Duration | Action |
+|-------|-----------|----------|--------|
+| `CacheHitRatioDegraded` | `pv.cache.volume.hit_ratio{tenant_id=~".+"} < 0.70` | 10 min sustained | Cache warming incomplete after deployment; or invalidation storm after bulk volume supersession |
+| `KafkaConsumerLagHigh` | `pv.kafka.consumer.lag{topic=~"trade.*"} > 5000` | 5 min sustained | Consumer throughput < producer rate; consider scaling consumer instances |
+| `OutboxBacklogGrowing` | `pv.outbox.depth > 1000` | 5 min sustained | Relay throughput insufficient; check Kafka produce latency |
+| `S6bRebuildSlow` | `pv.cache.trade_interval.rebuild.duration{quantile="0.95"} > 5s` | 10 min sustained | Virtual thread contention or DB I/O bottleneck on volume reads |
+| `BitemporalQuerySlow` | `pv.db.query.duration{repository="PositionLedger",method="findAsOf",quantile="0.95"} > 200ms` | 5 min sustained | Index degradation; check `idx_ple_bitemporal` bloat or missing ANALYZE |
+
+#### 18b.6.3 Informational Alerts (P3/P4 — Slack)
+
+| Alert | Condition | Purpose |
+|-------|-----------|---------|
+| `NewTenantFirstTrade` | `pv.trade.capture.total{tenant_id=~"NEW_.*"} == 1` | Onboarding visibility |
+| `EODBatchCompleted` | `pv.eod_strike.batch.duration` recorded | Daily operations confirmation |
+| `HighIdempotentSkipRate` | `rate(pv.kafka.consumer.idempotent.skip[5m]) > 10` | Duplicate event investigation (upstream producer issue or replay) |
+
+### 18b.7 Dashboards
+
+> **TR-055** — Grafana dashboards are organized by persona and subsystem. Dashboard JSON definitions are version-controlled alongside the codebase in `ops/grafana/`. (Extends V2.0 §14.)
+
+#### 18b.7.1 Dashboard Inventory
+
+| Dashboard | Audience | Key Panels |
+|-----------|----------|------------|
+| **PV Operations Overview** | SRE / on-call | Outbox depth gauge; Kafka consumer lag; DB connection pool utilization; cache hit ratio; error rate by subsystem; p95 latency heatmap |
+| **Trade Lifecycle** | Operations / Business | Trade capture rate (by tenant); amendment/cancellation rate; position ledger growth; month-block decomposition distribution |
+| **Valuation Pipeline** | Quant / Risk | Settlement computation throughput; forward mark freshness; EOD strike batch timing; active_leaves distribution; price evaluation depth histogram |
+| **Volume Resolution** | Quant / Operations | Resolution latency by resolver type; intervals resolved per call; materialization strategy distribution; S6b rebuild frequency and duration |
+| **Cache Performance** | SRE / Platform | Hit/miss ratio over time; MGET key count distribution; invalidation frequency; TTL expiration rate; Redis memory utilization |
+| **Per-Tenant SLA** | Account Management | Per-tenant p95 latency; per-tenant error rate; per-tenant trade volume; per-tenant cache hit ratio; SLA breach count |
+
+#### 18b.7.2 Reference Dashboard: PV Operations Overview
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  PV Operations Overview                          [last 6h ▼]   │
+├──────────────────┬──────────────────┬───────────────────────────┤
+│ Outbox Depth     │ Kafka Lag        │ Error Rate (5m)           │
+│ ██ 23 rows       │ trade.*: 142     │ S1: 0.00%                │
+│ (target: < 100)  │ volume.*: 87     │ S5a: 0.02%               │
+│                  │ (target: < 1000) │ S5c: 0.00%               │
+├──────────────────┴──────────────────┴───────────────────────────┤
+│ p95 Latency by Operation (heatmap)                              │
+│ ┌────────┬────────┬────────┬────────┬────────┬────────┐        │
+│ │capture │resolve │evaluate│settle  │cache   │s6b     │        │
+│ │  47ms  │  12ms  │  38ms  │  85ms  │  2ms   │ 1.2s   │        │
+│ └────────┴────────┴────────┴────────┴────────┴────────┘        │
+├─────────────────────────────────────────────────────────────────┤
+│ Cache Hit Ratio (by tenant, 5m rolling)                         │
+│ TN_0042: ████████████████████░░ 91%                             │
+│ TN_0099: ██████████████████████ 97%                             │
+│ TN_0156: ████████████████░░░░░░ 78% ⚠                          │
+├──────────────────┬──────────────────────────────────────────────┤
+│ DB Connections   │ Trade Capture Rate (per minute)              │
+│ Writer: 12/50    │ ▁▂▃▅▇█▇▅▃▂▁ (peak: 847/min at 09:15)       │
+│ Reader:  8/50    │                                              │
+└──────────────────┴──────────────────────────────────────────────┘
+```
+
+### 18b.8 Audit Trail for Regulatory Compliance
+
+> **TR-056** — Regulatory audit trail (REMIT Article 8, MiFID II trade reporting) is served by the combination of bitemporal ledger (S1), append-only volume series (S3), and structured logging. No separate audit table is required — the bitemporal axes ARE the audit trail. Auditors reconstruct any historical state via `findAsOf(businessDate, knowledgeDate)` (FR-007). Structured logs provide the causal chain between state transitions. (Extends FR-006, FR-007, V2.0 §10.)
+
+| Regulatory Requirement | Implementation Artifact |
+|------------------------|------------------------|
+| "Who changed what, when" | `PositionLedgerEntryEntity.knownFrom` (processing time of change), `BitemporalAuditListener`, structured log with `trade_id` + `correlation_id` |
+| "State at any point in time" | `JpaPositionLedgerRepository.findAsOf(businessDate, knowledgeDate)` — dual-axis bitemporal reconstruction |
+| "Original vs amended values" | Supersession chain: V1 (`knownTo` set) → V2 (`knownFrom` = V1.knownTo) — full history preserved, never overwritten |
+| "Settlement audit trail" | `SettlementCellEntity` bitemporal axes + `input_version_set` JSONB — records exact input versions used for each computation |
+| "Market data version provenance" | `PriceResolution.inputVersionSet()` — maps each market data series to the version ID used during evaluation |
+| "EOD mark immutability" | `StruckMarkEntity` — append-only, `supersedesId` links correction chain, `curveVersionSet` records curve versions |
+| "Trade lifecycle events" | Kafka topics (`trade.position.captured/amended/cancelled`) + outbox guarantee — durable event stream with `event_id` for deduplication |
+
+### 18b.9 Observability Guice Module
+
+```java
+/**
+ * Guice module for observability infrastructure. Lives in pv-guice/.
+ * Binds MetricsPort, health checks, and installs tracing interceptors.
+ */
+public class ObservabilityModule extends AbstractModule {
+
+    @Override
+    protected void configure() {
+        // Metrics port → Micrometer adapter
+        bind(MetricsPort.class)
+            .to(MicrometerMetricsAdapter.class)
+            .in(Singleton.class);
+
+        // Health check aggregator
+        Multibinder<HealthCheck> healthChecks =
+            Multibinder.newSetBinder(binder(), HealthCheck.class);
+        healthChecks.addBinding().to(DatabaseHealthCheck.class);
+        healthChecks.addBinding().to(RedisHealthCheck.class);
+        healthChecks.addBinding().to(KafkaHealthCheck.class);
+        healthChecks.addBinding().to(OutboxHealthCheck.class);
+    }
+
+    @Provides @Singleton
+    MeterRegistry meterRegistry() {
+        return new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
+    }
+}
+```
+
+---
+
 ## §19 — Startup & Bootstrap
 
 ### 19.1 `PositionValuationApp.main` — pv-guice
@@ -1005,12 +1390,13 @@ public class PositionValuationApp {
     public static void main(String[] args) {
         // 1. Create Guice injector — all bindings resolved
         Injector injector = Guice.createInjector(
-            new PersistenceModule(),   // DataSource, EMF, repositories
-            new DomainModule(),        // Domain services, strategies
-            new TenantModule(),        // @TenantAware interceptor
-            new EventModule(),         // DomainEventPublisher, ForwardMarkStore
-            new CacheModule(),         // Redis VolumeCache, TradeIntervalCache
-            new KafkaModule()          // Outbox relay, consumers
+            new PersistenceModule(),      // DataSource, EMF, repositories
+            new DomainModule(),           // Domain services, strategies
+            new TenantModule(),           // @TenantAware interceptor
+            new EventModule(),            // DomainEventPublisher, ForwardMarkStore
+            new CacheModule(),            // Redis VolumeCache, TradeIntervalCache
+            new KafkaModule(),            // Outbox relay, consumers
+            new ObservabilityModule()     // Metrics, health checks, tracing (§18b)
         );
 
         // 2. Verify EntityManagerFactory is initialized
@@ -1093,6 +1479,7 @@ public class PositionValuationApp {
 | FR-105 | Batch cycle | `AbstractMaterializationJob.execute()`, `SettlementMaterializationJob`, `EodStrikeJob` |
 | FR-106 | Idempotency | `IdempotentConsumer`, natural key `(trade_id, trade_version)` |
 | FR-120/FR-122 | Multitenancy | `TenantContext`, `@TenantAware`, `TenantInterceptor`, RLS policies (defers to V2.0 §11) |
+| NFR-OBS-001–008 | Telemetry & Observability | `MetricsPort`, `HealthCheck`, `ObservabilityModule`, Micrometer metrics (§18b.2), OpenTelemetry traces (§18b.3), structured JSON logging (§18b.4), alerting thresholds (§18b.6), Grafana dashboards (§18b.7) |
 
 ### 20.3 Subsystems → Spec Artifacts
 
@@ -1176,6 +1563,11 @@ Extends functional-spec §16 (O-1 through O-8) with implementation-specific item
 | OI-4 | Saga state persistence | Open | `trade.saga_state` table defined in V2.0 §13.5. JPA entity and repository not yet specified. |
 | OI-5 | Compaction view (optional) | Open | V3.0 §4.4 defines optional user-initiated compaction. Port interface and JPA entity not yet specified. |
 | OI-6 | MeteredActualRepository port | Open | Separate from `VolumeSeriesRepository` per different aggregate root. Port signatures not yet fully specified. |
+| OI-7 | OpenTelemetry SDK vs Java agent | Open | Auto-instrumentation agent provides JDBC/Kafka/Redis spans for free but adds startup overhead (~200ms). Manual SDK gives finer control. Decision depends on deployment model (container sidecar vs embedded). |
+| OI-8 | Prometheus push vs pull model | Open | Pull model (scrape endpoint) is standard for long-running services. Push model (Pushgateway) needed if PV runs as a batch job or CLI tool (§17.1 portability concern). |
+| OI-9 | Per-tenant metric cardinality limit | Open | 200 tenants × ~40 metrics × 3 label dimensions ≈ 24K series. Acceptable for Prometheus but may need recording rules or pre-aggregation at scale. Evaluate after tenant count exceeds 100. |
+| OI-10 | Trace sampling strategy tuning | Open | Initial 10% success / 100% error sampling. May need adaptive sampling (tail-based) for high-volume tenants. Requires collector-side configuration (OTEL Collector). |
+| OI-11 | Dashboard-as-code tooling | Open | Grafana dashboard JSON checked into `ops/grafana/`. Evaluate Grafonnet (Jsonnet) or Terraform provider for maintainability at scale. |
 
 ---
 
@@ -1274,6 +1666,14 @@ Extends functional-spec §16 (O-1 through O-8) with implementation-specific item
 | TR-046 | FR-036, D-2, D-12 | §5.0 | System-wide configurable numeric precision via `NumericPrecision` port |
 | TR-047 | FR-036, V2.0 §5.0 | §5.0 | JPA column precision/scale governed by `NumericPrecision` defaults |
 | TR-048 | FR-036 | §5.0 | No hardcoded scale literals — all `setScale`/`divide` resolve through `NumericPrecision` |
+| TR-049 | V2.0 §14 | §18b.1 | Three-pillar observability: metrics (Micrometer/Prometheus), traces (OpenTelemetry/OTLP), structured JSON logging |
+| TR-050 | V2.0 §14 | §18b.2 | Metrics via Micrometer `MeterRegistry`; domain instrumented via decorating interceptors, not direct calls |
+| TR-051 | V2.0 §14 | §18b.3 | Distributed traces via OpenTelemetry; W3C Trace Context propagation through Kafka headers; child spans for virtual thread chunks |
+| TR-052 | V2.0 §14 | §18b.4 | Structured JSON logging with `tenant_id`, `correlation_id`, `trace_id` in MDC; SLF4J in domain (no framework dep) |
+| TR-053 | V2.0 §14 | §18b.5 | Health checks: `/health/live` + `/health/ready`; per-dependency 2s timeout; outbox depth/staleness degradation signals |
+| TR-054 | V2.0 §14 | §18b.6 | Alerting thresholds: P1 (outbox stall, DB exhaustion, settlement failure), P2 (cache degradation, consumer lag), P3/P4 (informational) |
+| TR-055 | V2.0 §14 | §18b.7 | Grafana dashboards by persona: Operations Overview, Trade Lifecycle, Valuation Pipeline, Cache Performance, Per-Tenant SLA |
+| TR-056 | FR-006, FR-007 | §18b.8 | Regulatory audit trail via bitemporal axes + structured logging; no separate audit table needed |
 
 ---
 

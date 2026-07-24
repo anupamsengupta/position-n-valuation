@@ -4,7 +4,12 @@
       "Bash(python:*)",
       "Bash(python3:*)",
       "WebSearch",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(mvn validate:*)",
+      "Bash(mvn compile:*)",
+      "Bash(mvn test:*)",
+      "Bash(mkdir:*)",
+      "Bash(wc:*)"
     ]
   }
 }
