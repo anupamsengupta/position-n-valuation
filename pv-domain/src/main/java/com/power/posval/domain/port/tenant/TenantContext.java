@@ -8,7 +8,7 @@ public interface TenantContext {
 
     String currentTenantId();
 
-    void setTenantId(String tenantId);
+    void setTenant(String tenantId);
 
     void clear();
 }

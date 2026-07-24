@@ -20,7 +20,7 @@ public class ThreadLocalTenantContext implements TenantContext {
     }
 
     @Override
-    public void setTenantId(String tenantId) {
+    public void setTenant(String tenantId) {
         TENANT.set(tenantId);
     }
 

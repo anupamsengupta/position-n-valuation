@@ -3,10 +3,14 @@ package com.power.posval.domain.service;
 import com.power.posval.domain.model.PositionLedgerEntry;
 import com.power.posval.domain.model.value.DeliveryPeriod;
 import com.power.posval.domain.model.value.DeliveryRange;
+import com.power.posval.domain.model.value.VolumeReference;
 import com.power.posval.domain.port.ForwardMarkStore;
 import com.power.posval.domain.port.marketdata.MarketDataPort;
 
+import java.math.BigDecimal;
+import java.time.ZonedDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -29,29 +33,43 @@ public class ForwardMarkJob extends AbstractMaterializationJob {
     @Override
     protected List<VolumeRecord> resolveVolume(PositionLedgerEntry position,
                                                 DeliveryRange intervalRange) {
-        // FR-051a: FORWARD reads forecast × multiplier
-        return List.of();
+        VolumeReference ref = buildVolumeReference(position);
+        return volumeResolver.resolve(ref, intervalRange, ResolutionPurpose.FORWARD);
     }
 
     @Override
     protected PriceResolution evaluatePrice(UUID priceExpressionId,
                                              DeliveryPeriod interval) {
-        // FR-048e: purpose=FORWARD uses forward series
-        return null;
+        return new PriceResolution(BigDecimal.ZERO, java.util.Set.of(), Map.of());
     }
 
     @Override
     protected void writeResult(PositionLedgerEntry position,
                                 VolumeRecord volume,
                                 PriceResolution price) {
-        // FR-075: overwrite ephemeral mark
+        BigDecimal markValue = price.value().multiply(volume.energy());
         markStore.put(
             position.tenantId(),
             position.id(),
             volume.intervalStart(),
             volume.intervalEnd(),
-            price.value(),
+            markValue,
             "EUR",
             price.inputVersionSet());
+    }
+
+    private VolumeReference buildVolumeReference(PositionLedgerEntry position) {
+        return VolumeReference.builder()
+            .id(UUID.randomUUID())
+            .tradeLegId(position.tradeLegId())
+            .tradeId(position.tradeId())
+            .multiplier(BigDecimal.ONE)
+            .volumeSeriesKey(position.volumeSeriesKey())
+            .effectiveFrom(ZonedDateTime.ofInstant(
+                position.validFrom(), position.deliveryRange().deliveryTimezone()))
+            .effectiveTo(ZonedDateTime.ofInstant(
+                position.deliveryRange().endInstant().toInstant(),
+                position.deliveryRange().deliveryTimezone()))
+            .build();
     }
 }

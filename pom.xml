@@ -36,6 +36,7 @@
         <guice.version>7.0.0</guice.version>
         <hikaricp.version>6.2.1</hikaricp.version>
         <junit.version>5.11.0</junit.version>
+        <jmh.version>1.37</jmh.version>
     </properties>
 
     <dependencyManagement>

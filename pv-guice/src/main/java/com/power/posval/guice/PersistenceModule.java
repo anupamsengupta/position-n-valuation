@@ -7,6 +7,7 @@ import com.power.posval.domain.port.cache.TradeIntervalCache;
 import com.power.posval.domain.port.datasource.DataSourceRouter;
 import com.power.posval.domain.port.repository.*;
 import com.power.posval.persistence.adapter.*;
+import com.power.posval.domain.port.repository.StruckMarkRepository;
 import com.power.posval.persistence.batch.BatchWriter;
 import com.power.posval.persistence.batch.UnitOfWork;
 import com.power.posval.persistence.datasource.DualHikariDataSourceRouter;
@@ -42,6 +43,10 @@ public class PersistenceModule extends AbstractModule {
 
         bind(DependencyIndex.class)
             .to(JpaDependencyIndex.class)
+            .in(Singleton.class);
+
+        bind(StruckMarkRepository.class)
+            .to(JpaStruckMarkRepository.class)
             .in(Singleton.class);
 
         bind(TradeIntervalCache.class)

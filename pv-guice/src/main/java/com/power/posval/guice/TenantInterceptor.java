@@ -22,7 +22,7 @@ public class TenantInterceptor implements MethodInterceptor {
         TenantContext ctx = tenantContext.get();
 
         try {
-            ctx.setTenantId(tenantId);
+            ctx.setTenant(tenantId);
 
             entityManager.get()
                 .createNativeQuery("SET LOCAL app.tenant_id = :tid")

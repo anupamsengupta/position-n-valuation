@@ -1,8 +1,11 @@
 package com.power.posval.persistence.adapter;
 
-import com.power.posval.domain.model.VolumeSeries;
+import com.power.posval.domain.model.*;
+import com.power.posval.domain.model.value.DeliveryPeriod;
+import com.power.posval.domain.model.value.SeriesKey;
 import com.power.posval.domain.port.repository.VolumeSeriesRepository;
 import com.power.posval.domain.port.repository.VolumeSeriesSpec;
+import com.power.posval.persistence.entity.VolumeIntervalEntity;
 import com.power.posval.persistence.entity.VolumeSeriesEntity;
 import jakarta.inject.Inject;
 import jakarta.inject.Provider;
@@ -12,13 +15,14 @@ import jakarta.persistence.criteria.CriteriaQuery;
 import jakarta.persistence.criteria.Predicate;
 import jakarta.persistence.criteria.Root;
 
-import java.util.List;
-import java.util.Optional;
-import java.util.UUID;
+import java.time.Instant;
+import java.time.YearMonth;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.util.*;
 
 /**
  * JPA adapter for VolumeSeriesRepository. §9.3, Pattern #18.
- * VolumeSeriesSpec → CriteriaQuery translation.
  */
 public class JpaVolumeSeriesRepository implements VolumeSeriesRepository {
 
@@ -31,23 +35,34 @@ public class JpaVolumeSeriesRepository implements VolumeSeriesRepository {
 
     @Override
     public void save(VolumeSeries series) {
-        // Skeleton — full entity mapping deferred to when VolumeSeries
-        // domain model has full field accessors
-        throw new UnsupportedOperationException("save not yet implemented");
+        EntityManager em = emProvider.get();
+        VolumeSeriesEntity entity = toEntity(series);
+        em.persist(entity);
+        for (VolumeInterval vi : series.intervals()) {
+            VolumeIntervalEntity vie = toIntervalEntity(vi, entity);
+            em.persist(vie);
+        }
     }
 
     @Override
     public Optional<VolumeSeries> findById(UUID id) {
-        throw new UnsupportedOperationException("findById not yet implemented");
+        var results = emProvider.get()
+            .createQuery("""
+                SELECT e FROM VolumeSeriesEntity e
+                LEFT JOIN FETCH e.intervals
+                WHERE e.seriesUuid = :uuid
+                """, VolumeSeriesEntity.class)
+            .setParameter("uuid", id)
+            .getResultList();
+        return results.isEmpty() ? Optional.empty() : Optional.of(toDomain(results.get(0)));
     }
 
     @Override
     public Optional<VolumeSeries> findCurrentBySeriesKey(String tenantId, String seriesKey) {
-        // JPQL: WHERE tenant_id = :tid AND series_key = :sk
-        //       AND quality_state IN ('CURRENT', 'EFFECTIVE')
         var results = emProvider.get()
             .createQuery("""
                 SELECT e FROM VolumeSeriesEntity e
+                LEFT JOIN FETCH e.intervals
                 WHERE e.tenantId  = :tenantId
                   AND e.seriesKey = :seriesKey
                   AND e.qualityState IN ('CURRENT', 'EFFECTIVE')
@@ -57,7 +72,6 @@ public class JpaVolumeSeriesRepository implements VolumeSeriesRepository {
             .setParameter("seriesKey", seriesKey)
             .setMaxResults(1)
             .getResultList();
-
         return results.isEmpty() ? Optional.empty() : Optional.of(toDomain(results.get(0)));
     }
 
@@ -110,13 +124,78 @@ public class JpaVolumeSeriesRepository implements VolumeSeriesRepository {
 
     @Override
     public void supersede(VolumeSeries oldVersion, VolumeSeries newVersion) {
-        // Mark old as SUPERSEDED, persist new
-        throw new UnsupportedOperationException("supersede not yet implemented");
+        EntityManager em = emProvider.get();
+        em.createQuery("""
+            UPDATE VolumeSeriesEntity e
+            SET e.qualityState = 'SUPERSEDED'
+            WHERE e.seriesUuid = :uuid
+            """)
+            .setParameter("uuid", oldVersion.id())
+            .executeUpdate();
+        save(newVersion);
     }
 
-    private VolumeSeries toDomain(VolumeSeriesEntity entity) {
-        // Skeleton — returns null until VolumeSeries domain model
-        // supports full construction from entity fields
-        throw new UnsupportedOperationException("toDomain not yet implemented");
+    private VolumeSeriesEntity toEntity(VolumeSeries s) {
+        var e = new VolumeSeriesEntity();
+        e.setSeriesUuid(s.id());
+        e.setTenantId("default");
+        e.setSeriesKey(s.seriesKey().value());
+        e.setSeriesType(s.seriesType().name());
+        e.setAssetId(s.assetId());
+        e.setTradeLegId(s.tradeLegId());
+        e.setVersionId(s.versionId());
+        e.setQualityState(s.qualityState().name());
+        e.setMaterializationStatus(s.materializationStatus().name());
+        e.setTransactionTime(s.transactionTime());
+        e.setValidTime(s.validTime());
+        return e;
+    }
+
+    private VolumeIntervalEntity toIntervalEntity(VolumeInterval vi, VolumeSeriesEntity parent) {
+        var e = new VolumeIntervalEntity();
+        e.setIntervalUuid(vi.id());
+        e.setSeries(parent);
+        e.setTenantId(parent.getTenantId());
+        e.setIntervalStart(vi.intervalStart());
+        e.setIntervalEnd(vi.intervalEnd());
+        e.setVolume(vi.volume());
+        e.setEnergy(vi.energy());
+        e.setVersion(vi.version());
+        e.setSupersedesId(vi.supersedesId());
+        return e;
+    }
+
+    private VolumeSeries toDomain(VolumeSeriesEntity e) {
+        List<VolumeInterval> intervals = e.getIntervals().stream()
+            .map(vi -> (VolumeInterval) new DefaultVolumeInterval(
+                vi.getIntervalUuid(),
+                vi.getIntervalStart(),
+                vi.getIntervalEnd(),
+                vi.getVolume(),
+                vi.getEnergy(),
+                vi.getVersion(),
+                vi.getSupersedesId()))
+            .toList();
+
+        ZoneId tz = ZoneId.of("Europe/Berlin");
+        Instant txTime = e.getTransactionTime() != null ? e.getTransactionTime() : Instant.now();
+
+        return DefaultVolumeSeries.builder()
+            .id(e.getSeriesUuid())
+            .seriesKey(new SeriesKey(e.getSeriesKey()))
+            .seriesType(SeriesType.valueOf(e.getSeriesType()))
+            .assetId(e.getAssetId())
+            .tradeLegId(e.getTradeLegId())
+            .versionId(e.getVersionId())
+            .volumeUnit(VolumeUnit.MW_CAPACITY)
+            .granularity(TimeGranularity.MIN_15)
+            .deliveryPeriod(new DeliveryPeriod(
+                ZonedDateTime.now(tz), ZonedDateTime.now(tz).plusMonths(1), tz))
+            .qualityState(QualityState.valueOf(e.getQualityState()))
+            .materializationStatus(MaterializationStatus.valueOf(e.getMaterializationStatus()))
+            .transactionTime(txTime)
+            .validTime(e.getValidTime())
+            .intervals(intervals)
+            .build();
     }
 }

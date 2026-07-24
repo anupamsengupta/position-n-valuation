@@ -1,5 +1,7 @@
 package com.power.posval.domain.port.repository;
 
+import com.power.posval.domain.model.SettlementCell;
+
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -11,9 +13,9 @@ import java.util.UUID;
 public interface SettlementCellRepository {
 
     /** Persist a settlement cell (bitemporal). */
-    void save(Object cell);
+    void save(SettlementCell cell);
 
-    /** Find settlement cells for a position. */
-    List<Object> findByPosition(String tenantId, UUID positionId,
-                                 Instant rangeStart, Instant rangeEnd);
+    /** Find current-knowledge settlement cells for a position within a range. */
+    List<SettlementCell> findByPosition(String tenantId, UUID positionId,
+                                         Instant rangeStart, Instant rangeEnd);
 }

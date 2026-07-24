@@ -1,5 +1,6 @@
 package com.power.posval.persistence.adapter;
 
+import com.power.posval.domain.model.SettlementCell;
 import com.power.posval.domain.port.repository.SettlementCellRepository;
 import com.power.posval.persistence.entity.SettlementCellEntity;
 import jakarta.inject.Inject;
@@ -7,8 +8,7 @@ import jakarta.inject.Provider;
 import jakarta.persistence.EntityManager;
 
 import java.time.Instant;
-import java.util.List;
-import java.util.UUID;
+import java.util.*;
 
 /**
  * JPA adapter for SettlementCellRepository. §11.1, Pattern #18.
@@ -24,18 +24,13 @@ public class JpaSettlementCellRepository implements SettlementCellRepository {
     }
 
     @Override
-    public void save(Object cell) {
-        if (cell instanceof SettlementCellEntity entity) {
-            emProvider.get().persist(entity);
-        } else {
-            throw new IllegalArgumentException(
-                "Expected SettlementCellEntity, got: " + cell.getClass().getName());
-        }
+    public void save(SettlementCell cell) {
+        emProvider.get().persist(toEntity(cell));
     }
 
     @Override
-    public List<Object> findByPosition(String tenantId, UUID positionId,
-                                        Instant rangeStart, Instant rangeEnd) {
+    public List<SettlementCell> findByPosition(String tenantId, UUID positionId,
+                                                Instant rangeStart, Instant rangeEnd) {
         return emProvider.get()
             .createQuery("""
                 SELECT e FROM SettlementCellEntity e
@@ -51,7 +46,42 @@ public class JpaSettlementCellRepository implements SettlementCellRepository {
             .setParameter("rangeStart", rangeStart)
             .setParameter("rangeEnd", rangeEnd)
             .getResultStream()
-            .map(e -> (Object) e)
+            .map(this::toDomain)
             .toList();
+    }
+
+    private SettlementCellEntity toEntity(SettlementCell c) {
+        var e = new SettlementCellEntity();
+        e.setCellUuid(c.cellId());
+        e.setTenantId(c.tenantId());
+        e.setPositionId(c.positionId());
+        e.setIntervalStart(c.intervalStart());
+        e.setIntervalEnd(c.intervalEnd());
+        e.setValuationType(c.valuationType());
+        e.setCellStatus(c.cellStatus());
+        e.setPrice(c.price());
+        e.setVolumeMw(c.volumeMw());
+        e.setVolumeMwh(c.volumeMwh());
+        e.setAmount(c.amount());
+        e.setCurrency(c.currency());
+        e.setActiveLeaves(c.activeLeaves() != null ? c.activeLeaves().toString() : null);
+        e.setInputVersionSet(c.inputVersionSet() != null ? c.inputVersionSet().toString() : "{}");
+        e.setValidFrom(c.validFrom());
+        e.setValidTo(c.validTo());
+        e.setKnownFrom(c.knownFrom());
+        e.setKnownTo(c.knownTo());
+        return e;
+    }
+
+    private SettlementCell toDomain(SettlementCellEntity e) {
+        return new SettlementCell(
+            e.getCellUuid(), e.getTenantId(), e.getPositionId(),
+            e.getIntervalStart(), e.getIntervalEnd(),
+            e.getValuationType(), e.getCellStatus(),
+            e.getPrice(), e.getVolumeMw(), e.getVolumeMwh(),
+            e.getAmount(), e.getCurrency(),
+            Set.of(), Map.of(),
+            e.getValidFrom(), e.getValidTo(),
+            e.getKnownFrom(), e.getKnownTo());
     }
 }

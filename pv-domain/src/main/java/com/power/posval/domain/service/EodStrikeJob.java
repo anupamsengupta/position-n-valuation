@@ -1,11 +1,20 @@
 package com.power.posval.domain.service;
 
 import com.power.posval.domain.model.PositionLedgerEntry;
+import com.power.posval.domain.model.StruckMark;
 import com.power.posval.domain.model.value.DeliveryPeriod;
 import com.power.posval.domain.model.value.DeliveryRange;
+import com.power.posval.domain.model.value.VolumeReference;
 import com.power.posval.domain.port.marketdata.MarketDataPort;
+import com.power.posval.domain.port.repository.StruckMarkRepository;
 
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.YearMonth;
+import java.time.ZonedDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -15,28 +24,70 @@ import java.util.UUID;
  */
 public class EodStrikeJob extends AbstractMaterializationJob {
 
+    private final StruckMarkRepository markRepo;
+    private final LocalDate strikeDate;
+
     public EodStrikeJob(VolumeResolver volumeResolver,
                          PriceEvaluator priceEvaluator,
-                         MarketDataPort marketData) {
+                         MarketDataPort marketData,
+                         StruckMarkRepository markRepo,
+                         LocalDate strikeDate) {
         super(volumeResolver, priceEvaluator, marketData);
+        this.markRepo = markRepo;
+        this.strikeDate = strikeDate;
     }
 
     @Override
     protected List<VolumeRecord> resolveVolume(PositionLedgerEntry position,
                                                 DeliveryRange intervalRange) {
-        return List.of();
+        VolumeReference ref = buildVolumeReference(position);
+        return volumeResolver.resolve(ref, intervalRange, ResolutionPurpose.FORWARD);
     }
 
     @Override
     protected PriceResolution evaluatePrice(UUID priceExpressionId,
                                              DeliveryPeriod interval) {
-        return null;
+        return new PriceResolution(BigDecimal.ZERO, java.util.Set.of(), Map.of());
     }
 
     @Override
     protected void writeResult(PositionLedgerEntry position,
                                 VolumeRecord volume,
                                 PriceResolution price) {
-        // Skeleton — persists immutable struck mark via StruckMarkRepository
+        BigDecimal markValue = price.value().multiply(volume.energy());
+        YearMonth deliveryMonth = YearMonth.from(
+            volume.intervalStart().atZone(position.deliveryRange().deliveryTimezone()));
+
+        StruckMark mark = new StruckMark(
+            position.tenantId(),
+            position.id(),
+            deliveryMonth,
+            strikeDate,
+            markValue,
+            "EUR",
+            price.inputVersionSet(),
+            null,
+            Map.of(),
+            0L,
+            null,
+            false,
+            Instant.now());
+
+        markRepo.save(mark);
+    }
+
+    private VolumeReference buildVolumeReference(PositionLedgerEntry position) {
+        return VolumeReference.builder()
+            .id(UUID.randomUUID())
+            .tradeLegId(position.tradeLegId())
+            .tradeId(position.tradeId())
+            .multiplier(BigDecimal.ONE)
+            .volumeSeriesKey(position.volumeSeriesKey())
+            .effectiveFrom(ZonedDateTime.ofInstant(
+                position.validFrom(), position.deliveryRange().deliveryTimezone()))
+            .effectiveTo(ZonedDateTime.ofInstant(
+                position.deliveryRange().endInstant().toInstant(),
+                position.deliveryRange().deliveryTimezone()))
+            .build();
     }
 }

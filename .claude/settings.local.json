@@ -9,7 +9,11 @@
       "Bash(mvn compile:*)",
       "Bash(mvn test:*)",
       "Bash(mkdir:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(xargs grep:*)",
+      "Bash(mvn test-compile:*)",
+      "Bash(mvn clean:*)",
+      "Bash(find .:*)"
     ]
   }
 }

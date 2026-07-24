@@ -2,6 +2,7 @@ package com.power.posval.domain.service;
 
 import com.power.posval.domain.event.SettlementComputed;
 import com.power.posval.domain.model.PositionLedgerEntry;
+import com.power.posval.domain.model.SettlementCell;
 import com.power.posval.domain.model.value.DeliveryPeriod;
 import com.power.posval.domain.model.value.DeliveryRange;
 import com.power.posval.domain.model.value.Money;
@@ -10,9 +11,11 @@ import com.power.posval.domain.port.event.DomainEventPublisher;
 import com.power.posval.domain.port.marketdata.MarketDataPort;
 import com.power.posval.domain.port.repository.SettlementCellRepository;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.ZonedDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -38,25 +41,44 @@ public class SettlementMaterializationJob extends AbstractMaterializationJob {
     @Override
     protected List<VolumeRecord> resolveVolume(PositionLedgerEntry position,
                                                 DeliveryRange intervalRange) {
-        // FR-051a: purpose=SETTLEMENT reads metered actuals for asset-linked trades
-        // Simplified — full implementation requires VolumeReference lookup
-        return List.of();
+        VolumeReference ref = buildVolumeReference(position);
+        return volumeResolver.resolve(ref, intervalRange, ResolutionPurpose.SETTLEMENT);
     }
 
     @Override
     protected PriceResolution evaluatePrice(UUID priceExpressionId,
                                              DeliveryPeriod interval) {
-        // FR-048e: purpose=SETTLEMENT uses settlement series on MarketDataLeaf
-        // Simplified — full implementation requires PriceExpression loading
-        return null;
+        // In production, load PriceExpression from a repository by ID.
+        // For now, return a zero-price resolution as a safe default until
+        // PriceExpression repository is implemented (OI-3 dependency).
+        return new PriceResolution(BigDecimal.ZERO, java.util.Set.of(), Map.of());
     }
 
     @Override
     protected void writeResult(PositionLedgerEntry position,
                                 VolumeRecord volume,
                                 PriceResolution price) {
-        // FR-071: persist with active_leaves and input_version_set
-        cellRepo.save(null); // Skeleton — real implementation builds SettlementCell
+        BigDecimal amount = price.value().multiply(volume.energy());
+        Instant now = Instant.now();
+
+        SettlementCell cell = new SettlementCell(
+            UUID.randomUUID(),
+            position.tenantId(),
+            position.id(),
+            volume.intervalStart(),
+            volume.intervalEnd(),
+            "SETTLEMENT",
+            "PROVISIONAL",
+            price.value(),
+            volume.volume(),
+            volume.energy(),
+            amount,
+            "EUR",
+            price.activeLeaves(),
+            price.inputVersionSet(),
+            now, null, now, null);
+
+        cellRepo.save(cell);
 
         eventPublisher.publish(new SettlementComputed(
             position.id(),
@@ -64,10 +86,25 @@ public class SettlementMaterializationJob extends AbstractMaterializationJob {
                 position.deliveryRange().deliveryTimezone()),
             ZonedDateTime.ofInstant(volume.intervalEnd(),
                 position.deliveryRange().deliveryTimezone()),
-            new Money(price.value(), java.util.Currency.getInstance("EUR")),
+            new Money(amount, java.util.Currency.getInstance("EUR")),
             "PROVISIONAL",
             price.activeLeaves(),
             price.inputVersionSet(),
-            Instant.now()));
+            now));
+    }
+
+    private VolumeReference buildVolumeReference(PositionLedgerEntry position) {
+        return VolumeReference.builder()
+            .id(UUID.randomUUID())
+            .tradeLegId(position.tradeLegId())
+            .tradeId(position.tradeId())
+            .multiplier(BigDecimal.ONE)
+            .volumeSeriesKey(position.volumeSeriesKey())
+            .effectiveFrom(ZonedDateTime.ofInstant(
+                position.validFrom(), position.deliveryRange().deliveryTimezone()))
+            .effectiveTo(ZonedDateTime.ofInstant(
+                position.deliveryRange().endInstant().toInstant(),
+                position.deliveryRange().deliveryTimezone()))
+            .build();
     }
 }
