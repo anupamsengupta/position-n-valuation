@@ -1,0 +1,61 @@
+{
+  "series": [
+    {
+      "id": "10000000-0000-0000-0000-000000000001",
+      "seriesKey": "MTR-WP-NORDSEE",
+      "assetId": "ASSET-WP-NORDSEE-01",
+      "meteringPointId": "EIC-W-DE000NORDSEE",
+      "versionId": 1,
+      "volumeUnit": "MW_CAPACITY",
+      "granularity": "MIN_15",
+      "deliveryStart": "2025-03-01T00:00:00+01:00",
+      "deliveryEnd": "2025-04-01T00:00:00+02:00",
+      "deliveryTimezone": "Europe/Berlin",
+      "qualityState": "VALIDATED",
+      "materializationStatus": "FULL",
+      "materializedThrough": "2025-03",
+      "totalExpectedIntervals": 2976,
+      "materializedIntervalCount": 2976,
+      "transactionTime": "2025-04-02T06:00:00Z",
+      "receivedAt": "2025-04-02T05:55:00Z",
+      "intervals": [
+        {
+          "id": "20000000-0000-0000-0000-000000000001",
+          "intervalStart": "2025-03-01T00:00:00Z",
+          "intervalEnd": "2025-03-01T00:15:00Z",
+          "volume": 42.5,
+          "energy": 10.625,
+          "version": 1,
+          "supersedesId": null
+        },
+        {
+          "id": "20000000-0000-0000-0000-000000000002",
+          "intervalStart": "2025-03-01T00:15:00Z",
+          "intervalEnd": "2025-03-01T00:30:00Z",
+          "volume": 43.1,
+          "energy": 10.775,
+          "version": 1,
+          "supersedesId": null
+        },
+        {
+          "id": "20000000-0000-0000-0000-000000000003",
+          "intervalStart": "2025-03-01T00:30:00Z",
+          "intervalEnd": "2025-03-01T00:45:00Z",
+          "volume": 41.8,
+          "energy": 10.450,
+          "version": 1,
+          "supersedesId": null
+        },
+        {
+          "id": "20000000-0000-0000-0000-000000000004",
+          "intervalStart": "2025-03-01T00:45:00Z",
+          "intervalEnd": "2025-03-01T01:00:00Z",
+          "volume": 40.2,
+          "energy": 10.050,
+          "version": 1,
+          "supersedesId": null
+        }
+      ]
+    }
+  ]
+}

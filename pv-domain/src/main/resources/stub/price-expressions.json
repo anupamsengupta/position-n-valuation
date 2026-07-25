@@ -1,0 +1,53 @@
+{
+  "expressions": [
+    {
+      "id": "00000000-0000-0000-0000-000000000001",
+      "type": "ConstantLeaf",
+      "leafId": "FIXED_85",
+      "value": 85.00,
+      "unit": "EUR/MWh"
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000002",
+      "type": "Add",
+      "left": {
+        "type": "MarketDataLeaf",
+        "leafId": "EPEX_DA15",
+        "series": "EPEX_DA15",
+        "settlementSeries": "EPEX_DA15_SETTLE",
+        "lag": 0,
+        "quotationWindow": "SINGLE_INTERVAL"
+      },
+      "right": {
+        "type": "ConstantLeaf",
+        "leafId": "SPREAD_5",
+        "value": 5.00,
+        "unit": "EUR/MWh"
+      }
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "type": "Clamp",
+      "inner": {
+        "type": "MarketDataLeaf",
+        "leafId": "EPEX_DA15_COLLAR",
+        "series": "EPEX_DA15",
+        "settlementSeries": null,
+        "lag": 0,
+        "quotationWindow": "SINGLE_INTERVAL"
+      },
+      "min": {
+        "type": "ConstantLeaf",
+        "leafId": "FLOOR_40",
+        "value": 40.00,
+        "unit": "EUR/MWh"
+      },
+      "max": {
+        "type": "ConstantLeaf",
+        "leafId": "CAP_120",
+        "value": 120.00,
+        "unit": "EUR/MWh"
+      }
+    }
+  ]
+}
