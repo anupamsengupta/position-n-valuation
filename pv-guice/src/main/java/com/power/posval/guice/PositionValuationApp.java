@@ -21,6 +21,7 @@ public class PositionValuationApp {
         return Guice.createInjector(
             new PersistenceModule(),
             new DomainModule(),
+            new StubServiceModule(),
             new TenantModule(),
             new EventModule(),
             new CacheModule(),

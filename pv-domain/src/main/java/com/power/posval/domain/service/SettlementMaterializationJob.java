@@ -9,6 +9,7 @@ import com.power.posval.domain.model.value.Money;
 import com.power.posval.domain.model.value.VolumeReference;
 import com.power.posval.domain.port.event.DomainEventPublisher;
 import com.power.posval.domain.port.marketdata.MarketDataPort;
+import com.power.posval.domain.port.repository.PriceExpressionRepository;
 import com.power.posval.domain.port.repository.SettlementCellRepository;
 
 import java.math.BigDecimal;
@@ -16,6 +17,7 @@ import java.time.Instant;
 import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -31,9 +33,10 @@ public class SettlementMaterializationJob extends AbstractMaterializationJob {
     public SettlementMaterializationJob(VolumeResolver volumeResolver,
                                          PriceEvaluator priceEvaluator,
                                          MarketDataPort marketData,
+                                         PriceExpressionRepository priceExpressionRepo,
                                          SettlementCellRepository cellRepo,
                                          DomainEventPublisher eventPublisher) {
-        super(volumeResolver, priceEvaluator, marketData);
+        super(volumeResolver, priceEvaluator, marketData, priceExpressionRepo);
         this.cellRepo = cellRepo;
         this.eventPublisher = eventPublisher;
     }
@@ -48,10 +51,12 @@ public class SettlementMaterializationJob extends AbstractMaterializationJob {
     @Override
     protected PriceResolution evaluatePrice(UUID priceExpressionId,
                                              DeliveryPeriod interval) {
-        // In production, load PriceExpression from a repository by ID.
-        // For now, return a zero-price resolution as a safe default until
-        // PriceExpression repository is implemented (OI-3 dependency).
-        return new PriceResolution(BigDecimal.ZERO, java.util.Set.of(), Map.of());
+        var exprOpt = priceExpressionRepo.findById(priceExpressionId);
+        if (exprOpt.isEmpty()) {
+            return new PriceResolution(BigDecimal.ZERO, Set.of(), Map.of());
+        }
+        return priceEvaluator.evaluate(exprOpt.get(), interval,
+            ResolutionPurpose.SETTLEMENT, marketData);
     }
 
     @Override

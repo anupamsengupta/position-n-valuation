@@ -13,7 +13,8 @@
       "Bash(xargs grep:*)",
       "Bash(mvn test-compile:*)",
       "Bash(mvn clean:*)",
-      "Bash(find .:*)"
+      "Bash(find .:*)",
+      "Bash(ls:*)"
     ]
   }
 }

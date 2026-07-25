@@ -3,6 +3,7 @@ package com.power.posval.persistence.adapter;
 import com.power.posval.domain.model.StruckMark;
 import com.power.posval.domain.port.repository.StruckMarkRepository;
 import com.power.posval.persistence.entity.StruckMarkEntity;
+import com.power.posval.persistence.util.SimpleJsonCodec;
 import jakarta.inject.Inject;
 import jakarta.inject.Provider;
 import jakarta.persistence.EntityManager;
@@ -75,9 +76,9 @@ public class JpaStruckMarkRepository implements StruckMarkRepository {
         e.setStrikeDate(m.strikeDate());
         e.setMarkValue(m.markValue());
         e.setCurrency(m.currency());
-        e.setCurveVersionSet(m.curveVersionSet().toString());
+        e.setCurveVersionSet(SimpleJsonCodec.mapToJson(m.curveVersionSet()));
         e.setFxVersion(m.fxVersion());
-        e.setVolumeVersionSet(m.volumeVersionSet() != null ? m.volumeVersionSet().toString() : null);
+        e.setVolumeVersionSet(SimpleJsonCodec.mapToJson(m.volumeVersionSet()));
         e.setExpressionVersion(m.expressionVersion());
         e.setSupersedesId(m.supersedesId());
         e.setCreatedAt(m.createdAt());
@@ -90,7 +91,9 @@ public class JpaStruckMarkRepository implements StruckMarkRepository {
             e.getTenantId(), e.getPositionId(),
             YearMonth.parse(e.getDeliveryMonth()),
             e.getStrikeDate(), e.getMarkValue(), e.getCurrency(),
-            Map.of(), e.getFxVersion(), Map.of(),
+            SimpleJsonCodec.jsonToStringLongMap(e.getCurveVersionSet()),
+            e.getFxVersion(),
+            SimpleJsonCodec.jsonToStringLongMap(e.getVolumeVersionSet()),
             e.getExpressionVersion(), e.getSupersedesId(),
             e.isRestrike(), e.getCreatedAt());
     }

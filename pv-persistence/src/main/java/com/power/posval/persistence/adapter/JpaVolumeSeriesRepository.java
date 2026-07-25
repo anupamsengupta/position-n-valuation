@@ -148,6 +148,11 @@ public class JpaVolumeSeriesRepository implements VolumeSeriesRepository {
         e.setMaterializationStatus(s.materializationStatus().name());
         e.setTransactionTime(s.transactionTime());
         e.setValidTime(s.validTime());
+        if (s.deliveryPeriod() != null) {
+            e.setDeliveryStart(s.deliveryPeriod().start().toInstant());
+            e.setDeliveryEnd(s.deliveryPeriod().end().toInstant());
+            e.setDeliveryTimezone(s.deliveryPeriod().deliveryTimezone().getId());
+        }
         return e;
     }
 
@@ -177,8 +182,19 @@ public class JpaVolumeSeriesRepository implements VolumeSeriesRepository {
                 vi.getSupersedesId()))
             .toList();
 
-        ZoneId tz = ZoneId.of("Europe/Berlin");
+        ZoneId tz = e.getDeliveryTimezone() != null
+            ? ZoneId.of(e.getDeliveryTimezone()) : ZoneId.of("Europe/Berlin");
         Instant txTime = e.getTransactionTime() != null ? e.getTransactionTime() : Instant.now();
+
+        DeliveryPeriod dp;
+        if (e.getDeliveryStart() != null && e.getDeliveryEnd() != null) {
+            dp = new DeliveryPeriod(
+                ZonedDateTime.ofInstant(e.getDeliveryStart(), tz),
+                ZonedDateTime.ofInstant(e.getDeliveryEnd(), tz), tz);
+        } else {
+            dp = new DeliveryPeriod(
+                ZonedDateTime.now(tz), ZonedDateTime.now(tz).plusMonths(1), tz);
+        }
 
         return DefaultVolumeSeries.builder()
             .id(e.getSeriesUuid())
@@ -189,8 +205,7 @@ public class JpaVolumeSeriesRepository implements VolumeSeriesRepository {
             .versionId(e.getVersionId())
             .volumeUnit(VolumeUnit.MW_CAPACITY)
             .granularity(TimeGranularity.MIN_15)
-            .deliveryPeriod(new DeliveryPeriod(
-                ZonedDateTime.now(tz), ZonedDateTime.now(tz).plusMonths(1), tz))
+            .deliveryPeriod(dp)
             .qualityState(QualityState.valueOf(e.getQualityState()))
             .materializationStatus(MaterializationStatus.valueOf(e.getMaterializationStatus()))
             .transactionTime(txTime)

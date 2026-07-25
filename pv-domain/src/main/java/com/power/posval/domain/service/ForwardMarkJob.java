@@ -6,11 +6,13 @@ import com.power.posval.domain.model.value.DeliveryRange;
 import com.power.posval.domain.model.value.VolumeReference;
 import com.power.posval.domain.port.ForwardMarkStore;
 import com.power.posval.domain.port.marketdata.MarketDataPort;
+import com.power.posval.domain.port.repository.PriceExpressionRepository;
 
 import java.math.BigDecimal;
 import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -25,8 +27,9 @@ public class ForwardMarkJob extends AbstractMaterializationJob {
     public ForwardMarkJob(VolumeResolver volumeResolver,
                            PriceEvaluator priceEvaluator,
                            MarketDataPort marketData,
+                           PriceExpressionRepository priceExpressionRepo,
                            ForwardMarkStore markStore) {
-        super(volumeResolver, priceEvaluator, marketData);
+        super(volumeResolver, priceEvaluator, marketData, priceExpressionRepo);
         this.markStore = markStore;
     }
 
@@ -40,7 +43,12 @@ public class ForwardMarkJob extends AbstractMaterializationJob {
     @Override
     protected PriceResolution evaluatePrice(UUID priceExpressionId,
                                              DeliveryPeriod interval) {
-        return new PriceResolution(BigDecimal.ZERO, java.util.Set.of(), Map.of());
+        var exprOpt = priceExpressionRepo.findById(priceExpressionId);
+        if (exprOpt.isEmpty()) {
+            return new PriceResolution(BigDecimal.ZERO, Set.of(), Map.of());
+        }
+        return priceEvaluator.evaluate(exprOpt.get(), interval,
+            ResolutionPurpose.FORWARD, marketData);
     }
 
     @Override

@@ -29,6 +29,14 @@ public class DomainModule extends AbstractModule {
             .to(DefaultTradeCancelHandler.class)
             .in(Singleton.class);
 
+        bind(PriceEvaluator.class)
+            .to(DefaultPriceEvaluator.class)
+            .in(Singleton.class);
+
+        bind(ProfileResolver.class).in(Singleton.class);
+        bind(ForecastResolver.class).in(Singleton.class);
+        bind(VolumeSeriesFactory.class).in(Singleton.class);
+
         bind(CacheInvalidationHandler.class).in(Singleton.class);
         bind(TradeIntervalCacheRebuilder.class).in(Singleton.class);
     }

@@ -1,8 +1,13 @@
 package com.power.posval.kafka;
 
 import com.power.posval.domain.event.PositionCaptured;
+import com.power.posval.domain.model.PositionLedgerEntry;
+import com.power.posval.domain.port.repository.PositionLedgerRepository;
 import com.power.posval.domain.port.repository.VolumeSeriesRepository;
+import com.power.posval.domain.service.SettlementMaterializationJob;
 import jakarta.inject.Inject;
+
+import java.util.List;
 
 /**
  * Kafka consumer for PositionCaptured events.
@@ -11,10 +16,16 @@ import jakarta.inject.Inject;
 public class TradeCapturedConsumer extends IdempotentConsumer<PositionCaptured> {
 
     private final VolumeSeriesRepository seriesRepo;
+    private final PositionLedgerRepository ledgerRepo;
+    private final SettlementMaterializationJob settlementJob;
 
     @Inject
-    public TradeCapturedConsumer(VolumeSeriesRepository seriesRepo) {
+    public TradeCapturedConsumer(VolumeSeriesRepository seriesRepo,
+                                  PositionLedgerRepository ledgerRepo,
+                                  SettlementMaterializationJob settlementJob) {
         this.seriesRepo = seriesRepo;
+        this.ledgerRepo = ledgerRepo;
+        this.settlementJob = settlementJob;
     }
 
     @Override
@@ -26,13 +37,13 @@ public class TradeCapturedConsumer extends IdempotentConsumer<PositionCaptured> 
 
     @Override
     protected void process(PositionCaptured event) {
-        // Trigger downstream cascade:
-        // 1. Volume materialization (S3) — create/populate VolumeSeries
-        // 2. Settlement computation (S5a) — compute initial settlement cells
-        // 3. Cache population (S6) — warm slot cache
-        // 4. Trade interval cache (S6b) — pre-multiply for portfolio dashboards
-        //
-        // In production, each step is orchestrated via the materialization pipeline.
-        // The consumer delegates to domain services injected via Guice.
+        // Retrieve position ledger entries for the captured trade
+        List<PositionLedgerEntry> entries = ledgerRepo.findCurrentByTradeLeg(
+            event.tenantId(), event.tradeId(), event.tradeLegId());
+
+        // Trigger settlement materialization (S5a) for each position entry
+        for (PositionLedgerEntry entry : entries) {
+            settlementJob.execute(entry, entry.deliveryRange());
+        }
     }
 }

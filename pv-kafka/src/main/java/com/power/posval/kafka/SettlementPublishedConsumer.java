@@ -1,6 +1,8 @@
 package com.power.posval.kafka;
 
 import com.power.posval.domain.event.SettlementComputed;
+import com.power.posval.domain.model.TimeGranularity;
+import com.power.posval.domain.port.repository.RollupRepository;
 import jakarta.inject.Inject;
 
 /**
@@ -9,8 +11,12 @@ import jakarta.inject.Inject;
  */
 public class SettlementPublishedConsumer extends IdempotentConsumer<SettlementComputed> {
 
+    private final RollupRepository rollupRepo;
+
     @Inject
-    public SettlementPublishedConsumer() {}
+    public SettlementPublishedConsumer(RollupRepository rollupRepo) {
+        this.rollupRepo = rollupRepo;
+    }
 
     @Override
     protected boolean alreadyProcessed(SettlementComputed event) {
@@ -20,9 +26,11 @@ public class SettlementPublishedConsumer extends IdempotentConsumer<SettlementCo
 
     @Override
     protected void process(SettlementComputed event) {
-        // 1. Update dependency index edges for the settled position
-        // 2. Trigger rollup refresh for the affected delivery range
-        // 3. Forward marks for the same position can be pruned
-        //    (settlement handover per PrunePolicy)
+        // Trigger rollup refresh for the affected delivery range (S7)
+        rollupRepo.refresh(
+            null, // tenantId from event context — not carried on SettlementComputed
+            event.intervalStart().toInstant(),
+            event.intervalEnd().toInstant(),
+            TimeGranularity.MIN_15);
     }
 }

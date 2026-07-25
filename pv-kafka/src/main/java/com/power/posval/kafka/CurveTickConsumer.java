@@ -1,5 +1,7 @@
 package com.power.posval.kafka;
 
+import com.power.posval.domain.port.repository.DependencyIndex;
+import com.power.posval.domain.service.ForwardMarkJob;
 import jakarta.inject.Inject;
 
 /**
@@ -11,8 +13,15 @@ import jakarta.inject.Inject;
  */
 public class CurveTickConsumer extends IdempotentConsumer<Object> {
 
+    private final DependencyIndex dependencyIndex;
+    private final ForwardMarkJob forwardMarkJob;
+
     @Inject
-    public CurveTickConsumer() {}
+    public CurveTickConsumer(DependencyIndex dependencyIndex,
+                              ForwardMarkJob forwardMarkJob) {
+        this.dependencyIndex = dependencyIndex;
+        this.forwardMarkJob = forwardMarkJob;
+    }
 
     @Override
     protected boolean alreadyProcessed(Object event) {
@@ -22,10 +31,12 @@ public class CurveTickConsumer extends IdempotentConsumer<Object> {
 
     @Override
     protected void process(Object event) {
-        // 1. Identify affected positions via dependency index (S8)
-        //    — find cells with edges to the updated curve series.
-        // 2. For each affected position, trigger ForwardMarkJob
-        //    to recalculate the mark with the new curve version.
-        // 3. ForwardMarkStore.put() overwrites the ephemeral mark (FR-075).
+        // CurveTick event structure TBD — once defined, extract series key and
+        // affected range, then query dependency index for affected cells and
+        // re-execute ForwardMarkJob for each affected position.
+        //
+        // Placeholder: when CurveTick domain event is defined, implement:
+        // 1. var affected = dependencyIndex.findAffectedCells(tenantId, seriesKey, range, null);
+        // 2. For each affected cell, load position and call forwardMarkJob.execute(position, range);
     }
 }

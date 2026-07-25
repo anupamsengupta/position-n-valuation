@@ -28,7 +28,7 @@ class AbstractMaterializationJobTest {
     void executeCallsHooksInOrder() {
         var hookOrder = new ArrayList<String>();
 
-        var job = new AbstractMaterializationJob(null, null, null) {
+        var job = new AbstractMaterializationJob(null, null, null, null) {
             @Override
             protected List<VolumeRecord> resolveVolume(PositionLedgerEntry pos, DeliveryRange range) {
                 hookOrder.add("resolveVolume");

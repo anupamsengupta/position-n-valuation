@@ -3,6 +3,7 @@ package com.power.posval.persistence.adapter;
 import com.power.posval.domain.model.SettlementCell;
 import com.power.posval.domain.port.repository.SettlementCellRepository;
 import com.power.posval.persistence.entity.SettlementCellEntity;
+import com.power.posval.persistence.util.SimpleJsonCodec;
 import jakarta.inject.Inject;
 import jakarta.inject.Provider;
 import jakarta.persistence.EntityManager;
@@ -64,8 +65,8 @@ public class JpaSettlementCellRepository implements SettlementCellRepository {
         e.setVolumeMwh(c.volumeMwh());
         e.setAmount(c.amount());
         e.setCurrency(c.currency());
-        e.setActiveLeaves(c.activeLeaves() != null ? c.activeLeaves().toString() : null);
-        e.setInputVersionSet(c.inputVersionSet() != null ? c.inputVersionSet().toString() : "{}");
+        e.setActiveLeaves(SimpleJsonCodec.setToJson(c.activeLeaves()));
+        e.setInputVersionSet(SimpleJsonCodec.mapToJson(c.inputVersionSet()));
         e.setValidFrom(c.validFrom());
         e.setValidTo(c.validTo());
         e.setKnownFrom(c.knownFrom());
@@ -80,7 +81,8 @@ public class JpaSettlementCellRepository implements SettlementCellRepository {
             e.getValuationType(), e.getCellStatus(),
             e.getPrice(), e.getVolumeMw(), e.getVolumeMwh(),
             e.getAmount(), e.getCurrency(),
-            Set.of(), Map.of(),
+            SimpleJsonCodec.jsonToStringSet(e.getActiveLeaves()),
+            SimpleJsonCodec.jsonToStringLongMap(e.getInputVersionSet()),
             e.getValidFrom(), e.getValidTo(),
             e.getKnownFrom(), e.getKnownTo());
     }

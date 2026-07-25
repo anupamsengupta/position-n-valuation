@@ -4,6 +4,7 @@ import com.power.posval.domain.model.PositionLedgerEntry;
 import com.power.posval.domain.model.value.DeliveryPeriod;
 import com.power.posval.domain.model.value.DeliveryRange;
 import com.power.posval.domain.port.marketdata.MarketDataPort;
+import com.power.posval.domain.port.repository.PriceExpressionRepository;
 
 import java.time.ZonedDateTime;
 import java.util.List;
@@ -19,13 +20,16 @@ public abstract class AbstractMaterializationJob {
     protected final VolumeResolver volumeResolver;
     protected final PriceEvaluator priceEvaluator;
     protected final MarketDataPort marketData;
+    protected final PriceExpressionRepository priceExpressionRepo;
 
     protected AbstractMaterializationJob(VolumeResolver volumeResolver,
                                           PriceEvaluator priceEvaluator,
-                                          MarketDataPort marketData) {
+                                          MarketDataPort marketData,
+                                          PriceExpressionRepository priceExpressionRepo) {
         this.volumeResolver = volumeResolver;
         this.priceEvaluator = priceEvaluator;
         this.marketData = marketData;
+        this.priceExpressionRepo = priceExpressionRepo;
     }
 
     /**

@@ -11,6 +11,10 @@ import com.power.posval.domain.port.repository.StruckMarkRepository;
 import com.power.posval.persistence.batch.BatchWriter;
 import com.power.posval.persistence.batch.UnitOfWork;
 import com.power.posval.persistence.datasource.DualHikariDataSourceRouter;
+import com.power.posval.persistence.provider.EntityManagerFactoryProvider;
+import com.power.posval.persistence.provider.EntityManagerProvider;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.EntityManagerFactory;
 
 /**
  * Guice module for JPA persistence bindings. §16.2.
@@ -54,6 +58,13 @@ public class PersistenceModule extends AbstractModule {
             .in(Singleton.class);
 
         // Infrastructure
+        bind(EntityManagerFactory.class)
+            .toProvider(EntityManagerFactoryProvider.class)
+            .in(Singleton.class);
+
+        bind(EntityManager.class)
+            .toProvider(EntityManagerProvider.class);
+
         bind(BatchWriter.class).in(Singleton.class);
         bind(UnitOfWork.class).in(Singleton.class);
     }

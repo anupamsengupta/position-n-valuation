@@ -58,6 +58,15 @@ public class VolumeSeriesEntity {
     @Column(name = "valid_time")
     private Instant validTime;
 
+    @Column(name = "delivery_start")
+    private Instant deliveryStart;
+
+    @Column(name = "delivery_end")
+    private Instant deliveryEnd;
+
+    @Column(name = "delivery_timezone", length = 64)
+    private String deliveryTimezone;
+
     @OneToMany(mappedBy = "series", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("intervalStart ASC")
     private List<VolumeIntervalEntity> intervals = new ArrayList<>();
@@ -99,6 +108,15 @@ public class VolumeSeriesEntity {
 
     public Instant getValidTime() { return validTime; }
     public void setValidTime(Instant validTime) { this.validTime = validTime; }
+
+    public Instant getDeliveryStart() { return deliveryStart; }
+    public void setDeliveryStart(Instant deliveryStart) { this.deliveryStart = deliveryStart; }
+
+    public Instant getDeliveryEnd() { return deliveryEnd; }
+    public void setDeliveryEnd(Instant deliveryEnd) { this.deliveryEnd = deliveryEnd; }
+
+    public String getDeliveryTimezone() { return deliveryTimezone; }
+    public void setDeliveryTimezone(String deliveryTimezone) { this.deliveryTimezone = deliveryTimezone; }
 
     public List<VolumeIntervalEntity> getIntervals() { return intervals; }
     public void setIntervals(List<VolumeIntervalEntity> intervals) { this.intervals = intervals; }

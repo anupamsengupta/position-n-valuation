@@ -6,6 +6,7 @@ import com.power.posval.domain.model.value.DeliveryPeriod;
 import com.power.posval.domain.model.value.DeliveryRange;
 import com.power.posval.domain.model.value.VolumeReference;
 import com.power.posval.domain.port.marketdata.MarketDataPort;
+import com.power.posval.domain.port.repository.PriceExpressionRepository;
 import com.power.posval.domain.port.repository.StruckMarkRepository;
 
 import java.math.BigDecimal;
@@ -15,6 +16,7 @@ import java.time.YearMonth;
 import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -30,9 +32,10 @@ public class EodStrikeJob extends AbstractMaterializationJob {
     public EodStrikeJob(VolumeResolver volumeResolver,
                          PriceEvaluator priceEvaluator,
                          MarketDataPort marketData,
+                         PriceExpressionRepository priceExpressionRepo,
                          StruckMarkRepository markRepo,
                          LocalDate strikeDate) {
-        super(volumeResolver, priceEvaluator, marketData);
+        super(volumeResolver, priceEvaluator, marketData, priceExpressionRepo);
         this.markRepo = markRepo;
         this.strikeDate = strikeDate;
     }
@@ -47,7 +50,12 @@ public class EodStrikeJob extends AbstractMaterializationJob {
     @Override
     protected PriceResolution evaluatePrice(UUID priceExpressionId,
                                              DeliveryPeriod interval) {
-        return new PriceResolution(BigDecimal.ZERO, java.util.Set.of(), Map.of());
+        var exprOpt = priceExpressionRepo.findById(priceExpressionId);
+        if (exprOpt.isEmpty()) {
+            return new PriceResolution(BigDecimal.ZERO, Set.of(), Map.of());
+        }
+        return priceEvaluator.evaluate(exprOpt.get(), interval,
+            ResolutionPurpose.FORWARD, marketData);
     }
 
     @Override
