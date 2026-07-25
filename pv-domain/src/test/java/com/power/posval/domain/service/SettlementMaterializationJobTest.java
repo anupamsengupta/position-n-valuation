@@ -185,10 +185,100 @@ class SettlementMaterializationJobTest {
 
         assertEquals(1, savedCells.size());
         SettlementCell cell = savedCells.get(0);
-        // EPEX_DA15_SETTLE at 2025-03-01T00:00:00Z = 72.55, + 5.00 = 77.55
-        assertEquals(0, new BigDecimal("77.55").compareTo(cell.price()), "price should be 77.55");
+        // EPEX_DA15_SETTLE at 2025-03-01T00:00:00Z = 24.86, + 3.20 = 28.06
+        assertEquals(0, new BigDecimal("28.06").compareTo(cell.price()), "price should be 28.06");
         assertTrue(cell.amount().compareTo(BigDecimal.ZERO) > 0);
         assertTrue(cell.activeLeaves().contains("EPEX_DA15"));
-        assertTrue(cell.activeLeaves().contains("SPREAD_5"));
+        assertTrue(cell.activeLeaves().contains("PREMIUM_3_20"));
+    }
+
+    /**
+     * EXPR-4: Three-level CPI-escalated collar PPA with negative-price protection.
+     * Formula: if(EPEX < 0) then 0 else clamp(38, 110, 72 * (HICP_current / HICP_base))
+     *
+     * At 2025-03-01T00:00:00Z:
+     *   - EPEX_DA15_SETTLE = 24.86 (positive → gate does NOT fire)
+     *   - HICP-DE current = 112.30, base = 108.70
+     *   - Escalated price = 72.00 * (112.30 / 108.70) = 72.00 * 1.03311... = 74.384...
+     *   - Clamped: max(38, min(110, 74.38)) = 74.38 (inside collar)
+     *   - Active leaves: EPEX_DA15_GATE, FLOOR_38, CAP_110, BASE_PRICE_72, HICP_DE_CURRENT, HICP_DE_BASE_2023
+     */
+    @Test
+    void cpiEscalatedCollarWithNegativePriceProtection() {
+        var marketData = new JsonMarketDataPort();
+        var exprRepo = new JsonPriceExpressionRepository();
+        var priceEvaluator = new DefaultPriceEvaluator(new DefaultNumericPrecision());
+
+        var savedCells = new ArrayList<SettlementCell>();
+        DomainEventPublisher eventPublisher = e -> {};
+
+        // EXPR-4: 3-level CPI-escalated collar
+        UUID escalatedCollarExprId = UUID.fromString("00000000-0000-0000-0000-000000000004");
+        SeriesKey seriesKey = new SeriesKey("VS-TEST-004");
+        DeliveryRange range = DeliveryRange.ofMonth(YearMonth.of(2025, 3), CET);
+
+        List<VolumeInterval> intervals = List.of(
+            new DefaultVolumeInterval(
+                UUID.randomUUID(),
+                Instant.parse("2025-03-01T00:00:00Z"),
+                Instant.parse("2025-03-01T00:15:00Z"),
+                new BigDecimal("50.0"),
+                new BigDecimal("12.5"),
+                1, null));
+
+        var seriesRepo = stubSeriesRepo(seriesKey, range, intervals);
+        var resolver = new ProfileResolver(seriesRepo);
+
+        var job = new SettlementMaterializationJob(
+            resolver, priceEvaluator, marketData, exprRepo,
+            capturingCellRepo(savedCells), eventPublisher);
+
+        var position = PositionLedgerEntry.builder()
+            .id(UUID.randomUUID())
+            .tenantId("TN_0042")
+            .tradeId("T-7777")
+            .tradeLegId("LEG-1")
+            .tradeVersion(1)
+            .deliveryRange(range)
+            .quantity(BigDecimal.TEN)
+            .volumeUnit(VolumeUnit.MW_CAPACITY)
+            .priceExpressionId(escalatedCollarExprId)
+            .volumeSeriesKey(seriesKey)
+            .validFrom(Instant.parse("2025-02-15T00:00:00Z"))
+            .knownFrom(Instant.parse("2025-02-15T00:00:00Z"))
+            .build();
+
+        job.execute(position, range);
+
+        assertEquals(1, savedCells.size());
+        SettlementCell cell = savedCells.get(0);
+
+        // Gate input: EPEX_DA15_SETTLE=24.86, condition "< 0" → false → proceed to inner
+        // Escalated: 72.00 * (112.30 / 108.70) = 74.384... rounded to 8dp
+        // Clamped: max(38, min(110, 74.38)) = 74.38 (inside collar)
+        BigDecimal expectedEscalated = new BigDecimal("72.00")
+            .multiply(new BigDecimal("112.30"))
+            .divide(new BigDecimal("108.70"), 8, java.math.RoundingMode.HALF_UP);
+
+        assertTrue(cell.price().compareTo(new BigDecimal("38")) >= 0,
+            "Price should be at or above floor (38), got " + cell.price());
+        assertTrue(cell.price().compareTo(new BigDecimal("110")) <= 0,
+            "Price should be at or below cap (110), got " + cell.price());
+        assertTrue(cell.price().subtract(expectedEscalated).abs()
+            .compareTo(new BigDecimal("0.01")) < 0,
+            "Price should be ~74.38 (CPI-escalated), got " + cell.price());
+
+        assertTrue(cell.amount().compareTo(BigDecimal.ZERO) > 0,
+            "Amount should be positive (gate did not fire)");
+
+        // All leaves in the 3-level tree should be active
+        assertTrue(cell.activeLeaves().contains("EPEX_DA15_GATE"),
+            "Gate input leaf should be active");
+        assertTrue(cell.activeLeaves().contains("BASE_PRICE_72"),
+            "Base price leaf should be active");
+        assertTrue(cell.activeLeaves().contains("HICP_DE_CURRENT"),
+            "CPI index leaf should be active");
+        assertTrue(cell.activeLeaves().contains("HICP_DE_BASE_2023"),
+            "CPI base constant should be active");
     }
 }

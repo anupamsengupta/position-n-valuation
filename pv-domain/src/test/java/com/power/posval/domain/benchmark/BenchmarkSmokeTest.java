@@ -76,4 +76,32 @@ class BenchmarkSmokeTest {
         assertNotNull(rounded);
         assertTrue(rounded.scale() <= 8);
     }
+
+    @Test
+    void fiveYearSettlementBenchmark_executes() {
+        var bench = new FiveYearSettlementBenchmark();
+        bench.setup();
+
+        int cellCount = bench.materializeFiveYearTrade(null);
+
+        // 5 years of 15-min intervals ≈ 175,200 cells
+        assertTrue(cellCount > 170_000,
+            "5-year trade should produce >170k cells, got " + cellCount);
+        assertTrue(cellCount < 180_000,
+            "5-year trade should produce <180k cells, got " + cellCount);
+    }
+
+    @Test
+    void fiveYearSettlementBenchmark_singleMonth() {
+        var bench = new FiveYearSettlementBenchmark();
+        bench.setup();
+
+        int cellCount = bench.materializeSingleMonth(null);
+
+        // January has 31 days × 96 intervals = 2,976
+        assertTrue(cellCount > 2900,
+            "Single month should produce >2900 cells, got " + cellCount);
+        assertTrue(cellCount < 3100,
+            "Single month should produce <3100 cells, got " + cellCount);
+    }
 }

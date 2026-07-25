@@ -63,7 +63,7 @@ public class SettlementMaterializationJob extends AbstractMaterializationJob {
     protected void writeResult(PositionLedgerEntry position,
                                 VolumeRecord volume,
                                 PriceResolution price) {
-        BigDecimal amount = price.value().multiply(volume.energy());
+        BigDecimal amount = price.value().multiply(volume.energy());// TO DO does it not require scale handling ?
         Instant now = Instant.now();
 
         SettlementCell cell = new SettlementCell(

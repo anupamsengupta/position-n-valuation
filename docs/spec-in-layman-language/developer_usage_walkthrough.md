@@ -6,6 +6,63 @@
 
 ---
 
+## 0. Why Are Things Named This Way?
+
+Before diving into code, here's why you'll encounter some unfamiliar names.
+
+### "Port" (as in `MarketDataPort`, `MetricsPort`)
+
+This comes from **Hexagonal Architecture** (also called "Ports & Adapters"), a widely-used pattern in domain-driven design. Think of a physical port on a computer — a USB port defines the shape of the connection but doesn't care what's plugged into it. In our code, `MarketDataPort` says "I need something that can look up market prices" without caring whether the implementation reads from Bloomberg, a database, or a JSON file on disk. The thing you plug into the port is called an **adapter** (e.g., `JsonMarketDataPort` is one adapter, a future `BloombergMarketDataPort` would be another). This naming is standard in Java DDD codebases and avoids ambiguity with the word "interface" (which in Java means something more specific).
+
+### "Leaf" (as in `ConstantLeaf`, `MarketDataLeaf`, `IndexLeaf`)
+
+This comes from **tree data structures** in computer science. Our price formulas form a tree:
+
+```
+        Add                          ← internal node (has children)
+       /   \
+  EPEX_DA15  3.20                    ← leaf nodes (no children — actual data sources)
+```
+
+Internal nodes are operators (Add, Multiply, Clamp) that combine their children. **Leaf nodes** are the endpoints where actual values come from — constants, market data lookups, or index references. The term "leaf" is standard in any expression tree, compiler, or calculator implementation.
+
+### "Clamp" (as in the `Clamp` expression type)
+
+This comes from **mathematics and graphics programming**. `clamp(value, min, max)` means "constrain a value to stay within a range":
+- If value < min, return min
+- If value > max, return max
+- Otherwise return value unchanged
+
+In energy trading, this operation is called a **collar** — the buyer pays the market price, but never less than the floor and never more than the cap. We use the word "clamp" in code because it precisely describes the mathematical operation (`max(floor, min(cap, value))`), while "collar" is the business term for the same thing. If you hear a trader say "this PPA has a 42/95 collar", they mean `Clamp(min=42, max=95, inner=marketPrice)`.
+
+### "Sealed" (as in `sealed interface PriceExpression`)
+
+This is a Java 21 language feature. A `sealed interface` declares exactly which classes can implement it. This matters because the compiler can then check that every `switch` statement handles all possible types — you can't forget one. If someone adds a new expression node type, every evaluator that switches over `PriceExpression` will get a compile error until they add a case for it.
+
+### "Escalate" (as in the `Escalate` expression type)
+
+In energy contracts, **price escalation** means adjusting a base price for inflation over time. A PPA signed in 2023 at 72 EUR/MWh might say "escalate annually by German CPI." If CPI rose from 108.70 (at signing) to 112.30 (current), the escalated price is 72 x (112.30 / 108.70) = 74.38 EUR/MWh. In code: `Escalate(base=72.00, ratio=HICP_current / HICP_base)`. The `base` is the original price; the `ratio` is a fraction (usually > 1.0 in inflationary periods) computed from an index.
+
+### "Gate" (as in `ConditionalGate`)
+
+In power trading, a **negative-price gate** is a contract clause that says "if the day-ahead price drops below zero, we pay nothing instead of the normal formula." This is common in wind PPAs because negative prices mean there's more supply than demand — the wind park should curtail rather than pay the grid to take its power. In code: `ConditionalGate(gateInput=EPEX, condition="< 0", overrideValue=0, inner=normalFormula)`. The gate "blocks" the normal formula when the condition is met.
+
+### "Resolution" and "Purpose" (as in `PriceResolution`, `ResolutionPurpose`)
+
+**Resolution** means "the act of computing a concrete value from a formula." A `PriceResolution` is the result: the final EUR/MWh number, plus metadata about which inputs were used.
+
+**Purpose** distinguishes two contexts for the same formula. `SETTLEMENT` means "use actual historical prices to compute real money owed." `FORWARD` means "use forecast/curve prices to estimate future value." The same expression tree can produce different results depending on purpose — a `MarketDataLeaf` with `settlementSeries="EPEX_DA15_SETTLE"` will look up the ex-post clearing price for settlement but the forward curve for forward valuation.
+
+### "Bitemporal" (as in `validFrom/To`, `knownFrom/To`)
+
+Every important record has two time dimensions:
+- **Valid time** (`validFrom/To`) — when was this true in the real world? "This trade was effective from March 1."
+- **Knowledge time** (`knownFrom/To`) — when did the system learn about it? "We recorded this at 10:05 AM on Feb 28."
+
+This lets you answer audit questions like "what did we think we knew last Tuesday?" without losing history. When data is corrected, the old record gets its `knownTo` set (closing the knowledge window) and a new record is created with `knownFrom` = now.
+
+---
+
 ## 1. What Does This System Do?
 
 In one sentence: **it takes electricity trades, figures out how much power flows in each 15-minute slot, looks up or calculates the price for each slot, and multiplies quantity x price to get a money amount.**
@@ -156,24 +213,58 @@ SettlementCell
 
 **Files:** `model/expression/PriceExpression.java` and 13 type files
 
-Prices aren't just numbers — they're formulas. A simple fixed-price trade has:
+Prices aren't just numbers — they're formulas represented as trees. The stub data in `stub/price-expressions.json` contains 5 progressively complex real-world examples:
 
+**EXPR-1: Fixed bilateral** — the simplest case, a single constant:
 ```java
-new ConstantLeaf("FIXED_85", BigDecimal.valueOf(85.00), "EUR/MWh")
+new ConstantLeaf("FIXED_85", 85.00, "EUR/MWh")
+// Result: always 85.00 regardless of market conditions
 ```
 
-A complex wind PPA with a collar has:
+**EXPR-2: Day-ahead index + premium** — common short-term supply agreement:
+```java
+new Add(
+    new MarketDataLeaf("EPEX_DA15", "EPEX_DA15", "EPEX_DA15_SETTLE", ...),
+    new ConstantLeaf("PREMIUM_3_20", 3.20, "EUR/MWh")
+)
+// Result: EPEX clearing price + 3.20 supplier margin
+```
 
+**EXPR-3: Collar PPA** — floor/cap protection on market-linked price:
 ```java
 new Clamp(
-    new ConstantLeaf("FLOOR", 40.00, "EUR/MWh"),    // floor
-    new ConstantLeaf("CAP", 120.00, "EUR/MWh"),      // cap
-    new MarketDataLeaf("EPEX", "EPEX_DA15", ...)     // market price
+    new ConstantLeaf("FLOOR_42", 42.00, "EUR/MWh"),     // floor
+    new ConstantLeaf("CAP_95", 95.00, "EUR/MWh"),        // cap
+    new MarketDataLeaf("EPEX_DA15_COLLAR", "EPEX_DA15", ...)  // market price
 )
-// Result: max(40, min(120, market_price))
+// Result: max(42, min(95, market_price))
+// If EPEX = 30 → pay 42 (floor kicks in)
+// If EPEX = 70 → pay 70 (inside collar)
+// If EPEX = 120 → pay 95 (cap kicks in)
 ```
 
-The `PriceExpression` is a **sealed interface** — Java 21 ensures the compiler checks you've handled every type. The 13 types are:
+**EXPR-4: Three-level CPI-escalated collar with negative-price protection** — a real onshore wind PPA:
+```
+Level 1: ConditionalGate — "if EPEX goes negative, pay zero"
+  │
+  └── Level 2: Clamp(floor=38, cap=110) — collar protection
+        │
+        └── Level 3: Escalate — base price adjusted by CPI inflation
+              │
+              ├── base: 72.00 EUR/MWh (2023 base price)
+              └── ratio: HICP_DE_current / 108.70 (CPI ratio since signing)
+```
+This formula means: start with 72 EUR/MWh, adjust for inflation (if CPI rose from 108.70 to 112.30, price becomes 72 x 112.30/108.70 = 74.38), clamp between 38-110, and zero out if the market goes negative.
+
+**EXPR-5: Cross-border FX PPA** — Norwegian hydro sold to a German buyer:
+```
+FxConvert
+├── value: Subtract(NORDPOOL_SYS, 12.00 NOK discount)
+└── fxRate: EUR/NOK daily rate
+```
+Result: (Nordic system price in NOK - 12 NOK discount) x EUR/NOK conversion rate.
+
+The `PriceExpression` is a **sealed interface** — Java 21 ensures the compiler checks you've handled every type. The 13 node types are:
 
 | Type | What it does | Example |
 |---|---|---|
@@ -182,12 +273,12 @@ The `PriceExpression` is a **sealed interface** — Java 21 ensures the compiler
 | `IndexLeaf` | Look up an inflation index | HICP-DE |
 | `Add` / `Subtract` | Arithmetic | base + spread |
 | `Multiply` / `Divide` | Arithmetic | price x quantity |
-| `Clamp` | Floor/cap | max(floor, min(cap, inner)) |
+| `Clamp` | Floor/cap (collar) | max(floor, min(cap, inner)) |
 | `Escalate` | Index escalation | base x (CPI_current / CPI_base) |
 | `ConditionalGate` | If/else | if price < 0 then 0 else price |
 | `ConditionalPassThrough` | Pass value through | if condition then gateValue else inner |
 | `TimeAverage` | Average over window | monthly average price |
-| `FxConvert` | Currency conversion | EUR price x USD/EUR rate |
+| `FxConvert` | Currency conversion | NOK price x EUR/NOK rate |
 
 ### 3.2 Ports — The Contracts with the Outside World
 
@@ -210,7 +301,15 @@ Ports are interfaces in `domain/port/`. The domain says "I need something that c
 | `DependencyIndex` | Track what depends on what | `JpaDependencyIndex` |
 | `RollupRepository` | Aggregated views | `JpaRollupRepository` |
 
-**Stub implementations:** Three external services (`MarketDataPort`, `PriceExpressionRepository`, `MeteredActualRepository`) have JSON-file-backed stubs in `service/stub/`. These load test data from `src/main/resources/stub/*.json` so you can run the system without real market data or expression databases. They'll be swapped for real implementations later.
+**Stub implementations:** Three external services have JSON-file-backed stubs in `service/stub/`. These load realistic test data from `src/main/resources/stub/*.json`:
+
+- **`stub/market-data.json`** (~1,250 lines) — 3 full days of EPEX DA15 fixings (288 intervals at 15-min granularity with realistic intraday price curves: ~25 EUR/MWh at night, ~80 EUR/MWh at peak), NORDPOOL system prices in NOK, EEX baseload forward curves spanning 24 months (2-year horizon), HICP-DE inflation index, and daily EUR/USD and EUR/NOK FX rates.
+
+- **`stub/price-expressions.json`** — 5 formulas ranging from simple fixed-price to a 3-level CPI-escalated collar PPA with negative-price protection (see Section 3.1 above).
+
+- **`stub/metered-actuals.json`** (~14,000 lines) — Two renewable assets: an offshore wind park (MTR-WP-NORDSEE, 80 MW capacity, 672 intervals = 7 days) and a solar farm (MTR-SP-BAYERN, 45 MW capacity, 672 intervals). Includes version-2 corrections where the TSO resent validated meter readings days later with small calibration adjustments. Wind corrections cover day 1 (96 intervals with `supersedesId` linking to originals); solar corrections cover days 1-2.
+
+These stubs will be swapped for real service implementations later via Guice module replacement.
 
 ### 3.3 Services — The Verbs
 
@@ -333,46 +432,46 @@ The system uses an event-driven pipeline. Here's the full flow from trade captur
 
 ```
 STEP 1: Trade Capture
-  ┌─────────────────────────────────────────────────┐
+  ┌──────────────────────────────────────────────────┐
   │  TradeCapture command arrives                    │
   │  → DefaultTradeCaptureHandler.handle()           │
   │  → Creates PositionLedgerEntry records           │
   │  → Publishes "PositionCaptured" event            │
   │  → Event saved to Outbox table (same transaction)│
-  └───────────────────────┬─────────────────────────┘
+  └───────────────────────┬──────────────────────────┘
                           │
 STEP 2: Event Relay       │
-  ┌───────────────────────▼─────────────────────────┐
+  ┌───────────────────────▼───────────────────────────┐
   │  OutboxRelayProducer polls outbox table           │
-  │  → Sends event to Kafka topic                    │
-  │  → Marks outbox row as published                 │
-  └───────────────────────┬─────────────────────────┘
+  │  → Sends event to Kafka topic                     │
+  │  → Marks outbox row as published                  │
+  └───────────────────────┬───────────────────────────┘
                           │
 STEP 3: Consumer          │
-  ┌───────────────────────▼─────────────────────────┐
-  │  TradeCapturedConsumer receives event             │
+  ┌───────────────────────▼──────────────────────────┐
+  │  TradeCapturedConsumer receives event            │
   │  → Checks idempotency (already processed?)       │
-  │  → Loads position entries from ledger             │
+  │  → Loads position entries from ledger            │
   │  → Calls SettlementMaterializationJob.execute()  │
-  └───────────────────────┬─────────────────────────┘
+  └───────────────────────┬──────────────────────────┘
                           │
 STEP 4: Materialization   │
-  ┌───────────────────────▼─────────────────────────┐
-  │  SettlementMaterializationJob.execute()           │
+  ┌───────────────────────▼──────────────────────────┐
+  │  SettlementMaterializationJob.execute()          │
   │  For each 15-minute slot:                        │
-  │    1. Resolve volume (ProfileResolver)            │
-  │    2. Load price expression (repository)          │
-  │    3. Evaluate price (tree walk)                  │
-  │    4. Calculate: amount = price x energy          │
-  │    5. Save SettlementCell                         │
-  │    6. Publish "SettlementComputed" event          │
-  └───────────────────────┬─────────────────────────┘
+  │    1. Resolve volume (ProfileResolver)           │
+  │    2. Load price expression (repository)         │
+  │    3. Evaluate price (tree walk)                 │
+  │    4. Calculate: amount = price x energy         │
+  │    5. Save SettlementCell                        │
+  │    6. Publish "SettlementComputed" event         │
+  └───────────────────────┬──────────────────────────┘
                           │
 STEP 5: Downstream        │
   ┌───────────────────────▼─────────────────────────┐
-  │  SettlementPublishedConsumer                      │
-  │  → Triggers rollup refresh (aggregated views)    │
-  │  → Updates dependency index                      │
+  │  SettlementPublishedConsumer                    │
+  │  → Triggers rollup refresh (aggregated views)   │
+  │  → Updates dependency index                     │
   └─────────────────────────────────────────────────┘
 ```
 
@@ -741,17 +840,165 @@ mvn test -pl pv-domain -Dtest=SettlementMaterializationJobTest
 
 ### Key Test Files to Study
 
-| Test | What it verifies |
+| Test | Module | What it verifies |
+|---|---|---|
+| `TradeToSettlementIntegrationTest` | `pv-kafka` | **Full pipeline** — traces all 5 steps from Section 9 end-to-end |
+| `AbstractMaterializationJobTest` | `pv-domain` | Template method calls hooks in correct order |
+| `SettlementMaterializationJobTest` | `pv-domain` | Materialization with stubs: volume + price + settlement cell |
+| `DefaultPriceEvaluatorTest` | `pv-domain` | All 13 expression types evaluate correctly |
+| `DefaultTradeCaptureHandlerTest` | `pv-domain` | Trade capture → monthly decomposition + event publish |
+| `JsonPriceExpressionRepositoryTest` | `pv-domain` | JSON stub loads all 5 expressions (constant, index+spread, collar, 3-level CPI PPA, FX) |
+| `JsonMarketDataPortTest` | `pv-domain` | JSON stub returns fixings, forward curves, FX rates, NORDPOOL |
+| `JsonMeteredActualRepositoryTest` | `pv-domain` | JSON stub loads wind + solar metered data with corrections |
+| `SimpleJsonCodecTest` | `pv-persistence` | JSONB round-trip for Set and Map types |
+| `QualityStateTest` | `pv-domain` | State machine transitions (EFFECTIVE→AMENDED, etc.) |
+| `PositionLedgerEntryTest` | `pv-domain` | Builder validation and bitemporal invariants |
+
+### The Integration Test — Following Section 9 in Code
+
+The most important test to study is `TradeToSettlementIntegrationTest` in `pv-kafka/src/test/java/`. It traces the exact code path described in Section 9, through every layer, using in-memory stubs instead of real databases or Kafka.
+
+**File:** `pv-kafka/src/test/java/com/power/posval/kafka/TradeToSettlementIntegrationTest.java`
+
+Here's what the `fullPipeline_fixedPrice_tradeToSettlement` test does, step by step:
+
+```
+SETUP — Wire all components manually (same as Guice would do):
+  ├── InMemoryLedgerRepo         (replaces JpaPositionLedgerRepository + PostgreSQL)
+  ├── InMemoryCellRepo           (replaces JpaSettlementCellRepository + PostgreSQL)
+  ├── stubSeriesRepo             (replaces JpaVolumeSeriesRepository + PostgreSQL)
+  ├── JsonMarketDataPort         (loads stub/market-data.json from classpath)
+  ├── JsonPriceExpressionRepository (loads stub/price-expressions.json)
+  ├── DefaultPriceEvaluator      (real domain service — no stub needed)
+  ├── ProfileResolver            (real domain service — reads from stubSeriesRepo)
+  ├── SettlementMaterializationJob (real domain service — wired with all of the above)
+  ├── DefaultTradeCaptureHandler (real domain service — writes to InMemoryLedgerRepo)
+  └── TradeCapturedConsumer      (real Kafka consumer — calls settlementJob)
+
+TEST EXECUTION:
+
+  Step 1: TradeCapture command
+  │  TradeCapture("T-9999", fixedPrice=85.00, 50MW, March 2025)
+  │  → tradeCaptureHandler.handle(command)
+  │  → Creates 1 PositionLedgerEntry (single-month trade)
+  │  → Saves to InMemoryLedgerRepo
+  │  → Publishes PositionCaptured event
+  │  ✓ Assert: 1 entry in ledger, status=ACTIVE, tenantId=TN_0042
+  │  ✓ Assert: 1 PositionCaptured event with tradeId=T-9999
+  │
+  Step 2: (outbox relay simulated — event passed directly)
+  │
+  Step 3: Consumer receives event
+  │  tradeCapturedConsumer.handle(capturedEvent)
+  │  → alreadyProcessed() → false (first time)
+  │  → process() → loads entries from InMemoryLedgerRepo
+  │  → for each entry: calls settlementJob.execute(entry, range)
+  │
+  Step 4: Materialization runs
+  │  AbstractMaterializationJob.execute() [template method]:
+  │    ├── resolveVolume() → ProfileResolver reads from stubSeriesRepo
+  │    │   → Returns VolumeRecord(50 MW, 12.5 MWh) for 00:00-00:15
+  │    ├── evaluatePrice() → loads EXPR-1 from JsonPriceExpressionRepository
+  │    │   → ConstantLeaf(85.00)
+  │    │   → DefaultPriceEvaluator: switch(ConstantLeaf) → 85.00
+  │    │   → PriceResolution(85.00, {"FIXED_85"}, {})
+  │    └── writeResult() → amount = 85.00 × 12.5 = 1062.50
+  │        → Creates SettlementCell, saves to InMemoryCellRepo
+  │        → Publishes SettlementComputed event
+  │
+  Step 5: Verify outputs
+  │  ✓ Assert: 1 SettlementCell with price=85.00, energy=12.5, amount>0
+  │  ✓ Assert: positionId links back to the ledger entry from Step 1
+  │  ✓ Assert: activeLeaves contains "FIXED_85"
+  │  ✓ Assert: 1 SettlementComputed event with status="PROVISIONAL"
+```
+
+The test has 4 methods covering different scenarios:
+
+| Test method | What it proves |
 |---|---|
-| `AbstractMaterializationJobTest` | Template method calls hooks in correct order |
-| `SettlementMaterializationJobTest` | End-to-end: volume + price + settlement with stubs |
-| `DefaultPriceEvaluatorTest` | All 13 expression types evaluate correctly |
-| `JsonPriceExpressionRepositoryTest` | JSON stub loads expressions (constant, index+spread, collar) |
-| `JsonMarketDataPortTest` | JSON stub returns correct fixings, curves, FX rates |
-| `JsonMeteredActualRepositoryTest` | JSON stub loads metered data |
-| `SimpleJsonCodecTest` | JSONB round-trip for Set and Map types |
-| `QualityStateTest` | State machine transitions (EFFECTIVE→AMENDED, etc.) |
-| `PositionLedgerEntryTest` | Builder validation and bitemporal invariants |
+| `fullPipeline_fixedPrice_tradeToSettlement` | All 5 steps work end-to-end with a simple 85 EUR/MWh fixed price |
+| `fullPipeline_indexPlusSpread_tradeToSettlement` | Same pipeline with EPEX market price + 3.20 premium — proves market data lookup, purpose-driven series selection, and active-leaves tracking across multiple leaf nodes |
+| `idempotency_duplicateEventDoesNotCreateDuplicateCells` | Same event processed twice → second time skipped by `alreadyProcessed()` guard → no duplicate settlement cells |
+| `multiMonthTrade_createsOneEntryPerMonth` | A 3-month trade (Mar–May) → `DeliveryPeriod.toMonthBlocks()` → 3 ledger entries |
+
+**To run just this test:**
+
+```bash
+mvn clean test -pl pv-kafka -am -Dtest=TradeToSettlementIntegrationTest
+```
+
+The `-am` flag ("also make") tells Maven to build `pv-domain` and `pv-persistence` first, since `pv-kafka` depends on them.
+
+**To debug in your IDE:** Set a breakpoint at `tradeCaptureHandler.handle(command)` and step through. You'll see the flow traverse `DefaultTradeCaptureHandler` → `PositionLedgerEntry.builder()` → `DomainEventPublisher.publish()` → `TradeCapturedConsumer.process()` → `SettlementMaterializationJob.execute()` → `ProfileResolver.resolve()` → `DefaultPriceEvaluator.evaluate()` → `SettlementCellRepository.save()`. Every layer from Section 9 is hit.
+
+### Running JMH Benchmarks
+
+The project includes JMH (Java Microbenchmark Harness) benchmarks for measuring the performance of core domain operations. Unlike unit tests, JMH benchmarks use proper warmup, measurement iterations, and forked JVMs to produce statistically reliable numbers.
+
+#### Available Benchmarks
+
+| Benchmark Class | What it measures | Approximate runtime |
+|---|---|---|
+| `FiveYearSettlementBenchmark` | End-to-end settlement for a 5-year wind PPA (~175k intervals, 60 monthly positions, 3-level CPI-escalated collar expression) | ~2 minutes |
+| `PriceExpressionBenchmark` | Single collar PPA price expression tree walk | ~30 seconds |
+| `DomainBenchmarkSuite` | Domain model micro-benchmarks (QualityState transitions, DeliveryPeriod decomposition, builder patterns, numeric precision) | ~3 minutes |
+
+#### How to Run
+
+```bash
+# Step 1: Compile (including JMH annotation processing)
+mvn -pl pv-domain test-compile
+
+# Step 2: Run ALL benchmarks (takes ~6 minutes)
+mvn -pl pv-domain exec:exec@benchmarks
+
+# Run a SPECIFIC benchmark by name filter:
+mvn -pl pv-domain test-compile exec:exec@benchmarks -Dbenchmark=FiveYear
+mvn -pl pv-domain test-compile exec:exec@benchmarks -Dbenchmark=PriceExpression
+mvn -pl pv-domain test-compile exec:exec@benchmarks -Dbenchmark=DomainBenchmark
+
+# Run a single benchmark method:
+mvn -pl pv-domain test-compile exec:exec@benchmarks -Dbenchmark=materializeSingleMonth
+```
+
+#### Reading the Output
+
+JMH produces output like this:
+
+```
+Benchmark                                                      Mode   Cnt    Score   Error  Units
+FiveYearSettlementBenchmark.materializeFiveYearTrade          sample    5  245.123 ± 12.456  ms/op
+FiveYearSettlementBenchmark.materializeFiveYearTrade:p0.50    sample         243.200         ms/op
+FiveYearSettlementBenchmark.materializeFiveYearTrade:p0.95    sample         258.100         ms/op
+FiveYearSettlementBenchmark.materializeFiveYearTrade:p0.99    sample         261.400         ms/op
+```
+
+- **Score** = average time per operation (lower is better)
+- **Error** = margin of error (± range for the 99.9% confidence interval)
+- **p0.50 / p0.95 / p0.99** = percentile latencies (median, 95th, 99th)
+- **Units** = `ms/op` means milliseconds per operation, `us/op` means microseconds
+
+#### Where Results Are Saved
+
+JSON results are written to `pv-domain/target/jmh-results.json` after each run. You can feed this file into JMH visualization tools or track performance over time.
+
+#### Smoke Tests vs Full Benchmarks
+
+The `BenchmarkSmokeTest` class runs each benchmark **once** as a regular JUnit test — no warmup, no forking, no statistics. This just verifies that benchmark code compiles and executes correctly:
+
+```bash
+mvn test -pl pv-domain -Dtest=BenchmarkSmokeTest
+```
+
+Use smoke tests for quick CI verification. Use the full JMH runner (via `exec:exec@benchmarks`) for actual performance measurement.
+
+#### How It Works Under the Hood
+
+1. The `jmh-generator-annprocess` annotation processor runs during `test-compile` and generates `/META-INF/BenchmarkList` — a registry of all `@Benchmark` methods.
+2. `BenchmarkRunner.main()` reads the filter argument and passes it to JMH's `OptionsBuilder`.
+3. JMH forks a separate JVM for each benchmark class (controlled by `@Fork`), runs warmup iterations (controlled by `@Warmup`), then measurement iterations (controlled by `@Measurement`).
+4. The `@Setup(Level.Trial)` method pre-loads all data into memory before any measurement begins, so you're benchmarking pure computation — not I/O.
 
 ---
 

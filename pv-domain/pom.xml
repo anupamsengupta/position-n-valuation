@@ -12,7 +12,7 @@
     </parent>
 
     <artifactId>pv-domain</artifactId>
-    <name>PV Domain — Pure Java 21</name>
+    <name>PV Domain-Pure Java 21</name>
     <description>Domain model, port interfaces, sealed type hierarchies. Zero framework dependencies.</description>
 
     <dependencies>
@@ -51,4 +51,59 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Ensure JMH annotation processor runs during test-compile -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>default-testCompile</id>
+                        <phase>test-compile</phase>
+                        <goals>
+                            <goal>testCompile</goal>
+                        </goals>
+                        <configuration>
+                            <annotationProcessorPaths>
+                                <path>
+                                    <groupId>org.openjdk.jmh</groupId>
+                                    <artifactId>jmh-generator-annprocess</artifactId>
+                                    <version>${jmh.version}</version>
+                                </path>
+                            </annotationProcessorPaths>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <!--
+              Run JMH benchmarks via: mvn -pl pv-domain test-compile exec:exec@benchmarks
+              Or with filter:         mvn -pl pv-domain test-compile exec:exec@benchmarks -Dbenchmark=FiveYear
+            -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.4.1</version>
+                <executions>
+                    <execution>
+                        <id>benchmarks</id>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <executable>java</executable>
+                            <classpathScope>test</classpathScope>
+                            <arguments>
+                                <argument>-classpath</argument>
+                                <classpath/>
+                                <argument>com.power.posval.domain.benchmark.BenchmarkRunner</argument>
+                                <argument>${benchmark}</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>

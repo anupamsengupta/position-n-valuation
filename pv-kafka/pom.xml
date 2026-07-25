@@ -12,7 +12,7 @@
     </parent>
 
     <artifactId>pv-kafka</artifactId>
-    <name>PV Kafka — Event Infrastructure</name>
+    <name>PV Kafka-Event Infrastructure</name>
     <description>Outbox relay producer, idempotent consumers, Kafka event infrastructure.</description>
 
     <dependencies>

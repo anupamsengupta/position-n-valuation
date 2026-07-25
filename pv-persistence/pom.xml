@@ -12,7 +12,7 @@
     </parent>
 
     <artifactId>pv-persistence</artifactId>
-    <name>PV Persistence — JPA Adapters</name>
+    <name>PV Persistence-JPA Adapters</name>
     <description>JPA entities, repository adapters, batch writer, transaction infrastructure.</description>
 
     <dependencies>

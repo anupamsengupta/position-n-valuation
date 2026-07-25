@@ -12,7 +12,7 @@
     </parent>
 
     <artifactId>pv-redis</artifactId>
-    <name>PV Redis — Cache Adapters</name>
+    <name>PV Redis-Cache Adapters</name>
     <description>Redis-backed VolumeCache and ForwardMarkStore adapters using Lettuce.</description>
 
     <dependencies>

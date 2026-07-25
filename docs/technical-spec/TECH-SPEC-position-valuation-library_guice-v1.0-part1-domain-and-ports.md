@@ -71,6 +71,75 @@ All four input documents were available during authoring:
 
 ---
 
+## §3A — Naming Conventions & Terminology
+
+This section explains non-obvious naming choices in the codebase. These terms come from established software architecture and computer science patterns; they are documented here so that developers new to the codebase can read the code without confusion.
+
+### 3A.1 "Port" — Hexagonal Architecture (Ports & Adapters)
+
+Interfaces suffixed with `Port` (e.g., `MarketDataPort`, `MetricsPort`) follow the **Hexagonal Architecture** pattern (Alistair Cockburn, 2005). A **port** is a technology-agnostic interface defined by the domain layer that declares what capability it needs from the outside world. An **adapter** is a concrete implementation that plugs into the port.
+
+| Port (in `pv-domain`) | Adapter (in infrastructure module) | What it provides |
+|---|---|---|
+| `MarketDataPort` | `JsonMarketDataPort` (stub), future `BloombergMarketDataPort` | Market price lookups |
+| `VolumeSeriesRepository` | `JpaVolumeSeriesRepository` | Volume data persistence |
+| `VolumeCache` | `RedisVolumeCache` | Cached volume lookups |
+| `DomainEventPublisher` | `OutboxDomainEventPublisher` | Event publishing |
+
+The word "port" is used instead of bare "interface" to signal architectural intent: ports define the system boundary, and the domain has zero knowledge of the adapter's technology. The `pv-domain` module compiles with no framework dependencies — only `jakarta.inject` annotations.
+
+### 3A.2 "Leaf" — Expression Tree Terminals
+
+The 3 leaf types in the `PriceExpression` sealed hierarchy (`ConstantLeaf`, `MarketDataLeaf`, `IndexLeaf`) are named after **tree data structure** terminology. In any expression tree (compilers, calculators, rule engines), internal nodes are operators that combine children, and **leaf nodes** are terminals — endpoints where actual values originate. They have no children.
+
+```
+        Add                          ← internal node (operator, has children)
+       /   \
+  EPEX_DA15  3.20                    ← leaf nodes (terminals, produce values directly)
+```
+
+A `MarketDataLeaf` produces a value by looking up a market data series. A `ConstantLeaf` produces a fixed numeric value. An `IndexLeaf` produces a value by looking up a macro-economic index. All other `PriceExpression` types are operators that recursively evaluate their children.
+
+### 3A.3 "Clamp" — Mathematical Constraint (Business term: "Collar")
+
+`Clamp(min, max, inner)` implements the mathematical clamp function: `result = max(min, min(max, inner))`.
+
+- If `inner < min` → return `min` (floor kicks in)
+- If `inner > max` → return `max` (cap kicks in)
+- Otherwise → return `inner` unchanged
+
+In energy trading, this is called a **collar PPA** — the buyer pays the market price, but never less than the floor and never more than the cap. The code uses "clamp" because it precisely names the mathematical operation, is unambiguous to any developer familiar with math/graphics libraries, and avoids overloading the business term "collar" which may carry additional contractual semantics.
+
+| Trader says | Code equivalent |
+|---|---|
+| "42/95 collar on EPEX" | `Clamp(min=ConstantLeaf(42), max=ConstantLeaf(95), inner=MarketDataLeaf("EPEX"))` |
+| "floor at 38, no cap" | `Clamp(min=ConstantLeaf(38), max=ConstantLeaf(999999), inner=...)` |
+
+### 3A.4 "Escalate" — CPI/Index-Based Price Adjustment
+
+`Escalate(base, ratio)` computes `base × ratio`. In energy PPA contracts, **price escalation** adjusts a base price for inflation over the contract term. A 15-year wind PPA signed in 2023 at 72 EUR/MWh with annual CPI escalation produces: `Escalate(base=72.00, ratio=Divide(IndexLeaf("HICP-DE"), ConstantLeaf(108.70)))`. When CPI rises from 108.70 (base year) to 112.30 (delivery year), the escalated price becomes 72 × (112.30 / 108.70) = 74.38 EUR/MWh.
+
+### 3A.5 "Gate" — Conditional Override (Business term: "Negative-Price Protection")
+
+`ConditionalGate(gateInput, condition, overrideValue, inner)` evaluates a condition and switches between two evaluation paths. The primary use case is **negative-price protection** in renewable PPAs: when the day-ahead price drops below zero, the contract pays zero instead of the normal formula. In code: `ConditionalGate(gateInput=MarketDataLeaf("EPEX"), condition="< 0", overrideValue=ConstantLeaf(0), inner=normalFormula)`.
+
+### 3A.6 "Resolution" and "Purpose"
+
+**Resolution** is the act of computing a concrete value from a formula or reference. A `PriceResolution` contains the evaluated price plus metadata (`activeLeaves`, `inputVersionSet`) needed for dependency tracking and reproducibility. A `VolumeRecord` is the "resolved" form of a volume interval after multiplier application.
+
+**Purpose** (`ResolutionPurpose.FORWARD` vs `.SETTLEMENT`) distinguishes two evaluation contexts for the same formula. When `purpose == SETTLEMENT`, a `MarketDataLeaf` uses its `settlementSeries` (ex-post clearing prices). When `purpose == FORWARD`, it uses the primary `series` (forward curve). This enables a single expression tree to serve both forward valuation and actual settlement without duplication.
+
+### 3A.7 "Bitemporal" — Two Time Dimensions
+
+Records with `validFrom/validTo` and `knownFrom/knownTo` implement the **bitemporal data** pattern (Richard Snodgrass, 1995). Every row is located in a 2D time space:
+
+- **Valid time** (`validFrom/To`) — when the fact was true in the business world. "This trade was effective from March 1 to March 31."
+- **Transaction time** / **knowledge time** (`knownFrom/To`) — when the system learned about the fact. "We recorded this at 2025-02-28T10:05:00Z."
+
+This enables point-in-time reconstruction: "what positions did we believe we had at 5 PM last Tuesday?" Corrections close the old row's `knownTo` (ending that row's knowledge window) and create a new row with `knownFrom` = now, without destroying history.
+
+---
+
 ## §4 — Module Structure
 
 ### 4.1 Module Tree

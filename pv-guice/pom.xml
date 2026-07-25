@@ -12,7 +12,7 @@
     </parent>
 
     <artifactId>pv-guice</artifactId>
-    <name>PV Guice — DI Wiring</name>
+    <name>PV Guice-DI Wiring</name>
     <description>Guice modules binding domain ports to infrastructure adapters.</description>
 
     <dependencies>

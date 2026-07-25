@@ -1,6 +1,7 @@
 {
   "expressions": [
     {
+      "_comment": "EXPR-1: Simple bilateral fixed-price trade at 85 EUR/MWh — the degenerate case where the entire expression is a single constant.",
       "id": "00000000-0000-0000-0000-000000000001",
       "type": "ConstantLeaf",
       "leafId": "FIXED_85",
@@ -8,6 +9,7 @@
       "unit": "EUR/MWh"
     },
     {
+      "_comment": "EXPR-2: Day-ahead index + premium. Common structure for short-term supply agreements: the buyer pays the EPEX day-ahead 15-minute clearing price plus a fixed premium of 3.20 EUR/MWh (covering balancing risk and supplier margin). Settlement uses EPEX_DA15_SETTLE (ex-post clearing); forward uses EPEX_DA15 (forecast curve).",
       "id": "00000000-0000-0000-0000-000000000002",
       "type": "Add",
       "left": {
@@ -20,33 +22,123 @@
       },
       "right": {
         "type": "ConstantLeaf",
-        "leafId": "SPREAD_5",
-        "value": 5.00,
+        "leafId": "PREMIUM_3_20",
+        "value": 3.20,
         "unit": "EUR/MWh"
       }
     },
     {
+      "_comment": "EXPR-3: Collar PPA — floor at 42 EUR/MWh, cap at 95 EUR/MWh. This is a standard renewable PPA where the offtaker gets protection against extreme prices in both directions. The market price is clamped: if EPEX < 42, pay 42; if EPEX > 95, pay 95; otherwise pay EPEX.",
       "id": "00000000-0000-0000-0000-000000000003",
       "type": "Clamp",
-      "inner": {
-        "type": "MarketDataLeaf",
-        "leafId": "EPEX_DA15_COLLAR",
-        "series": "EPEX_DA15",
-        "settlementSeries": null,
-        "lag": 0,
-        "quotationWindow": "SINGLE_INTERVAL"
-      },
       "min": {
         "type": "ConstantLeaf",
-        "leafId": "FLOOR_40",
-        "value": 40.00,
+        "leafId": "FLOOR_42",
+        "value": 42.00,
         "unit": "EUR/MWh"
       },
       "max": {
         "type": "ConstantLeaf",
-        "leafId": "CAP_120",
-        "value": 120.00,
+        "leafId": "CAP_95",
+        "value": 95.00,
         "unit": "EUR/MWh"
+      },
+      "inner": {
+        "type": "MarketDataLeaf",
+        "leafId": "EPEX_DA15_COLLAR",
+        "series": "EPEX_DA15",
+        "settlementSeries": "EPEX_DA15_SETTLE",
+        "lag": 0,
+        "quotationWindow": "SINGLE_INTERVAL"
+      }
+    },
+    {
+      "_comment": "EXPR-4: Three-level CPI-escalated collar PPA with negative-price protection. This is a real-world onshore wind PPA: (1) Base price 72 EUR/MWh is escalated annually by CPI ratio; (2) The escalated price is collared between floor 38 and cap 110; (3) If the day-ahead price goes negative, the entire payment drops to zero (neg-price gate). Formula: if(EPEX < 0) then 0 else clamp(38, 110, 72 * (HICP_current / HICP_base)).",
+      "id": "00000000-0000-0000-0000-000000000004",
+      "type": "ConditionalGate",
+      "gateInput": {
+        "type": "MarketDataLeaf",
+        "leafId": "EPEX_DA15_GATE",
+        "series": "EPEX_DA15",
+        "settlementSeries": "EPEX_DA15_SETTLE",
+        "lag": 0,
+        "quotationWindow": "SINGLE_INTERVAL"
+      },
+      "condition": "< 0",
+      "overrideValue": {
+        "type": "ConstantLeaf",
+        "leafId": "ZERO_OVERRIDE",
+        "value": 0.00,
+        "unit": "EUR/MWh"
+      },
+      "inner": {
+        "type": "Clamp",
+        "min": {
+          "type": "ConstantLeaf",
+          "leafId": "FLOOR_38",
+          "value": 38.00,
+          "unit": "EUR/MWh"
+        },
+        "max": {
+          "type": "ConstantLeaf",
+          "leafId": "CAP_110",
+          "value": 110.00,
+          "unit": "EUR/MWh"
+        },
+        "inner": {
+          "type": "Escalate",
+          "base": {
+            "type": "ConstantLeaf",
+            "leafId": "BASE_PRICE_72",
+            "value": 72.00,
+            "unit": "EUR/MWh"
+          },
+          "ratio": {
+            "type": "Divide",
+            "numerator": {
+              "type": "IndexLeaf",
+              "leafId": "HICP_DE_CURRENT",
+              "series": "HICP-DE",
+              "refMonthExpression": "deliveryYear-1:November"
+            },
+            "denominator": {
+              "type": "ConstantLeaf",
+              "leafId": "HICP_DE_BASE_2023",
+              "value": 108.70,
+              "unit": "INDEX"
+            }
+          }
+        }
+      }
+    },
+    {
+      "_comment": "EXPR-5: Cross-border PPA with FX conversion. The underlying price is the NORDPOOL system price (in NOK/MWh) minus a 12 NOK discount, converted to EUR using the ECB daily EUR/NOK rate. Used for Norwegian hydro offtake sold to a German industrial buyer. Formula: (NORDPOOL_SYS - 12.00) * (1 / EUR_NOK).",
+      "id": "00000000-0000-0000-0000-000000000005",
+      "type": "FxConvert",
+      "value": {
+        "type": "Subtract",
+        "left": {
+          "type": "MarketDataLeaf",
+          "leafId": "NORDPOOL_SYS",
+          "series": "NORDPOOL_SYS",
+          "settlementSeries": "NORDPOOL_SYS_SETTLE",
+          "lag": 0,
+          "quotationWindow": "SINGLE_INTERVAL"
+        },
+        "right": {
+          "type": "ConstantLeaf",
+          "leafId": "NOK_DISCOUNT_12",
+          "value": 12.00,
+          "unit": "NOK/MWh"
+        }
+      },
+      "fxRate": {
+        "type": "MarketDataLeaf",
+        "leafId": "FX_EUR_NOK",
+        "series": "EUR/NOK",
+        "settlementSeries": null,
+        "lag": 0,
+        "quotationWindow": "DAILY"
       }
     }
   ]

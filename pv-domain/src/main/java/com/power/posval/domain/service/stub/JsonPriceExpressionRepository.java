@@ -96,6 +96,16 @@ public class JsonPriceExpressionRepository implements PriceExpressionRepository 
                 parseExpression(extractObject(json, "base")),
                 parseExpression(extractObject(json, "ratio")));
 
+            case "ConditionalGate" -> new ConditionalGate(
+                parseExpression(extractObject(json, "gateInput")),
+                extractString(json, "condition"),
+                parseExpression(extractObject(json, "overrideValue")),
+                parseExpression(extractObject(json, "inner")));
+
+            case "FxConvert" -> new FxConvert(
+                parseExpression(extractObject(json, "value")),
+                parseExpression(extractObject(json, "fxRate")));
+
             default -> null;
         };
     }
