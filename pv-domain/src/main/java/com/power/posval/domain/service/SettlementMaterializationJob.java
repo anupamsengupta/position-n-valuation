@@ -26,7 +26,7 @@ import java.util.UUID;
  * Purpose=SETTLEMENT, persists bitemporal cell, publishes SettlementComputed.
  * Pattern #15, FR-056, FR-071, S5a.
  */
-public class SettlementMaterializationJob extends AbstractMaterializationJob {
+public class SettlementMaterializationJob extends AbstractMaterializationJob<SettlementCell> {
 
     private final SettlementCellRepository cellRepo;
     private final DomainEventPublisher eventPublisher;
@@ -64,14 +64,14 @@ public class SettlementMaterializationJob extends AbstractMaterializationJob {
     }
 
     @Override
-    protected void writeResult(PositionLedgerEntry position,
-                                VolumeRecord volume,
-                                PriceResolution price) {
+    protected SettlementCell buildResult(PositionLedgerEntry position,
+                                          VolumeRecord volume,
+                                          PriceResolution price) {
         BigDecimal amount = np.round(
             price.value().multiply(volume.energy()), NumericPrecision.Domain.MONETARY);
         Instant now = Instant.now();
 
-        SettlementCell cell = new SettlementCell(
+        return new SettlementCell(
             UUID.randomUUID(),
             position.tenantId(),
             position.id(),
@@ -87,20 +87,27 @@ public class SettlementMaterializationJob extends AbstractMaterializationJob {
             price.activeLeaves(),
             price.inputVersionSet(),
             now, null, now, null);
+    }
 
-        cellRepo.save(cell);
+    @Override
+    protected void flushResults(PositionLedgerEntry position, List<SettlementCell> cells) {
+        cellRepo.saveAll(cells);
 
-        eventPublisher.publish(new SettlementComputed(
-            position.id(),
-            ZonedDateTime.ofInstant(volume.intervalStart(),
-                position.deliveryRange().deliveryTimezone()),
-            ZonedDateTime.ofInstant(volume.intervalEnd(),
-                position.deliveryRange().deliveryTimezone()),
-            new Money(amount, java.util.Currency.getInstance("EUR")),
-            "PROVISIONAL",
-            price.activeLeaves(),
-            price.inputVersionSet(),
-            now));
+        List<Object> events = cells.stream()
+            .<Object>map(cell -> new SettlementComputed(
+                position.id(),
+                ZonedDateTime.ofInstant(cell.intervalStart(),
+                    position.deliveryRange().deliveryTimezone()),
+                ZonedDateTime.ofInstant(cell.intervalEnd(),
+                    position.deliveryRange().deliveryTimezone()),
+                new Money(cell.amount(), java.util.Currency.getInstance("EUR")),
+                "PROVISIONAL",
+                cell.activeLeaves(),
+                cell.inputVersionSet(),
+                cell.knownFrom()))
+            .toList();
+
+        eventPublisher.publishAll(events);
     }
 
     private VolumeReference buildVolumeReference(PositionLedgerEntry position) {

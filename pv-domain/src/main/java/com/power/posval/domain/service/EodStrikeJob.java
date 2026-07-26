@@ -24,7 +24,7 @@ import java.util.UUID;
  * Persists immutable struck mark.
  * Pattern #15, FR-077, FR-078, S5c.
  */
-public class EodStrikeJob extends AbstractMaterializationJob {
+public class EodStrikeJob extends AbstractMaterializationJob<StruckMark> {
 
     private final StruckMarkRepository markRepo;
     private final LocalDate strikeDate;
@@ -59,14 +59,14 @@ public class EodStrikeJob extends AbstractMaterializationJob {
     }
 
     @Override
-    protected void writeResult(PositionLedgerEntry position,
-                                VolumeRecord volume,
-                                PriceResolution price) {
+    protected StruckMark buildResult(PositionLedgerEntry position,
+                                      VolumeRecord volume,
+                                      PriceResolution price) {
         BigDecimal markValue = price.value().multiply(volume.energy());
         YearMonth deliveryMonth = YearMonth.from(
             volume.intervalStart().atZone(position.deliveryRange().deliveryTimezone()));
 
-        StruckMark mark = new StruckMark(
+        return new StruckMark(
             position.tenantId(),
             position.id(),
             deliveryMonth,
@@ -80,8 +80,11 @@ public class EodStrikeJob extends AbstractMaterializationJob {
             null,
             false,
             Instant.now());
+    }
 
-        markRepo.save(mark);
+    @Override
+    protected void flushResults(PositionLedgerEntry position, List<StruckMark> marks) {
+        markRepo.saveAll(marks);
     }
 
     private VolumeReference buildVolumeReference(PositionLedgerEntry position) {

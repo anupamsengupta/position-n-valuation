@@ -28,7 +28,7 @@ class AbstractMaterializationJobTest {
     void executeCallsHooksInOrder() {
         var hookOrder = new ArrayList<String>();
 
-        var job = new AbstractMaterializationJob(null, null, null, null) {
+        var job = new AbstractMaterializationJob<Object>(null, null, null, null) {
             @Override
             protected List<VolumeRecord> resolveVolume(PositionLedgerEntry pos, DeliveryRange range) {
                 hookOrder.add("resolveVolume");
@@ -46,8 +46,14 @@ class AbstractMaterializationJobTest {
             }
 
             @Override
-            protected void writeResult(PositionLedgerEntry pos, VolumeRecord vol, PriceResolution price) {
-                hookOrder.add("writeResult");
+            protected Object buildResult(PositionLedgerEntry pos, VolumeRecord vol, PriceResolution price) {
+                hookOrder.add("buildResult");
+                return new Object();
+            }
+
+            @Override
+            protected void flushResults(PositionLedgerEntry pos, List<Object> results) {
+                hookOrder.add("flushResults");
             }
         };
 
@@ -67,6 +73,6 @@ class AbstractMaterializationJobTest {
 
         job.execute(position, DeliveryRange.ofMonth(YearMonth.of(2025, 3), CET));
 
-        assertEquals(List.of("resolveVolume", "evaluatePrice", "writeResult"), hookOrder);
+        assertEquals(List.of("resolveVolume", "evaluatePrice", "buildResult", "flushResults"), hookOrder);
     }
 }

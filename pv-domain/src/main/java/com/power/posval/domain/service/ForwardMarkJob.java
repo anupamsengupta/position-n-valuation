@@ -9,6 +9,7 @@ import com.power.posval.domain.port.marketdata.MarketDataPort;
 import com.power.posval.domain.port.repository.PriceExpressionRepository;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.Map;
@@ -20,7 +21,7 @@ import java.util.UUID;
  * Purpose=FORWARD, overwrites ephemeral mark via ForwardMarkStore.
  * Pattern #15, FR-075, S5b.
  */
-public class ForwardMarkJob extends AbstractMaterializationJob {
+public class ForwardMarkJob extends AbstractMaterializationJob<ForwardMarkJob.MarkEntry> {
 
     private final ForwardMarkStore markStore;
 
@@ -32,6 +33,9 @@ public class ForwardMarkJob extends AbstractMaterializationJob {
         super(volumeResolver, priceEvaluator, marketData, priceExpressionRepo);
         this.markStore = markStore;
     }
+
+    record MarkEntry(Instant start, Instant end, BigDecimal value,
+                     String currency, Map<String, Long> versions) {}
 
     @Override
     protected List<VolumeRecord> resolveVolume(PositionLedgerEntry position,
@@ -52,18 +56,30 @@ public class ForwardMarkJob extends AbstractMaterializationJob {
     }
 
     @Override
-    protected void writeResult(PositionLedgerEntry position,
-                                VolumeRecord volume,
-                                PriceResolution price) {
+    protected MarkEntry buildResult(PositionLedgerEntry position,
+                                     VolumeRecord volume,
+                                     PriceResolution price) {
         BigDecimal markValue = price.value().multiply(volume.energy());
-        markStore.put(
-            position.tenantId(),
-            position.id(),
+        return new MarkEntry(
             volume.intervalStart(),
             volume.intervalEnd(),
             markValue,
             "EUR",
             price.inputVersionSet());
+    }
+
+    @Override
+    protected void flushResults(PositionLedgerEntry position, List<MarkEntry> results) {
+        for (MarkEntry entry : results) {
+            markStore.put(
+                position.tenantId(),
+                position.id(),
+                entry.start(),
+                entry.end(),
+                entry.value(),
+                entry.currency(),
+                entry.versions());
+        }
     }
 
     private VolumeReference buildVolumeReference(PositionLedgerEntry position) {

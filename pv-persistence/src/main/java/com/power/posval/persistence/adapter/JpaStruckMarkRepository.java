@@ -2,6 +2,7 @@ package com.power.posval.persistence.adapter;
 
 import com.power.posval.domain.model.StruckMark;
 import com.power.posval.domain.port.repository.StruckMarkRepository;
+import com.power.posval.persistence.batch.BatchWriter;
 import com.power.posval.persistence.entity.StruckMarkEntity;
 import com.power.posval.persistence.util.SimpleJsonCodec;
 import jakarta.inject.Inject;
@@ -22,15 +23,22 @@ import java.util.UUID;
 public class JpaStruckMarkRepository implements StruckMarkRepository {
 
     private final Provider<EntityManager> emProvider;
+    private final BatchWriter batchWriter;
 
     @Inject
     public JpaStruckMarkRepository(Provider<EntityManager> emProvider) {
         this.emProvider = emProvider;
+        this.batchWriter = new BatchWriter(emProvider);
     }
 
     @Override
     public void save(StruckMark mark) {
         emProvider.get().persist(toEntity(mark));
+    }
+
+    @Override
+    public void saveAll(List<StruckMark> marks) {
+        batchWriter.writeAll(marks.stream().map(this::toEntity).toList());
     }
 
     @Override

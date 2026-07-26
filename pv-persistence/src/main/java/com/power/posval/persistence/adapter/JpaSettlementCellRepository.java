@@ -2,6 +2,7 @@ package com.power.posval.persistence.adapter;
 
 import com.power.posval.domain.model.SettlementCell;
 import com.power.posval.domain.port.repository.SettlementCellRepository;
+import com.power.posval.persistence.batch.BatchWriter;
 import com.power.posval.persistence.entity.SettlementCellEntity;
 import com.power.posval.persistence.util.SimpleJsonCodec;
 import jakarta.inject.Inject;
@@ -18,10 +19,12 @@ import java.util.*;
 public class JpaSettlementCellRepository implements SettlementCellRepository {
 
     private final Provider<EntityManager> emProvider;
+    private final BatchWriter batchWriter;
 
     @Inject
     public JpaSettlementCellRepository(Provider<EntityManager> emProvider) {
         this.emProvider = emProvider;
+        this.batchWriter = new BatchWriter(emProvider);
     }
 
     @Override
@@ -31,16 +34,7 @@ public class JpaSettlementCellRepository implements SettlementCellRepository {
 
     @Override
     public void saveAll(List<SettlementCell> cells) {
-        if (cells.isEmpty()) return;
-        EntityManager em = emProvider.get();
-        int batchSize = 100;
-        for (int i = 0; i < cells.size(); i++) {
-            em.persist(toEntity(cells.get(i)));
-            if ((i + 1) % batchSize == 0) {
-                em.flush();
-                em.clear();
-            }
-        }
+        batchWriter.writeAll(cells.stream().map(this::toEntity).toList());
     }
 
     @Override

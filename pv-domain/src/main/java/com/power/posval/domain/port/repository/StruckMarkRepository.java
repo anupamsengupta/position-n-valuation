@@ -17,6 +17,10 @@ public interface StruckMarkRepository {
 
     void save(StruckMark mark);
 
+    default void saveAll(List<StruckMark> marks) {
+        marks.forEach(this::save);
+    }
+
     Optional<StruckMark> findLatest(String tenantId, UUID positionId,
                                      YearMonth deliveryMonth);
 

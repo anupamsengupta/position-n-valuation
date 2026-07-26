@@ -58,7 +58,7 @@ class FiveYearTradeIntegrationTest {
     private static final SeriesKey SERIES_KEY = new SeriesKey("VS-WP-NORDSEE-5YR");
 
     private final List<PositionLedgerEntry> ledgerStore = new ArrayList<>();
-    private final List<SettlementCell> settlementStore = new ArrayList<>();
+    private final List<SettlementCell> settlementStore = new ArrayList<>(180000);
     private final List<Object> publishedEvents = new ArrayList<>();
 
     private DefaultTradeCaptureHandler tradeCaptureHandler;

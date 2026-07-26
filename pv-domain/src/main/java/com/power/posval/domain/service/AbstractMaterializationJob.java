@@ -7,6 +7,7 @@ import com.power.posval.domain.port.marketdata.MarketDataPort;
 import com.power.posval.domain.port.repository.PriceExpressionRepository;
 
 import java.time.ZonedDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -15,7 +16,7 @@ import java.util.UUID;
  * Concrete subclasses: SettlementMaterializationJob, ForwardMarkJob, EodStrikeJob.
  * Pattern #15, FR-056, FR-105, S5.
  */
-public abstract class AbstractMaterializationJob {
+public abstract class AbstractMaterializationJob<R> {
 
     protected final VolumeResolver volumeResolver;
     protected final PriceEvaluator priceEvaluator;
@@ -35,11 +36,13 @@ public abstract class AbstractMaterializationJob {
     /**
      * Orchestration skeleton — not overridable.
      * FR-105: restartable and idempotent.
+     * Collect-then-flush: builds results in memory, then batch-flushes.
      */
     public final void execute(PositionLedgerEntry position,
                                DeliveryRange intervalRange) {
         List<VolumeRecord> volumes = resolveVolume(position, intervalRange);
 
+        List<R> results = new ArrayList<>(volumes.size());
         for (VolumeRecord vol : volumes) {
             DeliveryPeriod interval = new DeliveryPeriod(
                 ZonedDateTime.ofInstant(vol.intervalStart(),
@@ -51,8 +54,10 @@ public abstract class AbstractMaterializationJob {
             PriceResolution priceRes = evaluatePrice(
                 position.priceExpressionId(), interval);
 
-            writeResult(position, vol, priceRes);
+            results.add(buildResult(position, vol, priceRes));
         }
+
+        flushResults(position, results);
     }
 
     /** Hook: resolve volume from the appropriate source. */
@@ -63,8 +68,12 @@ public abstract class AbstractMaterializationJob {
     protected abstract PriceResolution evaluatePrice(
         UUID priceExpressionId, DeliveryPeriod interval);
 
-    /** Hook: write the materialized result. */
-    protected abstract void writeResult(
+    /** Hook: build a single result (pure computation, no I/O). */
+    protected abstract R buildResult(
         PositionLedgerEntry position, VolumeRecord volume,
         PriceResolution price);
+
+    /** Hook: flush all results in batch (persist + publish). */
+    protected abstract void flushResults(
+        PositionLedgerEntry position, List<R> results);
 }
