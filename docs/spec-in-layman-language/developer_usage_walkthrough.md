@@ -380,36 +380,39 @@ public abstract class AbstractMaterializationJob {
         // Step 1: Get volume data
         List<VolumeRecord> volumes = resolveVolume(position, intervalRange);
 
-        // Step 2: For each time slot...
+        // Step 2: Collect results in memory (no I/O yet)
+        List<R> results = new ArrayList<>(volumes.size());
         for (VolumeRecord vol : volumes) {
-            // Step 2a: Get the price
             PriceResolution price = evaluatePrice(position.priceExpressionId(), interval);
-
-            // Step 2b: Write the result
-            writeResult(position, vol, price);
+            results.add(buildResult(position, vol, price));
         }
+
+        // Step 3: Batch flush — persist + publish all at once
+        flushResults(position, results);
     }
 
-    // Subclasses fill in these three "hooks":
+    // Subclasses fill in these four "hooks":
     protected abstract List<VolumeRecord> resolveVolume(...);
     protected abstract PriceResolution evaluatePrice(...);
-    protected abstract void writeResult(...);
+    protected abstract R buildResult(...);      // pure computation, no I/O
+    protected abstract void flushResults(...);  // batch persist + batch publish
 }
 ```
 
 Three concrete implementations:
 
-| Job | Purpose | What it writes | Persistence |
+| Job | Type `R` | What it writes | Persistence |
 |---|---|---|---|
-| `SettlementMaterializationJob` | Settlement (actual money) | `SettlementCell` | Durable, bitemporal, append-only |
-| `ForwardMarkJob` | Forward valuation (projected value) | `ForwardMark` | Ephemeral (Redis only, overwritten) |
-| `EodStrikeJob` | End-of-day snapshot | `StruckMark` | Durable, immutable, append-only |
+| `SettlementMaterializationJob` | `SettlementCell` | Settlement cells + events | Durable, bitemporal, batch via `saveAll` + `publishAll` |
+| `ForwardMarkJob` | `MarkEntry` (inner record) | Forward marks | Ephemeral (Redis only, overwritten) |
+| `EodStrikeJob` | `StruckMark` | Struck marks | Durable, immutable, batch via `saveAll` |
 
 **Following the code for settlement:**
 
 1. `SettlementMaterializationJob.resolveVolume()` — calls `volumeResolver.resolve()` with purpose `SETTLEMENT`
 2. `SettlementMaterializationJob.evaluatePrice()` — loads the price expression from `priceExpressionRepo`, then calls `priceEvaluator.evaluate()` with purpose `SETTLEMENT`
-3. `SettlementMaterializationJob.writeResult()` — calculates `amount = price x energy`, creates a `SettlementCell`, saves it, and publishes a `SettlementComputed` event
+3. `SettlementMaterializationJob.buildResult()` — calculates `amount = price x energy`, creates a `SettlementCell` (pure computation, no database call)
+4. `SettlementMaterializationJob.flushResults()` — batch-saves all cells via `cellRepo.saveAll()`, builds `SettlementComputed` events from the cells, and batch-publishes via `eventPublisher.publishAll()`
 
 #### Trade Handling
 
@@ -706,11 +709,13 @@ AbstractMaterializationJob.execute()     ← template method (FINAL, can't overr
   │     │           └── switch (expr) { case ConstantLeaf c -> c.value() }
   │     │           └── Returns PriceResolution(85.00, {"FIXED_85"}, {})
   │     │
-  │     └── SettlementMaterializationJob.writeResult()
+  │     └── SettlementMaterializationJob.buildResult()
   │           ├── amount = 85.00 x 12.5 MWh = 1062.50 EUR
-  │           ├── Create SettlementCell(price=85.00, energy=12.5, amount=1062.50)
-  │           ├── SettlementCellRepository.save(cell)
-  │           └── DomainEventPublisher.publish(SettlementComputed)
+  │           └── Returns SettlementCell(price=85.00, energy=12.5, amount=1062.50)
+  │
+  └── SettlementMaterializationJob.flushResults(position, allCells)
+        ├── SettlementCellRepository.saveAll(cells)  ← batch persist via BatchWriter
+        └── DomainEventPublisher.publishAll(events)  ← batch publish
 ```
 
 **5. Result**
@@ -902,9 +907,9 @@ TEST EXECUTION:
   │    │   → ConstantLeaf(85.00)
   │    │   → DefaultPriceEvaluator: switch(ConstantLeaf) → 85.00
   │    │   → PriceResolution(85.00, {"FIXED_85"}, {})
-  │    └── writeResult() → amount = 85.00 × 12.5 = 1062.50
-  │        → Creates SettlementCell, saves to InMemoryCellRepo
-  │        → Publishes SettlementComputed event
+  │    ├── buildResult() → amount = 85.00 × 12.5 = 1062.50
+  │    │   → Returns SettlementCell (collected, not yet persisted)
+  │    └── flushResults() → batch saves all cells, batch publishes events
   │
   Step 5: Verify outputs
   │  ✓ Assert: 1 SettlementCell with price=85.00, energy=12.5, amount>0
@@ -1035,7 +1040,7 @@ Use smoke tests for quick CI verification. Use the full JMH runner (via `exec:ex
 1. Add the field to the record in `pv-domain/model/SettlementCell.java`
 2. Add the column to `pv-persistence/entity/SettlementCellEntity.java`
 3. Update `JpaSettlementCellRepository.toEntity()` and `toDomain()` to map the field
-4. Update `SettlementMaterializationJob.writeResult()` to populate it
+4. Update `SettlementMaterializationJob.buildResult()` to populate it
 5. Write a test
 
 ### Example C: "Swap the JSON market data stub for a real service"

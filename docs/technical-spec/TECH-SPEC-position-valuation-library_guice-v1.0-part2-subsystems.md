@@ -625,6 +625,14 @@ public interface DomainEventPublisher {
      * as the data mutation. The outbox relay (pv-kafka) handles Kafka delivery.
      */
     void publish(Object event);
+
+    /**
+     * Publish multiple domain events in batch. Default delegates to publish();
+     * outbox adapter can override for batch insert.
+     */
+    default void publishAll(List<Object> events) {
+        events.forEach(this::publish);
+    }
 }
 ```
 
@@ -938,80 +946,92 @@ public class StruckMarkEntity {
 | `idx_sm_strike_date` | `(tenant_id, strike_date)` | Batch strike processing |
 | `uq_sm_original` | `(tenant_id, position_id, delivery_month, strike_date)` | Unique original strike per day `WHERE supersedes_id IS NULL` |
 
-### 11.4 `AbstractMaterializationJob` — Pattern #15, FR-056, FR-105, S5a, S5b, S5c
+### 11.4 `AbstractMaterializationJob` — Pattern #15, #20, FR-056, FR-105, S5a, S5b, S5c
 
-> **TR-024** — `AbstractMaterializationJob` is a template method (Pattern #15) with three hooks: `resolveVolume()`, `evaluatePrice()`, `writeResult()`. Concrete implementations for settlement (S5a), forward marks (S5b), and EOD strike (S5c) share the orchestration skeleton but differ in volume source, output destination, and temporal semantics. (Extends FR-056, FR-105.)
+> **TR-024** — `AbstractMaterializationJob<R>` is a generic template method (Pattern #15) with a **collect-then-flush** pattern: four hooks — `resolveVolume()`, `evaluatePrice()`, `buildResult()` (pure computation, no I/O), and `flushResults()` (batch I/O). The loop collects results into an `ArrayList<R>`, then calls `flushResults()` once. This enables `saveAll()` batch persistence (Pattern #20, `BatchWriter` flush/clear) and bulk event publishing via `DomainEventPublisher.publishAll()`. For a 5-year trade with ~175k intervals, this reduces 175k individual `save()` + `publish()` calls to a single batch-write + batch-publish cycle. Concrete implementations for settlement (S5a), forward marks (S5b), and EOD strike (S5c) share the orchestration skeleton but differ in result type `R`, volume source, and flush strategy. (Extends FR-056, FR-105.)
+
+```
+BEFORE (per-interval I/O):              AFTER (collect-then-flush):
+for each interval:                       for each interval:
+  evaluatePrice()                          evaluatePrice()
+  writeResult() ← persist + publish        buildResult() ← pure computation
+                                         flushResults(list) ← batch persist + batch publish
+```
 
 ```java
 /**
  * Template method for materialization jobs.
  * Lives in pv-domain/service/.
  * Concrete subclasses: SettlementMaterializationJob, ForwardMarkJob, EodStrikeJob.
+ * Type parameter R = the result type collected during the loop.
  */
-public abstract class AbstractMaterializationJob {
+public abstract class AbstractMaterializationJob<R> {
 
     protected final VolumeResolver volumeResolver;
     protected final PriceEvaluator priceEvaluator;
     protected final MarketDataPort marketData;
+    protected final PriceExpressionRepository priceExpressionRepo;
 
     protected AbstractMaterializationJob(VolumeResolver volumeResolver,
                                           PriceEvaluator priceEvaluator,
-                                          MarketDataPort marketData) {
+                                          MarketDataPort marketData,
+                                          PriceExpressionRepository priceExpressionRepo) {
         this.volumeResolver = volumeResolver;
         this.priceEvaluator = priceEvaluator;
         this.marketData = marketData;
+        this.priceExpressionRepo = priceExpressionRepo;
     }
 
     /**
      * Orchestration skeleton — not overridable.
      * FR-105: restartable and idempotent.
+     * Collect-then-flush: builds results in memory, then batch-flushes.
      */
     public final void execute(PositionLedgerEntry position,
                                DeliveryRange intervalRange) {
-        // Step 1: resolve volume
         List<VolumeRecord> volumes = resolveVolume(position, intervalRange);
 
+        List<R> results = new ArrayList<>(volumes.size());
         for (VolumeRecord vol : volumes) {
-            // Step 2: evaluate price expression for this interval
-            DeliveryPeriod interval = DeliveryPeriod.of(
-                vol.intervalStart(), vol.intervalEnd());
+            DeliveryPeriod interval = new DeliveryPeriod(
+                ZonedDateTime.ofInstant(vol.intervalStart(),
+                    intervalRange.deliveryTimezone()),
+                ZonedDateTime.ofInstant(vol.intervalEnd(),
+                    intervalRange.deliveryTimezone()),
+                intervalRange.deliveryTimezone());
+
             PriceResolution priceRes = evaluatePrice(
                 position.priceExpressionId(), interval);
 
-            // Step 3: write result to appropriate target
-            writeResult(position, vol, priceRes);
+            results.add(buildResult(position, vol, priceRes));
         }
+
+        flushResults(position, results);
     }
 
-    /**
-     * Hook: resolve volume from the appropriate source.
-     * S5a: metered actuals for delivered; S5b: forecast for undelivered.
-     */
+    /** Hook: resolve volume from the appropriate source. */
     protected abstract List<VolumeRecord> resolveVolume(
         PositionLedgerEntry position, DeliveryRange intervalRange);
 
-    /**
-     * Hook: evaluate the price expression tree.
-     * S5a: purpose=SETTLEMENT; S5b: purpose=FORWARD.
-     */
+    /** Hook: evaluate the price expression tree. */
     protected abstract PriceResolution evaluatePrice(
         UUID priceExpressionId, DeliveryPeriod interval);
 
-    /**
-     * Hook: write the materialized result.
-     * S5a: persist bitemporal settlement cell; S5b: overwrite ephemeral mark;
-     * S5c: persist immutable struck mark.
-     */
-    protected abstract void writeResult(
+    /** Hook: build a single result (pure computation, no I/O). */
+    protected abstract R buildResult(
         PositionLedgerEntry position, VolumeRecord volume,
         PriceResolution price);
+
+    /** Hook: flush all results in batch (persist + publish). */
+    protected abstract void flushResults(
+        PositionLedgerEntry position, List<R> results);
 }
 ```
 
 **Settlement materialization (S5a) — hook implementations excerpt:**
 
 ```java
-public class SettlementMaterializationJob extends AbstractMaterializationJob {
+public class SettlementMaterializationJob extends AbstractMaterializationJob<SettlementCell> {
 
     private final SettlementCellRepository cellRepo;
     private final DomainEventPublisher eventPublisher;
@@ -1022,7 +1042,7 @@ public class SettlementMaterializationJob extends AbstractMaterializationJob {
     protected List<VolumeRecord> resolveVolume(
             PositionLedgerEntry position, DeliveryRange intervalRange) {
         // FR-051a: purpose=SETTLEMENT reads metered actuals for asset-linked trades
-        VolumeReference ref = lookupReference(position);
+        VolumeReference ref = buildVolumeReference(position);
         return volumeResolver.resolve(ref, intervalRange,
             ResolutionPurpose.SETTLEMENT);
     }
@@ -1030,27 +1050,54 @@ public class SettlementMaterializationJob extends AbstractMaterializationJob {
     @Override
     protected PriceResolution evaluatePrice(
             UUID priceExpressionId, DeliveryPeriod interval) {
-        PriceExpression expr = loadExpression(priceExpressionId);
+        var exprOpt = priceExpressionRepo.findById(priceExpressionId);
+        if (exprOpt.isEmpty()) {
+            return new PriceResolution(BigDecimal.ZERO, Set.of(), Map.of());
+        }
         // FR-048e: purpose=SETTLEMENT uses settlement series on MarketDataLeaf
-        return priceEvaluator.evaluate(expr, interval,
+        return priceEvaluator.evaluate(exprOpt.get(), interval,
             ResolutionPurpose.SETTLEMENT, marketData);
     }
 
     @Override
-    protected void writeResult(PositionLedgerEntry position,
-                                VolumeRecord volume,
-                                PriceResolution price) {
-        // FR-071: persist with active_leaves and input_version_set
-        // FR-072: bitemporal — new version if inputs restated
-        var cell = buildSettlementCell(position, volume, price);
-        cellRepo.save(cell);
-        eventPublisher.publish(new SettlementComputed(
-            position.tenantId(), position.id(),
-            volume.intervalStart(), volume.intervalEnd(),
-            price.value(), Instant.now()));
+    protected SettlementCell buildResult(PositionLedgerEntry position,
+                                          VolumeRecord volume,
+                                          PriceResolution price) {
+        // FR-071: pure computation — build cell with active_leaves and input_version_set
+        BigDecimal amount = np.round(
+            price.value().multiply(volume.energy()), NumericPrecision.Domain.MONETARY);
+        Instant now = Instant.now();
+        return new SettlementCell(UUID.randomUUID(), position.tenantId(), position.id(),
+            volume.intervalStart(), volume.intervalEnd(), "SETTLEMENT", "PROVISIONAL",
+            price.value(), volume.volume(), volume.energy(), amount, "EUR",
+            price.activeLeaves(), price.inputVersionSet(), now, null, now, null);
+    }
+
+    @Override
+    protected void flushResults(PositionLedgerEntry position, List<SettlementCell> cells) {
+        // Batch persist — delegates to BatchWriter (Pattern #20) via JPA adapter
+        cellRepo.saveAll(cells);
+
+        // Batch publish — builds events from collected cells
+        List<Object> events = cells.stream()
+            .<Object>map(cell -> new SettlementComputed(
+                position.id(),
+                ZonedDateTime.ofInstant(cell.intervalStart(),
+                    position.deliveryRange().deliveryTimezone()),
+                ZonedDateTime.ofInstant(cell.intervalEnd(),
+                    position.deliveryRange().deliveryTimezone()),
+                new Money(cell.amount(), Currency.getInstance("EUR")),
+                "PROVISIONAL", cell.activeLeaves(), cell.inputVersionSet(),
+                cell.knownFrom()))
+            .toList();
+        eventPublisher.publishAll(events);
     }
 }
 ```
+
+**JPA adapter batch writes — both `JpaSettlementCellRepository` and `JpaStruckMarkRepository` delegate `saveAll()` to `BatchWriter.writeAll()` (Pattern #20), which performs periodic `flush() + clear()` every 50 entities with a final flush for the remainder. This prevents first-level cache bloat on large batches.**
+
+**Port-level default `saveAll()` methods** on `SettlementCellRepository` and `StruckMarkRepository` delegate to `save()` one at a time, enabling test stubs to work without batch infrastructure. Production JPA adapters override with `BatchWriter`-backed implementations.
 
 ---
 

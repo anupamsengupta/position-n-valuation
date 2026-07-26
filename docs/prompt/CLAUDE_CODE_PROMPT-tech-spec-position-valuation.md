@@ -100,7 +100,7 @@ Single markdown file, sections in this exact order. If a section is not applicab
     - Settlement cells: entity skeleton, `input_version_set` capture columns.
     - Forward marks: ephemeral, in-memory or short-TTL cache — no persistence (FR-075).
     - EOD struck marks: bitemporal freeze at month-bucket grain (FR-079, D-3).
-    - `AbstractMaterializationJob` (Pattern #15) template with hooks `resolveVolume()` / `evaluatePrice()` / `writeResult()`.
+    - `AbstractMaterializationJob<R>` (Pattern #15) generic template with collect-then-flush hooks: `resolveVolume()` / `evaluatePrice()` / `buildResult()` (pure) / `flushResults()` (batch I/O via `saveAll` + `publishAll`).
 12. **S6 — Slot Cache & S6b — Trade Interval Cache**
     - `VolumeCache` port (Pattern #29 Read-Through, #30 Cache-Aside + Event Invalidation, #31 Pipeline Batching).
     - `RedisVolumeCache` — key scheme `vol:{tenant_id}:{series_key}:{interval_start_iso}`, `MGET` batching (FR-079).

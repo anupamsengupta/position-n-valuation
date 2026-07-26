@@ -417,6 +417,9 @@ public class PersistenceModule extends AbstractModule {
         bind(SettlementCellRepository.class)
             .to(JpaSettlementCellRepository.class)
             .in(Singleton.class);
+        bind(StruckMarkRepository.class)
+            .to(JpaStruckMarkRepository.class)
+            .in(Singleton.class);
         bind(RollupRepository.class)
             .to(JpaRollupRepository.class)
             .in(Singleton.class);
@@ -1476,7 +1479,7 @@ public class PositionValuationApp {
 | FR-086–FR-086e | Trade interval cache | `TradeIntervalCache`, `TradeIntervalCacheEntity`, `TradeIntervalRecord`, `TradeIntervalCacheRebuilder` |
 | FR-090–FR-091 | Rollups | `RollupRepository`, `RollupCell`, `Aggregators` |
 | FR-102–FR-104 | Dependency index | `DependencyIndex`, `DependencyEdge`, `PrunePolicy` |
-| FR-105 | Batch cycle | `AbstractMaterializationJob.execute()`, `SettlementMaterializationJob`, `EodStrikeJob` |
+| FR-105 | Batch cycle | `AbstractMaterializationJob<R>.execute()` (collect-then-flush), `SettlementMaterializationJob`, `ForwardMarkJob`, `EodStrikeJob`, `DomainEventPublisher.publishAll()`, `SettlementCellRepository.saveAll()`, `StruckMarkRepository.saveAll()` |
 | FR-106 | Idempotency | `IdempotentConsumer`, natural key `(trade_id, trade_version)` |
 | FR-120/FR-122 | Multitenancy | `TenantContext`, `@TenantAware`, `TenantInterceptor`, RLS policies (defers to V2.0 §11) |
 | NFR-OBS-001–008 | Telemetry & Observability | `MetricsPort`, `HealthCheck`, `ObservabilityModule`, Micrometer metrics (§18b.2), OpenTelemetry traces (§18b.3), structured JSON logging (§18b.4), alerting thresholds (§18b.6), Grafana dashboards (§18b.7) |
@@ -1489,9 +1492,9 @@ public class PositionValuationApp {
 | S2 | PriceExpression | `PriceExpression` (sealed, 13 types), `PriceEvaluator`, `DefaultPriceEvaluator`, `PriceResolution`, `ResolutionPurpose` |
 | S3 | VolumeSeries | `VolumeSeries`, `VolumeSeriesEntity`, `VolumeInterval`, `VolumeIntervalEntity`, `VolumeReference`, `MeteredActualVolumeSeries`, `VolumeResolver`, `ProfileResolver`, `ForecastResolver`, `VolumeSeriesFactory`, `VolumeSeriesRepository`, `VolumeSeriesSpec`, `MaterializationStrategy`, `RollingHorizonStrategy`, `BatchWriter`, `VolumePublished`, `VolumeSuperseded`, `VolumeChunkMaterialized` |
 | S4 | Market Data Store | `MarketDataPort`, `MarketDataLookup` |
-| S5a | Settlement cells | `SettlementCellEntity`, `SettlementCellRepository`, `SettlementMaterializationJob`, `SettlementComputed` |
-| S5b | Forward marks | `ForwardMarkStore`, `ForwardMark` |
-| S5c | EOD struck marks | `StruckMarkEntity` |
+| S5a | Settlement cells | `SettlementCellEntity`, `SettlementCellRepository` (incl. `saveAll`), `JpaSettlementCellRepository` (BatchWriter-backed), `SettlementMaterializationJob`, `SettlementComputed`, `DomainEventPublisher.publishAll()` |
+| S5b | Forward marks | `ForwardMarkStore`, `ForwardMark`, `ForwardMarkJob`, `ForwardMarkJob.MarkEntry` |
+| S5c | EOD struck marks | `StruckMarkEntity`, `StruckMarkRepository` (incl. `saveAll`), `JpaStruckMarkRepository` (BatchWriter-backed), `EodStrikeJob` |
 | S6 | Slot Cache | `VolumeCache`, `RedisVolumeCache`, `CachedInterval`, `CacheInvalidationHandler` |
 | S6b | Trade Interval Cache | `TradeIntervalCache`, `TradeIntervalCacheEntity`, `TradeIntervalRecord`, `TradeIntervalCacheRebuilder` |
 | S7 | Rollups | `RollupRepository`, `RollupCell`, `Aggregators` |
@@ -1517,7 +1520,7 @@ All 35 patterns from ADR-001 appear in this specification:
 | 12 | Composite | Part 1 §7.5 (TR-010, pattern-matching switch) |
 | 13 | Decorator / Filter Chain | §14.3 (TenantInterceptor) |
 | 14 | Observer / Domain Events | §9.6 (TR-019), §15.1 |
-| 15 | Template Method | §11.4 (TR-024, AbstractMaterializationJob) |
+| 15 | Template Method | §11.4 (TR-024, AbstractMaterializationJob\<R\> — collect-then-flush) |
 | 16 | State Machine | Part 1 §5.3 (QualityState.canTransitionTo) |
 | 17 | Command | Part 1 §5.2 (TradeCapture/Amend/Cancel records), §8.4 (TR-013) |
 | 18 | Repository (Port + Adapter) | §8.2–§8.3 (TR-012), §9.3 |
@@ -1641,7 +1644,7 @@ Extends functional-spec §16 (O-1 through O-8) with implementation-specific item
 | TR-021 | FR-071, FR-071a | §11.1 | Settlement cells require all mandatory inputs |
 | TR-022 | FR-075, D-3 | §11.2 | Forward marks are ephemeral |
 | TR-023 | FR-077, D-3 | §11.3 | EOD struck marks are immutable |
-| TR-024 | FR-056, FR-105 | §11.4 | `AbstractMaterializationJob` template method |
+| TR-024 | FR-056, FR-105 | §11.4 | `AbstractMaterializationJob<R>` generic template method with collect-then-flush: `buildResult()` (pure) + `flushResults()` (batch I/O via `saveAll` + `publishAll`) |
 | TR-025 | FR-079, FR-080 | §12.1 | `VolumeCache` port with read-through/invalidation/batching |
 | TR-026 | V2.0 §12 | §12.2 | Redis key scheme and TTL |
 | TR-027 | FR-052b, V2.0 §12.5 | §12.3 | Event-driven cache invalidation |

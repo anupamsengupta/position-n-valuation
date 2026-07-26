@@ -34,7 +34,7 @@ import java.util.concurrent.TimeUnit;
  *
  * What is benchmarked:
  *   - Position loop: iterate 60 monthly PositionLedgerEntry records
- *   - Per entry: resolveVolume → evaluatePrice (tree walk) → writeResult
+ *   - Per entry: resolveVolume → evaluatePrice (tree walk) → buildResult → flushResults
  *   - Price evaluation: ConditionalGate → Clamp → Escalate → Divide (6 leaves)
  *
  * What is NOT benchmarked (pre-loaded in @Setup):
