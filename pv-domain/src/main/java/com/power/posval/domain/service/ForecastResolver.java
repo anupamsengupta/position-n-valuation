@@ -8,10 +8,13 @@ import com.power.posval.domain.port.repository.VolumeSeriesRepository;
 import java.util.List;
 
 /**
- * Resolves volume for FORECAST series (per-asset, shared, multiplier < 1.0).
+ * Resolves volume for FORECAST series (per-asset, shared, multiplier &lt; 1.0).
  * FR-051a: SETTLEMENT purpose reads meteredSeriesKey if set;
  *          FORWARD purpose reads volumeSeriesKey (forecast).
  * Pattern #9, D-11.
+ *
+ * <p>Uses {@link ProfileResolver#filterAndMap} for the optimized
+ * sorted-iteration with epoch-millis comparison and early exit.
  */
 public record ForecastResolver(
     VolumeSeriesRepository seriesRepo,
@@ -37,15 +40,9 @@ public record ForecastResolver(
             return List.of();
         }
         var series = seriesOpt.get();
-        return series.intervals().stream()
-            .filter(i -> overlaps(i.intervalStart(), i.intervalEnd(), intervalRange))
-            .map(i -> new VolumeRecord(
-                i.intervalStart(), i.intervalEnd(),
-                i.volume().multiply(ref.multiplier()),
-                i.energy().multiply(ref.multiplier()),
-                series.versionId(), series.qualityState(),
-                series.seriesType(), null, ref.multiplier()))
-            .toList();
+        return ProfileResolver.filterAndMap(series.intervals(), intervalRange,
+            ref.multiplier(), series.versionId(), series.qualityState(),
+            series.seriesType());
     }
 
     private List<VolumeRecord> resolveFromMetered(VolumeReference ref,
@@ -56,20 +53,8 @@ public record ForecastResolver(
             return List.of();
         }
         var series = seriesOpt.get();
-        return series.intervals().stream()
-            .filter(i -> overlaps(i.intervalStart(), i.intervalEnd(), intervalRange))
-            .map(i -> new VolumeRecord(
-                i.intervalStart(), i.intervalEnd(),
-                i.volume().multiply(ref.multiplier()),
-                i.energy().multiply(ref.multiplier()),
-                series.versionId(), series.qualityState(),
-                null, series.meteringPointId(), ref.multiplier()))
-            .toList();
-    }
-
-    private static boolean overlaps(java.time.Instant start, java.time.Instant end,
-                                     DeliveryRange range) {
-        return start.isBefore(range.endInstant().toInstant())
-            && end.isAfter(range.startInstant().toInstant());
+        return ProfileResolver.filterAndMapMetered(series.intervals(), intervalRange,
+            ref.multiplier(), series.versionId(), series.qualityState(),
+            series.meteringPointId());
     }
 }

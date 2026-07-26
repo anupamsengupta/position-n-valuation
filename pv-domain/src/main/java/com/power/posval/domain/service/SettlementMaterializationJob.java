@@ -103,7 +103,7 @@ public class SettlementMaterializationJob extends AbstractMaterializationJob {
             .id(UUID.randomUUID())
             .tradeLegId(position.tradeLegId())
             .tradeId(position.tradeId())
-            .multiplier(BigDecimal.ONE)
+            .multiplier(BigDecimal.ONE) //TO DO - whi sis this 1
             .volumeSeriesKey(position.volumeSeriesKey())
             .effectiveFrom(ZonedDateTime.ofInstant(
                 position.validFrom(), position.deliveryRange().deliveryTimezone()))
