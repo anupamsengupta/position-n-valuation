@@ -8,6 +8,7 @@ import com.power.posval.domain.model.value.VolumeReference;
 import com.power.posval.domain.port.repository.MeteredActualRepository;
 import com.power.posval.domain.port.repository.VolumeSeriesRepository;
 import com.power.posval.domain.port.repository.VolumeSeriesSpec;
+import com.power.posval.domain.port.DefaultNumericPrecision;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -44,7 +45,7 @@ class VolumeResolverTest {
             .build();
 
         VolumeSeriesRepository repo = stubRepo(series);
-        var resolver = new ProfileResolver(repo);
+        var resolver = new ProfileResolver(repo, new DefaultNumericPrecision());
 
         var ref = VolumeReference.builder()
             .id(UUID.randomUUID())
@@ -66,7 +67,7 @@ class VolumeResolverTest {
     @Test
     void profileResolver_emptyOnMissingSeries() {
         VolumeSeriesRepository repo = stubRepo(null);
-        var resolver = new ProfileResolver(repo);
+        var resolver = new ProfileResolver(repo, new DefaultNumericPrecision());
 
         var ref = VolumeReference.builder()
             .id(UUID.randomUUID())
@@ -106,7 +107,7 @@ class VolumeResolverTest {
 
         VolumeSeriesRepository repo = stubRepo(series);
         MeteredActualRepository meteredRepo = (t, k) -> Optional.empty();
-        var resolver = new ForecastResolver(repo, meteredRepo);
+        var resolver = new ForecastResolver(repo, meteredRepo, new DefaultNumericPrecision());
 
         var ref = VolumeReference.builder()
             .id(UUID.randomUUID())

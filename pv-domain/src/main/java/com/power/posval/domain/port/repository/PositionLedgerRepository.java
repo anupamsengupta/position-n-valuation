@@ -18,6 +18,16 @@ public interface PositionLedgerRepository {
     /** Persist a new ledger entry (append-only). FR-006: known_from set to processing time. */
     void save(PositionLedgerEntry entry);
 
+    /**
+     * Batch persist multiple ledger entries in a single flush.
+     * Default implementation falls back to individual saves; JPA adapters
+     * should override to use {@code EntityManager.persist()} in a single
+     * transaction with batched JDBC inserts.
+     */
+    default void saveAll(List<PositionLedgerEntry> entries) {
+        entries.forEach(this::save);
+    }
+
     Optional<PositionLedgerEntry> findById(UUID entryId);
 
     /** Current-knowledge entries for a trade-leg across all delivery months. */

@@ -170,7 +170,7 @@ public class FiveYearSettlementBenchmark {
 
         // --- Wire the job ---
         var priceEvaluator = new DefaultPriceEvaluator(new DefaultNumericPrecision());
-        var volumeResolver = new ProfileResolver(seriesRepo);
+        var volumeResolver = new ProfileResolver(seriesRepo, new DefaultNumericPrecision());
 
         cellCount = 0;
         SettlementCellRepository cellRepo = new SettlementCellRepository() {
@@ -184,7 +184,7 @@ public class FiveYearSettlementBenchmark {
 
         settlementJob = new SettlementMaterializationJob(
             volumeResolver, priceEvaluator, marketData, exprRepo,
-            cellRepo, eventPublisher);
+            cellRepo, eventPublisher, new DefaultNumericPrecision());
     }
 
     /**

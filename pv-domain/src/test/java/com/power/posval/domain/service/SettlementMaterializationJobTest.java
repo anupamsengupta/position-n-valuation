@@ -104,11 +104,11 @@ class SettlementMaterializationJobTest {
                 1, null));
 
         var seriesRepo = stubSeriesRepo(seriesKey, range, intervals);
-        var resolver = new ProfileResolver(seriesRepo);
+        var resolver = new ProfileResolver(seriesRepo, new DefaultNumericPrecision());
 
         var job = new SettlementMaterializationJob(
             resolver, priceEvaluator, marketData, exprRepo,
-            capturingCellRepo(savedCells), eventPublisher);
+            capturingCellRepo(savedCells), eventPublisher, new DefaultNumericPrecision());
 
         var position = PositionLedgerEntry.builder()
             .id(UUID.randomUUID())
@@ -160,11 +160,11 @@ class SettlementMaterializationJobTest {
                 1, null));
 
         var seriesRepo = stubSeriesRepo(seriesKey, range, intervals);
-        var resolver = new ProfileResolver(seriesRepo);
+        var resolver = new ProfileResolver(seriesRepo, new DefaultNumericPrecision());
 
         var job = new SettlementMaterializationJob(
             resolver, priceEvaluator, marketData, exprRepo,
-            capturingCellRepo(savedCells), eventPublisher);
+            capturingCellRepo(savedCells), eventPublisher, new DefaultNumericPrecision());
 
         var position = PositionLedgerEntry.builder()
             .id(UUID.randomUUID())
@@ -227,11 +227,11 @@ class SettlementMaterializationJobTest {
                 1, null));
 
         var seriesRepo = stubSeriesRepo(seriesKey, range, intervals);
-        var resolver = new ProfileResolver(seriesRepo);
+        var resolver = new ProfileResolver(seriesRepo, new DefaultNumericPrecision());
 
         var job = new SettlementMaterializationJob(
             resolver, priceEvaluator, marketData, exprRepo,
-            capturingCellRepo(savedCells), eventPublisher);
+            capturingCellRepo(savedCells), eventPublisher, new DefaultNumericPrecision());
 
         var position = PositionLedgerEntry.builder()
             .id(UUID.randomUUID())

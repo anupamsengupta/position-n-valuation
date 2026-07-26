@@ -97,11 +97,11 @@ class TradeToSettlementIntegrationTest {
         var marketData = new JsonMarketDataPort();
         var exprRepo = new JsonPriceExpressionRepository();
         var priceEvaluator = new DefaultPriceEvaluator(new DefaultNumericPrecision());
-        var volumeResolver = new ProfileResolver(seriesRepo);
+        var volumeResolver = new ProfileResolver(seriesRepo, new DefaultNumericPrecision());
 
         var settlementJob = new SettlementMaterializationJob(
             volumeResolver, priceEvaluator, marketData, exprRepo,
-            cellRepo, eventPublisher);
+            cellRepo, eventPublisher, new DefaultNumericPrecision());
 
         // --- Wire the two entry points ---
         tradeCaptureHandler = new DefaultTradeCaptureHandler(ledgerRepo, eventPublisher);

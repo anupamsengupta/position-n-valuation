@@ -30,6 +30,20 @@ public class JpaSettlementCellRepository implements SettlementCellRepository {
     }
 
     @Override
+    public void saveAll(List<SettlementCell> cells) {
+        if (cells.isEmpty()) return;
+        EntityManager em = emProvider.get();
+        int batchSize = 100;
+        for (int i = 0; i < cells.size(); i++) {
+            em.persist(toEntity(cells.get(i)));
+            if ((i + 1) % batchSize == 0) {
+                em.flush();
+                em.clear();
+            }
+        }
+    }
+
+    @Override
     public List<SettlementCell> findByPosition(String tenantId, UUID positionId,
                                                 Instant rangeStart, Instant rangeEnd) {
         return emProvider.get()

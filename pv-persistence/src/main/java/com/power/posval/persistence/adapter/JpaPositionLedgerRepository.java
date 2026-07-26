@@ -36,6 +36,20 @@ public class JpaPositionLedgerRepository implements PositionLedgerRepository {
     }
 
     @Override
+    public void saveAll(List<PositionLedgerEntry> entries) {
+        if (entries.isEmpty()) return;
+        EntityManager em = emProvider.get();
+        int batchSize = 50;
+        for (int i = 0; i < entries.size(); i++) {
+            em.persist(toEntity(entries.get(i)));
+            if ((i + 1) % batchSize == 0) {
+                em.flush();
+                em.clear();
+            }
+        }
+    }
+
+    @Override
     public Optional<PositionLedgerEntry> findById(UUID entryId) {
         return emProvider.get()
             .createQuery("""

@@ -25,7 +25,7 @@ public record DefaultNumericPrecision() implements NumericPrecision {
         return switch (domain) {
             case MONETARY     -> 20;
             case PRICE        -> 20;
-            case VOLUME       -> 18;
+            case VOLUME       -> 20;
             case ENERGY       -> 20;
             case MULTIPLIER   -> 10;
             case INTERMEDIATE -> 24;

@@ -7,6 +7,7 @@ import com.power.posval.domain.model.value.DeliveryPeriod;
 import com.power.posval.domain.model.value.DeliveryRange;
 import com.power.posval.domain.model.value.Money;
 import com.power.posval.domain.model.value.VolumeReference;
+import com.power.posval.domain.port.NumericPrecision;
 import com.power.posval.domain.port.event.DomainEventPublisher;
 import com.power.posval.domain.port.marketdata.MarketDataPort;
 import com.power.posval.domain.port.repository.PriceExpressionRepository;
@@ -29,16 +30,19 @@ public class SettlementMaterializationJob extends AbstractMaterializationJob {
 
     private final SettlementCellRepository cellRepo;
     private final DomainEventPublisher eventPublisher;
+    private final NumericPrecision np;
 
     public SettlementMaterializationJob(VolumeResolver volumeResolver,
                                          PriceEvaluator priceEvaluator,
                                          MarketDataPort marketData,
                                          PriceExpressionRepository priceExpressionRepo,
                                          SettlementCellRepository cellRepo,
-                                         DomainEventPublisher eventPublisher) {
+                                         DomainEventPublisher eventPublisher,
+                                         NumericPrecision np) {
         super(volumeResolver, priceEvaluator, marketData, priceExpressionRepo);
         this.cellRepo = cellRepo;
         this.eventPublisher = eventPublisher;
+        this.np = np;
     }
 
     @Override
@@ -63,7 +67,8 @@ public class SettlementMaterializationJob extends AbstractMaterializationJob {
     protected void writeResult(PositionLedgerEntry position,
                                 VolumeRecord volume,
                                 PriceResolution price) {
-        BigDecimal amount = price.value().multiply(volume.energy());// TO DO does it not require scale handling ?
+        BigDecimal amount = np.round(
+            price.value().multiply(volume.energy()), NumericPrecision.Domain.MONETARY);
         Instant now = Instant.now();
 
         SettlementCell cell = new SettlementCell(

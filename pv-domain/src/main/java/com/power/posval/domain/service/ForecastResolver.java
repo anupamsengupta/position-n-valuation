@@ -2,6 +2,7 @@ package com.power.posval.domain.service;
 
 import com.power.posval.domain.model.value.DeliveryRange;
 import com.power.posval.domain.model.value.VolumeReference;
+import com.power.posval.domain.port.NumericPrecision;
 import com.power.posval.domain.port.repository.MeteredActualRepository;
 import com.power.posval.domain.port.repository.VolumeSeriesRepository;
 
@@ -13,12 +14,13 @@ import java.util.List;
  *          FORWARD purpose reads volumeSeriesKey (forecast).
  * Pattern #9, D-11.
  *
- * <p>Uses {@link ProfileResolver#filterAndMap} for the optimized
- * sorted-iteration with epoch-millis comparison and early exit.
+ * <p>Delegates filtering and mapping to {@link VolumeFilterMapper}
+ * (shared with {@link ProfileResolver}).
  */
 public record ForecastResolver(
     VolumeSeriesRepository seriesRepo,
-    MeteredActualRepository meteredRepo
+    MeteredActualRepository meteredRepo,
+    NumericPrecision np
 ) implements VolumeResolver {
 
     @Override
@@ -40,9 +42,9 @@ public record ForecastResolver(
             return List.of();
         }
         var series = seriesOpt.get();
-        return ProfileResolver.filterAndMap(series.intervals(), intervalRange,
+        return VolumeFilterMapper.filterAndMap(series.intervals(), intervalRange,
             ref.multiplier(), series.versionId(), series.qualityState(),
-            series.seriesType());
+            series.seriesType(), null, np);
     }
 
     private List<VolumeRecord> resolveFromMetered(VolumeReference ref,
@@ -53,8 +55,8 @@ public record ForecastResolver(
             return List.of();
         }
         var series = seriesOpt.get();
-        return ProfileResolver.filterAndMapMetered(series.intervals(), intervalRange,
+        return VolumeFilterMapper.filterAndMapMetered(series.intervals(), intervalRange,
             ref.multiplier(), series.versionId(), series.qualityState(),
-            series.meteringPointId());
+            series.meteringPointId(), np);
     }
 }

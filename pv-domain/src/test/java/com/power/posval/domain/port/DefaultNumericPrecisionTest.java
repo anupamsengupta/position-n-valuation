@@ -38,7 +38,7 @@ class DefaultNumericPrecisionTest {
     void precisionPrice() { assertEquals(20, np.precision(NumericPrecision.Domain.PRICE)); }
 
     @Test
-    void precisionVolume() { assertEquals(18, np.precision(NumericPrecision.Domain.VOLUME)); }
+    void precisionVolume() { assertEquals(20, np.precision(NumericPrecision.Domain.VOLUME)); }
 
     @Test
     void precisionEnergy() { assertEquals(20, np.precision(NumericPrecision.Domain.ENERGY)); }
