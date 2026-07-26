@@ -1,0 +1,863 @@
+PS E:\dev\git\power\position-and-valuation> mvn -pl pv-domain test-compile exec:exec@benchmarks -Dbenchmark=FiveYear
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::staticFieldBase has been called by com.google.inject.internal.aop.HiddenClassDefiner (file:/E:/Programs/apache-maven-3.9.11/lib/guice-5.1.0-classes.jar)
+WARNING: Please consider reporting this to the maintainers of class com.google.inject.internal.aop.HiddenClassDefiner
+WARNING: sun.misc.Unsafe::staticFieldBase will be removed in a future release
+[INFO] Scanning for projects...
+[INFO]
+[INFO] ------------------------< com.power:pv-domain >-------------------------
+[INFO] Building PV Domain-Pure Java 21 0.1.0-SNAPSHOT
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO]
+[INFO] --- resources:3.3.1:resources (default-resources) @ pv-domain ---
+[INFO] Copying 3 resources from src\main\resources to target\classes
+[INFO]
+[INFO] --- compiler:3.13.0:compile (default-compile) @ pv-domain ---
+[INFO] Nothing to compile - all classes are up to date.
+[INFO]
+[INFO] --- resources:3.3.1:testResources (default-testResources) @ pv-domain ---
+[INFO] skip non existing resourceDirectory E:\Dev\git\power\position-and-valuation\pv-domain\src\test\resources
+[INFO]
+[INFO] --- compiler:3.13.0:testCompile (default-testCompile) @ pv-domain ---
+[INFO] Nothing to compile - all classes are up to date.
+[INFO]
+[INFO] --- exec:3.4.1:exec (benchmarks) @ pv-domain ---
+=== JMH Benchmark Runner ===
+Filter: .*FiveYear.*
+
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/C:/Users/Anupam/.m2/repository/org/openjdk/jmh/jmh-core/1.37/jmh-core-1.37.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# JMH version: 1.37
+# VM version: JDK 25.0.1, OpenJDK 64-Bit Server VM, 25.0.1+8-LTS
+# VM invoker: E:\Programs\Java\amazon-corretto-25.0.1.8.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 2 s each
+# Measurement: 5 iterations, 3 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Sampling time
+# Benchmark: com.power.posval.domain.benchmark.FiveYearSettlementBenchmark.materializeFiveYearTrade
+
+# Run progress: 0.00% complete, ETA 00:00:42
+# Fork: 1 of 1
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/C:/Users/Anupam/.m2/repository/org/openjdk/jmh/jmh-core/1.37/jmh-core-1.37.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 3145.728 ms/op
+# Warmup Iteration   2: 2835.350 ms/op
+# Warmup Iteration   3: 2822.767 ms/op
+Iteration   1: 2829.058 ms/op
+                 p0.00:   2822.767 ms/op
+                 p0.50:   2829.058 ms/op
+                 p0.90:   2835.350 ms/op
+                 p0.95:   2835.350 ms/op
+                 p0.99:   2835.350 ms/op
+                 p0.999:  2835.350 ms/op
+                 p0.9999: 2835.350 ms/op
+                 p1.00:   2835.350 ms/op
+
+Iteration   2: 2812.281 ms/op
+                 p0.00:   2797.601 ms/op
+                 p0.50:   2812.281 ms/op
+                 p0.90:   2826.961 ms/op
+                 p0.95:   2826.961 ms/op
+                 p0.99:   2826.961 ms/op
+                 p0.999:  2826.961 ms/op
+                 p0.9999: 2826.961 ms/op
+                 p1.00:   2826.961 ms/op
+
+Iteration   3: 2881.487 ms/op
+                 p0.00:   2835.350 ms/op
+                 p0.50:   2881.487 ms/op
+                 p0.90:   2927.624 ms/op
+                 p0.95:   2927.624 ms/op
+                 p0.99:   2927.624 ms/op
+                 p0.999:  2927.624 ms/op
+                 p0.9999: 2927.624 ms/op
+                 p1.00:   2927.624 ms/op
+
+Iteration   4: 3007.316 ms/op
+                 p0.00:   3007.316 ms/op
+                 p0.50:   3007.316 ms/op
+                 p0.90:   3007.316 ms/op
+                 p0.95:   3007.316 ms/op
+                 p0.99:   3007.316 ms/op
+                 p0.999:  3007.316 ms/op
+                 p0.9999: 3007.316 ms/op
+                 p1.00:   3007.316 ms/op
+
+Iteration   5: 3118.465 ms/op
+                 p0.00:   2952.790 ms/op
+                 p0.50:   3118.465 ms/op
+                 p0.90:   3284.140 ms/op
+                 p0.95:   3284.140 ms/op
+                 p0.99:   3284.140 ms/op
+                 p0.999:  3284.140 ms/op
+                 p0.9999: 3284.140 ms/op
+                 p1.00:   3284.140 ms/op
+
+
+
+Result "com.power.posval.domain.benchmark.FiveYearSettlementBenchmark.materializeFiveYearTrade":
+  N = 9
+  mean =   2921.100 ┬▒(99.9%) 258.132 ms/op
+
+  Histogram, ms/op:
+    [2700.000, 2750.000) = 0
+    [2750.000, 2800.000) = 1
+    [2800.000, 2850.000) = 4
+    [2850.000, 2900.000) = 0
+    [2900.000, 2950.000) = 1
+    [2950.000, 3000.000) = 1
+    [3000.000, 3050.000) = 1
+    [3050.000, 3100.000) = 0
+    [3100.000, 3150.000) = 0
+    [3150.000, 3200.000) = 0
+    [3200.000, 3250.000) = 0
+
+  Percentiles, ms/op:
+      p(0.0000) =   2797.601 ms/op
+     p(50.0000) =   2835.350 ms/op
+     p(90.0000) =   3284.140 ms/op
+     p(95.0000) =   3284.140 ms/op
+     p(99.0000) =   3284.140 ms/op
+     p(99.9000) =   3284.140 ms/op
+     p(99.9900) =   3284.140 ms/op
+     p(99.9990) =   3284.140 ms/op
+     p(99.9999) =   3284.140 ms/op
+    p(100.0000) =   3284.140 ms/op
+
+
+# JMH version: 1.37
+# VM version: JDK 25.0.1, OpenJDK 64-Bit Server VM, 25.0.1+8-LTS
+# VM invoker: E:\Programs\Java\amazon-corretto-25.0.1.8.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 2 s each
+# Measurement: 5 iterations, 3 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Sampling time
+# Benchmark: com.power.posval.domain.benchmark.FiveYearSettlementBenchmark.materializeSingleMonth
+
+# Run progress: 50.00% complete, ETA 00:00:42
+# Fork: 1 of 1
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/C:/Users/Anupam/.m2/repository/org/openjdk/jmh/jmh-core/1.37/jmh-core-1.37.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 29.814 ┬▒(99.9%) 7.812 ms/op
+# Warmup Iteration   2: 23.298 ┬▒(99.9%) 0.903 ms/op
+# Warmup Iteration   3: 23.222 ┬▒(99.9%) 0.915 ms/op
+Iteration   1: 25.208 ┬▒(99.9%) 2.136 ms/op
+                 p0.00:   20.906 ms/op
+                 p0.50:   23.691 ms/op
+                 p0.90:   30.802 ms/op
+                 p0.95:   33.817 ms/op
+                 p0.99:   77.634 ms/op
+                 p0.999:  85.328 ms/op
+                 p0.9999: 85.328 ms/op
+                 p1.00:   85.328 ms/op
+
+Iteration   2: 23.564 ┬▒(99.9%) 0.754 ms/op
+                 p0.00:   20.775 ms/op
+                 p0.50:   22.839 ms/op
+                 p0.90:   26.857 ms/op
+                 p0.95:   29.331 ms/op
+                 p0.99:   31.804 ms/op
+                 p0.999:  32.080 ms/op
+                 p0.9999: 32.080 ms/op
+                 p1.00:   32.080 ms/op
+
+Iteration   3: 23.048 ┬▒(99.9%) 0.716 ms/op
+                 p0.00:   21.004 ms/op
+                 p0.50:   22.118 ms/op
+                 p0.90:   25.579 ms/op
+                 p0.95:   28.174 ms/op
+                 p0.99:   33.176 ms/op
+                 p0.999:  33.260 ms/op
+                 p0.9999: 33.260 ms/op
+                 p1.00:   33.260 ms/op
+
+Iteration   4: 24.312 ┬▒(99.9%) 1.087 ms/op
+                 p0.00:   20.939 ms/op
+                 p0.50:   23.298 ms/op
+                 p0.90:   29.393 ms/op
+                 p0.95:   32.268 ms/op
+                 p0.99:   38.339 ms/op
+                 p0.999:  39.387 ms/op
+                 p0.9999: 39.387 ms/op
+                 p1.00:   39.387 ms/op
+
+Iteration   5: 22.898 ┬▒(99.9%) 0.599 ms/op
+                 p0.00:   20.644 ms/op
+                 p0.50:   22.184 ms/op
+                 p0.90:   25.628 ms/op
+                 p0.95:   27.066 ms/op
+                 p0.99:   30.982 ms/op
+                 p0.999:  31.490 ms/op
+                 p0.9999: 31.490 ms/op
+                 p1.00:   31.490 ms/op
+
+
+
+Result "com.power.posval.domain.benchmark.FiveYearSettlementBenchmark.materializeSingleMonth":
+  N = 634
+  mean =     23.774 ┬▒(99.9%) 0.517 ms/op
+
+  Histogram, ms/op:
+    [20.000, 25.000) = 487
+    [25.000, 30.000) = 115
+    [30.000, 35.000) = 25
+    [35.000, 40.000) = 5
+    [40.000, 45.000) = 0
+    [45.000, 50.000) = 1
+    [50.000, 55.000) = 0
+    [55.000, 60.000) = 0
+    [60.000, 65.000) = 0
+    [65.000, 70.000) = 0
+    [70.000, 75.000) = 0
+    [75.000, 80.000) = 0
+    [80.000, 85.000) = 0
+
+  Percentiles, ms/op:
+      p(0.0000) =     20.644 ms/op
+     p(50.0000) =     22.708 ms/op
+     p(90.0000) =     27.640 ms/op
+     p(95.0000) =     30.343 ms/op
+     p(99.0000) =     35.147 ms/op
+     p(99.9000) =     85.328 ms/op
+     p(99.9900) =     85.328 ms/op
+     p(99.9990) =     85.328 ms/op
+     p(99.9999) =     85.328 ms/op
+    p(100.0000) =     85.328 ms/op
+
+
+# Run complete. Total time: 00:01:10
+
+REMEMBER: The numbers below are just data. To gain reusable insights, you need to follow up on
+why the numbers are the way they are. Use profilers (see -prof, -lprof), design factorial
+experiments, perform baseline and negative tests that provide experimental control, make sure
+the benchmarking environment is safe on JVM/OS/HW level, ask for reviews from the domain experts.
+Do not assume the numbers tell you what you want them to tell.
+
+NOTE: Current JVM experimentally supports Compiler Blackholes, and they are in use. Please exercise
+extra caution when trusting the results, look into the generated code to check the benchmark still
+works, and factor in a small probability of new VM bugs. Additionally, while comparisons between
+different JVMs are already problematic, the performance difference caused by different Blackhole
+modes can be very significant. Please make sure you use the consistent Blackhole mode for comparisons.
+
+Benchmark                                                       Mode  Cnt     Score     Error  Units
+FiveYearSettlementBenchmark.materializeFiveYearTrade          sample    9  2921.100 ┬▒ 258.132  ms/op
+FiveYearSettlementBenchmark.materializeFiveYearTrade:p0.00    sample       2797.601            ms/op
+FiveYearSettlementBenchmark.materializeFiveYearTrade:p0.50    sample       2835.350            ms/op
+FiveYearSettlementBenchmark.materializeFiveYearTrade:p0.90    sample       3284.140            ms/op
+FiveYearSettlementBenchmark.materializeFiveYearTrade:p0.95    sample       3284.140            ms/op
+FiveYearSettlementBenchmark.materializeFiveYearTrade:p0.99    sample       3284.140            ms/op
+FiveYearSettlementBenchmark.materializeFiveYearTrade:p0.999   sample       3284.140            ms/op
+FiveYearSettlementBenchmark.materializeFiveYearTrade:p0.9999  sample       3284.140            ms/op
+FiveYearSettlementBenchmark.materializeFiveYearTrade:p1.00    sample       3284.140            ms/op
+FiveYearSettlementBenchmark.materializeSingleMonth            sample  634    23.774 ┬▒   0.517  ms/op
+FiveYearSettlementBenchmark.materializeSingleMonth:p0.00      sample         20.644            ms/op
+FiveYearSettlementBenchmark.materializeSingleMonth:p0.50      sample         22.708            ms/op
+FiveYearSettlementBenchmark.materializeSingleMonth:p0.90      sample         27.640            ms/op
+FiveYearSettlementBenchmark.materializeSingleMonth:p0.95      sample         30.343            ms/op
+FiveYearSettlementBenchmark.materializeSingleMonth:p0.99      sample         35.147            ms/op
+FiveYearSettlementBenchmark.materializeSingleMonth:p0.999     sample         85.328            ms/op
+FiveYearSettlementBenchmark.materializeSingleMonth:p0.9999    sample         85.328            ms/op
+FiveYearSettlementBenchmark.materializeSingleMonth:p1.00      sample         85.328            ms/op
+
+Benchmark result is saved to target/jmh-results.json
+
+=== Done: 2 benchmark(s) completed ===
+JSON results saved to: E:\Dev\git\power\position-and-valuation\pv-domain\target\jmh-results.json
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  01:12 min
+[INFO] Finished at: 2026-07-25T22:06:44+05:30
+[INFO] ------------------------------------------------------------------------
+PS E:\dev\git\power\position-and-valuation> mvn -pl pv-domain test-compile exec:exec@benchmarks -Dbenchmark=FiveYear
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::staticFieldBase has been called by com.google.inject.internal.aop.HiddenClassDefiner (file:/E:/Programs/apache-maven-3.9.11/lib/guice-5.1.0-classes.jar)
+WARNING: Please consider reporting this to the maintainers of class com.google.inject.internal.aop.HiddenClassDefiner
+WARNING: sun.misc.Unsafe::staticFieldBase will be removed in a future release
+[INFO] Scanning for projects...
+[INFO]
+[INFO] ------------------------< com.power:pv-domain >-------------------------
+[INFO] Building PV Domain-Pure Java 21 0.1.0-SNAPSHOT
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO]
+[INFO] --- resources:3.3.1:resources (default-resources) @ pv-domain ---
+[INFO] Copying 3 resources from src\main\resources to target\classes
+[INFO]
+[INFO] --- compiler:3.13.0:compile (default-compile) @ pv-domain ---
+[INFO] Nothing to compile - all classes are up to date.
+[INFO]
+[INFO] --- resources:3.3.1:testResources (default-testResources) @ pv-domain ---
+[INFO] skip non existing resourceDirectory E:\Dev\git\power\position-and-valuation\pv-domain\src\test\resources
+[INFO]
+[INFO] --- compiler:3.13.0:testCompile (default-testCompile) @ pv-domain ---
+[INFO] Nothing to compile - all classes are up to date.
+[INFO]
+[INFO] --- exec:3.4.1:exec (benchmarks) @ pv-domain ---
+=== JMH Benchmark Runner ===
+Filter: .*FiveYear.*
+
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/C:/Users/Anupam/.m2/repository/org/openjdk/jmh/jmh-core/1.37/jmh-core-1.37.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# JMH version: 1.37
+# VM version: JDK 25.0.1, OpenJDK 64-Bit Server VM, 25.0.1+8-LTS
+# VM invoker: E:\Programs\Java\amazon-corretto-25.0.1.8.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 2 s each
+# Measurement: 5 iterations, 3 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Sampling time
+# Benchmark: com.power.posval.domain.benchmark.FiveYearSettlementBenchmark.materializeFiveYearTrade
+
+# Run progress: 0.00% complete, ETA 00:00:42
+# Fork: 1 of 1
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/C:/Users/Anupam/.m2/repository/org/openjdk/jmh/jmh-core/1.37/jmh-core-1.37.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 3149.922 ms/op
+# Warmup Iteration   2: 2881.487 ms/op
+# Warmup Iteration   3: 2780.824 ms/op
+Iteration   1: 2793.406 ms/op
+                 p0.00:   2789.212 ms/op
+                 p0.50:   2793.406 ms/op
+                 p0.90:   2797.601 ms/op
+                 p0.95:   2797.601 ms/op
+                 p0.99:   2797.601 ms/op
+                 p0.999:  2797.601 ms/op
+                 p0.9999: 2797.601 ms/op
+                 p1.00:   2797.601 ms/op
+
+Iteration   2: 2824.864 ms/op
+                 p0.00:   2789.212 ms/op
+                 p0.50:   2824.864 ms/op
+                 p0.90:   2860.515 ms/op
+                 p0.95:   2860.515 ms/op
+                 p0.99:   2860.515 ms/op
+                 p0.999:  2860.515 ms/op
+                 p0.9999: 2860.515 ms/op
+                 p1.00:   2860.515 ms/op
+
+Iteration   3: 2812.281 ms/op
+                 p0.00:   2801.795 ms/op
+                 p0.50:   2812.281 ms/op
+                 p0.90:   2822.767 ms/op
+                 p0.95:   2822.767 ms/op
+                 p0.99:   2822.767 ms/op
+                 p0.999:  2822.767 ms/op
+                 p0.9999: 2822.767 ms/op
+                 p1.00:   2822.767 ms/op
+
+Iteration   4: 2797.601 ms/op
+                 p0.00:   2797.601 ms/op
+                 p0.50:   2797.601 ms/op
+                 p0.90:   2797.601 ms/op
+                 p0.95:   2797.601 ms/op
+                 p0.99:   2797.601 ms/op
+                 p0.999:  2797.601 ms/op
+                 p0.9999: 2797.601 ms/op
+                 p1.00:   2797.601 ms/op
+
+Iteration   5: 2793.406 ms/op
+                 p0.00:   2793.406 ms/op
+                 p0.50:   2793.406 ms/op
+                 p0.90:   2793.406 ms/op
+                 p0.95:   2793.406 ms/op
+                 p0.99:   2793.406 ms/op
+                 p0.999:  2793.406 ms/op
+                 p0.9999: 2793.406 ms/op
+                 p1.00:   2793.406 ms/op
+
+
+
+Result "com.power.posval.domain.benchmark.FiveYearSettlementBenchmark.materializeFiveYearTrade":
+  N = 10
+  mean =   2804.312 ┬▒(99.9%) 33.179 ms/op
+
+  Histogram, ms/op:
+    [2780.000, 2785.000) = 0
+    [2785.000, 2790.000) = 2
+    [2790.000, 2795.000) = 2
+    [2795.000, 2800.000) = 3
+    [2800.000, 2805.000) = 1
+    [2805.000, 2810.000) = 0
+    [2810.000, 2815.000) = 0
+    [2815.000, 2820.000) = 0
+    [2820.000, 2825.000) = 1
+    [2825.000, 2830.000) = 0
+    [2830.000, 2835.000) = 0
+    [2835.000, 2840.000) = 0
+    [2840.000, 2845.000) = 0
+    [2845.000, 2850.000) = 0
+    [2850.000, 2855.000) = 0
+    [2855.000, 2860.000) = 0
+    [2860.000, 2865.000) = 1
+
+  Percentiles, ms/op:
+      p(0.0000) =   2789.212 ms/op
+     p(50.0000) =   2797.601 ms/op
+     p(90.0000) =   2856.740 ms/op
+     p(95.0000) =   2860.515 ms/op
+     p(99.0000) =   2860.515 ms/op
+     p(99.9000) =   2860.515 ms/op
+     p(99.9900) =   2860.515 ms/op
+     p(99.9990) =   2860.515 ms/op
+     p(99.9999) =   2860.515 ms/op
+    p(100.0000) =   2860.515 ms/op
+
+
+# JMH version: 1.37
+# VM version: JDK 25.0.1, OpenJDK 64-Bit Server VM, 25.0.1+8-LTS
+# VM invoker: E:\Programs\Java\amazon-corretto-25.0.1.8.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 2 s each
+# Measurement: 5 iterations, 3 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Sampling time
+# Benchmark: com.power.posval.domain.benchmark.FiveYearSettlementBenchmark.materializeSingleMonth
+
+# Run progress: 50.00% complete, ETA 00:00:43
+# Fork: 1 of 1
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/C:/Users/Anupam/.m2/repository/org/openjdk/jmh/jmh-core/1.37/jmh-core-1.37.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 28.244 ┬▒(99.9%) 7.582 ms/op
+# Warmup Iteration   2: 22.808 ┬▒(99.9%) 0.917 ms/op
+# Warmup Iteration   3: 22.011 ┬▒(99.9%) 0.572 ms/op
+Iteration   1: 22.700 ┬▒(99.9%) 0.639 ms/op
+                 p0.00:   20.644 ms/op
+                 p0.50:   21.823 ms/op
+                 p0.90:   25.992 ms/op
+                 p0.95:   28.272 ms/op
+                 p0.99:   31.273 ms/op
+                 p0.999:  31.752 ms/op
+                 p0.9999: 31.752 ms/op
+                 p1.00:   31.752 ms/op
+
+Iteration   2: 21.686 ┬▒(99.9%) 0.424 ms/op
+                 p0.00:   20.414 ms/op
+                 p0.50:   21.299 ms/op
+                 p0.90:   23.101 ms/op
+                 p0.95:   24.543 ms/op
+                 p0.99:   29.576 ms/op
+                 p0.999:  31.031 ms/op
+                 p0.9999: 31.031 ms/op
+                 p1.00:   31.031 ms/op
+
+Iteration   3: 21.813 ┬▒(99.9%) 0.403 ms/op
+                 p0.00:   20.414 ms/op
+                 p0.50:   21.430 ms/op
+                 p0.90:   23.803 ms/op
+                 p0.95:   25.017 ms/op
+                 p0.99:   26.705 ms/op
+                 p0.999:  27.165 ms/op
+                 p0.9999: 27.165 ms/op
+                 p1.00:   27.165 ms/op
+
+Iteration   4: 21.424 ┬▒(99.9%) 0.294 ms/op
+                 p0.00:   20.382 ms/op
+                 p0.50:   21.021 ms/op
+                 p0.90:   22.803 ms/op
+                 p0.95:   23.688 ms/op
+                 p0.99:   25.362 ms/op
+                 p0.999:  26.182 ms/op
+                 p0.9999: 26.182 ms/op
+                 p1.00:   26.182 ms/op
+
+Iteration   5: 21.473 ┬▒(99.9%) 0.311 ms/op
+                 p0.00:   20.447 ms/op
+                 p0.50:   21.037 ms/op
+                 p0.90:   22.924 ms/op
+                 p0.95:   23.719 ms/op
+                 p0.99:   26.161 ms/op
+                 p0.999:  26.214 ms/op
+                 p0.9999: 26.214 ms/op
+                 p1.00:   26.214 ms/op
+
+
+
+Result "com.power.posval.domain.benchmark.FiveYearSettlementBenchmark.materializeSingleMonth":
+  N = 690
+  mean =     21.811 ┬▒(99.9%) 0.196 ms/op
+
+  Histogram, ms/op:
+    [20.000, 21.250) = 320
+    [21.250, 22.500) = 201
+    [22.500, 23.750) = 103
+    [23.750, 25.000) = 32
+    [25.000, 26.250) = 21
+    [26.250, 27.500) = 4
+    [27.500, 28.750) = 6
+    [28.750, 30.000) = 0
+    [30.000, 31.250) = 2
+    [31.250, 32.500) = 1
+    [32.500, 33.750) = 0
+    [33.750, 35.000) = 0
+    [35.000, 36.250) = 0
+    [36.250, 37.500) = 0
+    [37.500, 38.750) = 0
+
+  Percentiles, ms/op:
+      p(0.0000) =     20.382 ms/op
+     p(50.0000) =     21.365 ms/op
+     p(90.0000) =     23.688 ms/op
+     p(95.0000) =     24.912 ms/op
+     p(99.0000) =     28.413 ms/op
+     p(99.9000) =     31.752 ms/op
+     p(99.9900) =     31.752 ms/op
+     p(99.9990) =     31.752 ms/op
+     p(99.9999) =     31.752 ms/op
+    p(100.0000) =     31.752 ms/op
+
+
+# Run complete. Total time: 00:01:12
+
+REMEMBER: The numbers below are just data. To gain reusable insights, you need to follow up on
+why the numbers are the way they are. Use profilers (see -prof, -lprof), design factorial
+experiments, perform baseline and negative tests that provide experimental control, make sure
+the benchmarking environment is safe on JVM/OS/HW level, ask for reviews from the domain experts.
+Do not assume the numbers tell you what you want them to tell.
+
+NOTE: Current JVM experimentally supports Compiler Blackholes, and they are in use. Please exercise
+extra caution when trusting the results, look into the generated code to check the benchmark still
+works, and factor in a small probability of new VM bugs. Additionally, while comparisons between
+different JVMs are already problematic, the performance difference caused by different Blackhole
+modes can be very significant. Please make sure you use the consistent Blackhole mode for comparisons.
+
+Benchmark                                                       Mode  Cnt     Score    Error  Units
+FiveYearSettlementBenchmark.materializeFiveYearTrade          sample   10  2804.312 ┬▒ 33.179  ms/op
+FiveYearSettlementBenchmark.materializeFiveYearTrade:p0.00    sample       2789.212           ms/op
+FiveYearSettlementBenchmark.materializeFiveYearTrade:p0.50    sample       2797.601           ms/op
+FiveYearSettlementBenchmark.materializeFiveYearTrade:p0.90    sample       2856.740           ms/op
+FiveYearSettlementBenchmark.materializeFiveYearTrade:p0.95    sample       2860.515           ms/op
+FiveYearSettlementBenchmark.materializeFiveYearTrade:p0.99    sample       2860.515           ms/op
+FiveYearSettlementBenchmark.materializeFiveYearTrade:p0.999   sample       2860.515           ms/op
+FiveYearSettlementBenchmark.materializeFiveYearTrade:p0.9999  sample       2860.515           ms/op
+FiveYearSettlementBenchmark.materializeFiveYearTrade:p1.00    sample       2860.515           ms/op
+FiveYearSettlementBenchmark.materializeSingleMonth            sample  690    21.811 ┬▒  0.196  ms/op
+FiveYearSettlementBenchmark.materializeSingleMonth:p0.00      sample         20.382           ms/op
+FiveYearSettlementBenchmark.materializeSingleMonth:p0.50      sample         21.365           ms/op
+FiveYearSettlementBenchmark.materializeSingleMonth:p0.90      sample         23.688           ms/op
+FiveYearSettlementBenchmark.materializeSingleMonth:p0.95      sample         24.912           ms/op
+FiveYearSettlementBenchmark.materializeSingleMonth:p0.99      sample         28.413           ms/op
+FiveYearSettlementBenchmark.materializeSingleMonth:p0.999     sample         31.752           ms/op
+FiveYearSettlementBenchmark.materializeSingleMonth:p0.9999    sample         31.752           ms/op
+FiveYearSettlementBenchmark.materializeSingleMonth:p1.00      sample         31.752           ms/op
+
+Benchmark result is saved to target/jmh-results.json
+
+=== Done: 2 benchmark(s) completed ===
+JSON results saved to: E:\Dev\git\power\position-and-valuation\pv-domain\target\jmh-results.json
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  01:14 min
+[INFO] Finished at: 2026-07-25T22:14:15+05:30
+[INFO] ------------------------------------------------------------------------
+PS E:\dev\git\power\position-and-valuation> mvn -pl pv-domain test-compile exec:exec@benchmarks -Dbenchmark=FiveYear
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::staticFieldBase has been called by com.google.inject.internal.aop.HiddenClassDefiner (file:/E:/Programs/apache-maven-3.9.11/lib/guice-5.1.0-classes.jar)
+WARNING: Please consider reporting this to the maintainers of class com.google.inject.internal.aop.HiddenClassDefiner
+WARNING: sun.misc.Unsafe::staticFieldBase will be removed in a future release
+[INFO] Scanning for projects...
+[INFO]
+[INFO] ------------------------< com.power:pv-domain >-------------------------
+[INFO] Building PV Domain-Pure Java 21 0.1.0-SNAPSHOT
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO]
+[INFO] --- resources:3.3.1:resources (default-resources) @ pv-domain ---
+[INFO] Copying 3 resources from src\main\resources to target\classes
+[INFO]
+[INFO] --- compiler:3.13.0:compile (default-compile) @ pv-domain ---
+[INFO] Nothing to compile - all classes are up to date.
+[INFO]
+[INFO] --- resources:3.3.1:testResources (default-testResources) @ pv-domain ---
+[INFO] skip non existing resourceDirectory E:\Dev\git\power\position-and-valuation\pv-domain\src\test\resources
+[INFO]
+[INFO] --- compiler:3.13.0:testCompile (default-testCompile) @ pv-domain ---
+[INFO] Nothing to compile - all classes are up to date.
+[INFO]
+[INFO] --- exec:3.4.1:exec (benchmarks) @ pv-domain ---
+=== JMH Benchmark Runner ===
+Filter: .*FiveYear.*
+
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/C:/Users/Anupam/.m2/repository/org/openjdk/jmh/jmh-core/1.37/jmh-core-1.37.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# JMH version: 1.37
+# VM version: JDK 25.0.1, OpenJDK 64-Bit Server VM, 25.0.1+8-LTS
+# VM invoker: E:\Programs\Java\amazon-corretto-25.0.1.8.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 2 s each
+# Measurement: 5 iterations, 3 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Sampling time
+# Benchmark: com.power.posval.domain.benchmark.FiveYearSettlementBenchmark.materializeFiveYearTrade
+
+# Run progress: 0.00% complete, ETA 00:00:42
+# Fork: 1 of 1
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/C:/Users/Anupam/.m2/repository/org/openjdk/jmh/jmh-core/1.37/jmh-core-1.37.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 3212.837 ms/op
+# Warmup Iteration   2: 2835.350 ms/op
+# Warmup Iteration   3: 2856.321 ms/op
+Iteration   1: 2898.264 ms/op
+                 p0.00:   2856.321 ms/op
+                 p0.50:   2898.264 ms/op
+                 p0.90:   2940.207 ms/op
+                 p0.95:   2940.207 ms/op
+                 p0.99:   2940.207 ms/op
+                 p0.999:  2940.207 ms/op
+                 p0.9999: 2940.207 ms/op
+                 p1.00:   2940.207 ms/op
+
+Iteration   2: 2891.973 ms/op
+                 p0.00:   2847.932 ms/op
+                 p0.50:   2891.973 ms/op
+                 p0.90:   2936.013 ms/op
+                 p0.95:   2936.013 ms/op
+                 p0.99:   2936.013 ms/op
+                 p0.999:  2936.013 ms/op
+                 p0.9999: 2936.013 ms/op
+                 p1.00:   2936.013 ms/op
+
+Iteration   3: 2900.361 ms/op
+                 p0.00:   2885.681 ms/op
+                 p0.50:   2900.361 ms/op
+                 p0.90:   2915.041 ms/op
+                 p0.95:   2915.041 ms/op
+                 p0.99:   2915.041 ms/op
+                 p0.999:  2915.041 ms/op
+                 p0.9999: 2915.041 ms/op
+                 p1.00:   2915.041 ms/op
+
+Iteration   4: 2891.973 ms/op
+                 p0.00:   2852.127 ms/op
+                 p0.50:   2891.973 ms/op
+                 p0.90:   2931.818 ms/op
+                 p0.95:   2931.818 ms/op
+                 p0.99:   2931.818 ms/op
+                 p0.999:  2931.818 ms/op
+                 p0.9999: 2931.818 ms/op
+                 p1.00:   2931.818 ms/op
+
+Iteration   5: 2879.390 ms/op
+                 p0.00:   2831.155 ms/op
+                 p0.50:   2879.390 ms/op
+                 p0.90:   2927.624 ms/op
+                 p0.95:   2927.624 ms/op
+                 p0.99:   2927.624 ms/op
+                 p0.999:  2927.624 ms/op
+                 p0.9999: 2927.624 ms/op
+                 p1.00:   2927.624 ms/op
+
+
+
+Result "com.power.posval.domain.benchmark.FiveYearSettlementBenchmark.materializeFiveYearTrade":
+  N = 10
+  mean =   2892.392 ┬▒(99.9%) 64.127 ms/op
+
+  Histogram, ms/op:
+    [2800.000, 2812.500) = 0
+    [2812.500, 2825.000) = 0
+    [2825.000, 2837.500) = 1
+    [2837.500, 2850.000) = 1
+    [2850.000, 2862.500) = 2
+    [2862.500, 2875.000) = 0
+    [2875.000, 2887.500) = 1
+    [2887.500, 2900.000) = 0
+    [2900.000, 2912.500) = 0
+    [2912.500, 2925.000) = 1
+    [2925.000, 2937.500) = 3
+    [2937.500, 2950.000) = 1
+    [2950.000, 2962.500) = 0
+    [2962.500, 2975.000) = 0
+    [2975.000, 2987.500) = 0
+
+  Percentiles, ms/op:
+      p(0.0000) =   2831.155 ms/op
+     p(50.0000) =   2900.361 ms/op
+     p(90.0000) =   2939.788 ms/op
+     p(95.0000) =   2940.207 ms/op
+     p(99.0000) =   2940.207 ms/op
+     p(99.9000) =   2940.207 ms/op
+     p(99.9900) =   2940.207 ms/op
+     p(99.9990) =   2940.207 ms/op
+     p(99.9999) =   2940.207 ms/op
+    p(100.0000) =   2940.207 ms/op
+
+
+# JMH version: 1.37
+# VM version: JDK 25.0.1, OpenJDK 64-Bit Server VM, 25.0.1+8-LTS
+# VM invoker: E:\Programs\Java\amazon-corretto-25.0.1.8.1\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 2 s each
+# Measurement: 5 iterations, 3 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Sampling time
+# Benchmark: com.power.posval.domain.benchmark.FiveYearSettlementBenchmark.materializeSingleMonth
+
+# Run progress: 50.00% complete, ETA 00:00:44
+# Fork: 1 of 1
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/C:/Users/Anupam/.m2/repository/org/openjdk/jmh/jmh-core/1.37/jmh-core-1.37.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: 25.763 ┬▒(99.9%) 6.667 ms/op
+# Warmup Iteration   2: 22.120 ┬▒(99.9%) 0.567 ms/op
+# Warmup Iteration   3: 21.569 ┬▒(99.9%) 0.364 ms/op
+Iteration   1: 21.615 ┬▒(99.9%) 0.280 ms/op
+                 p0.00:   20.382 ms/op
+                 p0.50:   21.398 ms/op
+                 p0.90:   23.331 ms/op
+                 p0.95:   23.626 ms/op
+                 p0.99:   24.838 ms/op
+                 p0.999:  25.100 ms/op
+                 p0.9999: 25.100 ms/op
+                 p1.00:   25.100 ms/op
+
+Iteration   2: 21.623 ┬▒(99.9%) 0.304 ms/op
+                 p0.00:   20.414 ms/op
+                 p0.50:   21.332 ms/op
+                 p0.90:   23.331 ms/op
+                 p0.95:   23.888 ms/op
+                 p0.99:   24.635 ms/op
+                 p0.999:  24.805 ms/op
+                 p0.9999: 24.805 ms/op
+                 p1.00:   24.805 ms/op
+
+Iteration   3: 21.896 ┬▒(99.9%) 0.423 ms/op
+                 p0.00:   20.414 ms/op
+                 p0.50:   21.430 ms/op
+                 p0.90:   23.829 ms/op
+                 p0.95:   24.904 ms/op
+                 p0.99:   27.564 ms/op
+                 p0.999:  27.689 ms/op
+                 p0.9999: 27.689 ms/op
+                 p1.00:   27.689 ms/op
+
+Iteration   4: 22.318 ┬▒(99.9%) 0.636 ms/op
+                 p0.00:   20.382 ms/op
+                 p0.50:   21.529 ms/op
+                 p0.90:   24.576 ms/op
+                 p0.95:   26.542 ms/op
+                 p0.99:   32.596 ms/op
+                 p0.999:  33.292 ms/op
+                 p0.9999: 33.292 ms/op
+                 p1.00:   33.292 ms/op
+
+Iteration   5: 29.593 ┬▒(99.9%) 3.423 ms/op
+                 p0.00:   21.070 ms/op
+                 p0.50:   26.804 ms/op
+                 p0.90:   39.374 ms/op
+                 p0.95:   52.173 ms/op
+                 p0.99:   73.981 ms/op
+                 p0.999:  74.056 ms/op
+                 p0.9999: 74.056 ms/op
+                 p1.00:   74.056 ms/op
+
+
+
+Result "com.power.posval.domain.benchmark.FiveYearSettlementBenchmark.materializeSingleMonth":
+  N = 652
+  mean =     23.069 ┬▒(99.9%) 0.660 ms/op
+
+  Histogram, ms/op:
+    [20.000, 25.000) = 568
+    [25.000, 30.000) = 51
+    [30.000, 35.000) = 16
+    [35.000, 40.000) = 8
+    [40.000, 45.000) = 2
+    [45.000, 50.000) = 1
+    [50.000, 55.000) = 3
+    [55.000, 60.000) = 0
+    [60.000, 65.000) = 0
+    [65.000, 70.000) = 0
+    [70.000, 75.000) = 3
+
+  Percentiles, ms/op:
+      p(0.0000) =     20.382 ms/op
+     p(50.0000) =     21.627 ms/op
+     p(90.0000) =     26.155 ms/op
+     p(95.0000) =     30.595 ms/op
+     p(99.0000) =     48.745 ms/op
+     p(99.9000) =     74.056 ms/op
+     p(99.9900) =     74.056 ms/op
+     p(99.9990) =     74.056 ms/op
+     p(99.9999) =     74.056 ms/op
+    p(100.0000) =     74.056 ms/op
+
+
+# Run complete. Total time: 00:01:13
+
+REMEMBER: The numbers below are just data. To gain reusable insights, you need to follow up on
+why the numbers are the way they are. Use profilers (see -prof, -lprof), design factorial
+experiments, perform baseline and negative tests that provide experimental control, make sure
+the benchmarking environment is safe on JVM/OS/HW level, ask for reviews from the domain experts.
+Do not assume the numbers tell you what you want them to tell.
+
+NOTE: Current JVM experimentally supports Compiler Blackholes, and they are in use. Please exercise
+extra caution when trusting the results, look into the generated code to check the benchmark still
+works, and factor in a small probability of new VM bugs. Additionally, while comparisons between
+different JVMs are already problematic, the performance difference caused by different Blackhole
+modes can be very significant. Please make sure you use the consistent Blackhole mode for comparisons.
+
+Benchmark                                                       Mode  Cnt     Score    Error  Units
+FiveYearSettlementBenchmark.materializeFiveYearTrade          sample   10  2892.392 ┬▒ 64.127  ms/op
+FiveYearSettlementBenchmark.materializeFiveYearTrade:p0.00    sample       2831.155           ms/op
+FiveYearSettlementBenchmark.materializeFiveYearTrade:p0.50    sample       2900.361           ms/op
+FiveYearSettlementBenchmark.materializeFiveYearTrade:p0.90    sample       2939.788           ms/op
+FiveYearSettlementBenchmark.materializeFiveYearTrade:p0.95    sample       2940.207           ms/op
+FiveYearSettlementBenchmark.materializeFiveYearTrade:p0.99    sample       2940.207           ms/op
+FiveYearSettlementBenchmark.materializeFiveYearTrade:p0.999   sample       2940.207           ms/op
+FiveYearSettlementBenchmark.materializeFiveYearTrade:p0.9999  sample       2940.207           ms/op
+FiveYearSettlementBenchmark.materializeFiveYearTrade:p1.00    sample       2940.207           ms/op
+FiveYearSettlementBenchmark.materializeSingleMonth            sample  652    23.069 ┬▒  0.660  ms/op
+FiveYearSettlementBenchmark.materializeSingleMonth:p0.00      sample         20.382           ms/op
+FiveYearSettlementBenchmark.materializeSingleMonth:p0.50      sample         21.627           ms/op
+FiveYearSettlementBenchmark.materializeSingleMonth:p0.90      sample         26.155           ms/op
+FiveYearSettlementBenchmark.materializeSingleMonth:p0.95      sample         30.595           ms/op
+FiveYearSettlementBenchmark.materializeSingleMonth:p0.99      sample         48.745           ms/op
+FiveYearSettlementBenchmark.materializeSingleMonth:p0.999     sample         74.056           ms/op
+FiveYearSettlementBenchmark.materializeSingleMonth:p0.9999    sample         74.056           ms/op
+FiveYearSettlementBenchmark.materializeSingleMonth:p1.00      sample         74.056           ms/op
+
+Benchmark result is saved to target/jmh-results.json
+
+=== Done: 2 benchmark(s) completed ===
+JSON results saved to: E:\Dev\git\power\position-and-valuation\pv-domain\target\jmh-results.json
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  01:15 min
+[INFO] Finished at: 2026-07-25T22:25:07+05:30
+[INFO] ------------------------------------------------------------------------
+PS E:\dev\git\power\position-and-valuation>

@@ -18,20 +18,28 @@ import java.util.regex.Pattern;
  * JSON-resource-backed stub for MarketDataPort.
  * Loads fixings, forward curves, indices, and FX rates from classpath:stub/market-data.json.
  * Swappable for a real market data service later.
+ *
+ * <p>Internal keys use {@code long} epoch-millis instead of {@link Instant} objects.
+ * This avoids per-lookup object allocation and gives faster hash/compare:
+ * <ul>
+ *   <li>HashMap: {@code Long.hashCode()} = single XOR vs {@code Instant.hashCode()} = field access + XOR</li>
+ *   <li>TreeMap: {@code Long.compare()} = single CPU instruction vs {@code Instant.compareTo()} = two-field compare</li>
+ *   <li>Memory: boxed Long = 24 bytes vs Instant = 32 bytes per key</li>
+ * </ul>
  */
 @Singleton
 public class JsonMarketDataPort implements MarketDataPort {
 
     private static final String RESOURCE = "stub/market-data.json";
 
-    // series -> instant -> value
-    private final Map<String, Map<Instant, BigDecimal>> fixings;
-    // series -> pillar -> asOfDate -> value
-    private final Map<String, Map<String, Map<Instant, BigDecimal>>> forwardCurves;
+    // series -> epochMillis -> value (HashMap: exact-match lookup, O(1))
+    private final Map<String, Map<Long, BigDecimal>> fixings;
+    // series -> pillar -> epochMillis -> value (TreeMap: floorEntry lookup, O(log n))
+    private final Map<String, Map<String, TreeMap<Long, BigDecimal>>> forwardCurves;
     // series -> refMonth -> value
     private final Map<String, Map<String, BigDecimal>> indices;
-    // pair -> instant -> rate
-    private final Map<String, Map<Instant, BigDecimal>> fxRates;
+    // pair -> epochMillis -> rate (TreeMap: floorEntry lookup, O(log n))
+    private final Map<String, TreeMap<Long, BigDecimal>> fxRates;
 
     public JsonMarketDataPort() {
         String json = readResource();
@@ -44,7 +52,7 @@ public class JsonMarketDataPort implements MarketDataPort {
     @Override
     public MarketDataLookup lookupFixing(String series, Instant intervalStart) {
         var seriesData = fixings.getOrDefault(series, Map.of());
-        BigDecimal value = seriesData.getOrDefault(intervalStart, BigDecimal.ZERO);
+        BigDecimal value = seriesData.getOrDefault(intervalStart.toEpochMilli(), BigDecimal.ZERO);
         return new MarketDataLookup(value, 1L, series, intervalStart, QualityState.VALIDATED);
     }
 
@@ -59,25 +67,25 @@ public class JsonMarketDataPort implements MarketDataPort {
     @Override
     public MarketDataLookup lookupForwardCurve(String series, YearMonth pillar, Instant asOfDate) {
         var seriesData = forwardCurves.getOrDefault(series, Map.of());
-        var pillarData = seriesData.getOrDefault(pillar.toString(), Map.of());
-        // Find the latest as-of date <= asOfDate
-        BigDecimal value = pillarData.entrySet().stream()
-            .filter(e -> !e.getKey().isAfter(asOfDate))
-            .max(Comparator.comparing(Map.Entry::getKey))
-            .map(Map.Entry::getValue)
-            .orElse(BigDecimal.ZERO);
+        var pillarData = seriesData.get(pillar.toString());
+        // O(log n) — binary search on long keys for latest as-of date <= asOfDate
+        BigDecimal value = BigDecimal.ZERO;
+        if (pillarData != null) {
+            var floor = pillarData.floorEntry(asOfDate.toEpochMilli());
+            if (floor != null) value = floor.getValue();
+        }
         return new MarketDataLookup(value, 1L, series, asOfDate, QualityState.VALIDATED);
     }
 
     @Override
     public MarketDataLookup lookupFxRate(String currencyPair, Instant referenceDate) {
-        var pairData = fxRates.getOrDefault(currencyPair, Map.of());
-        // Find the latest rate <= referenceDate
-        BigDecimal rate = pairData.entrySet().stream()
-            .filter(e -> !e.getKey().isAfter(referenceDate))
-            .max(Comparator.comparing(Map.Entry::getKey))
-            .map(Map.Entry::getValue)
-            .orElse(BigDecimal.ONE);
+        var pairData = fxRates.get(currencyPair);
+        // O(log n) — binary search on long keys for latest rate <= referenceDate
+        BigDecimal rate = BigDecimal.ONE;
+        if (pairData != null) {
+            var floor = pairData.floorEntry(referenceDate.toEpochMilli());
+            if (floor != null) rate = floor.getValue();
+        }
         return new MarketDataLookup(rate, 1L, currencyPair, referenceDate, QualityState.VALIDATED);
     }
 
@@ -97,37 +105,37 @@ public class JsonMarketDataPort implements MarketDataPort {
         }
     }
 
-    private Map<String, Map<Instant, BigDecimal>> parseFixings(String json) {
-        var result = new HashMap<String, Map<Instant, BigDecimal>>();
+    private Map<String, Map<Long, BigDecimal>> parseFixings(String json) {
+        var result = new HashMap<String, Map<Long, BigDecimal>>();
         String fixingsBlock = extractObject(json, "fixings");
         for (String seriesName : extractKeys(fixingsBlock)) {
             String seriesBlock = extractObject(fixingsBlock, seriesName);
-            var seriesMap = new HashMap<Instant, BigDecimal>();
+            var seriesMap = new HashMap<Long, BigDecimal>();
             for (var entry : extractKeyValuePairs(seriesBlock)) {
-                seriesMap.put(Instant.parse(entry.getKey()), new BigDecimal(entry.getValue()));
+                seriesMap.put(Instant.parse(entry.getKey()).toEpochMilli(), new BigDecimal(entry.getValue()));
             }
             result.put(seriesName, Map.copyOf(seriesMap));
         }
         return Map.copyOf(result);
     }
 
-    private Map<String, Map<String, Map<Instant, BigDecimal>>> parseForwardCurves(String json) {
-        var result = new HashMap<String, Map<String, Map<Instant, BigDecimal>>>();
+    private Map<String, Map<String, TreeMap<Long, BigDecimal>>> parseForwardCurves(String json) {
+        var result = new HashMap<String, Map<String, TreeMap<Long, BigDecimal>>>();
         String curvesBlock = extractObject(json, "forwardCurves");
         for (String seriesName : extractKeys(curvesBlock)) {
             String seriesBlock = extractObject(curvesBlock, seriesName);
-            var pillarMap = new HashMap<String, Map<Instant, BigDecimal>>();
+            var pillarMap = new HashMap<String, TreeMap<Long, BigDecimal>>();
             for (String pillar : extractKeys(seriesBlock)) {
                 String pillarBlock = extractObject(seriesBlock, pillar);
-                var asOfMap = new HashMap<Instant, BigDecimal>();
+                var asOfMap = new TreeMap<Long, BigDecimal>();
                 for (var entry : extractKeyValuePairs(pillarBlock)) {
-                    asOfMap.put(Instant.parse(entry.getKey()), new BigDecimal(entry.getValue()));
+                    asOfMap.put(Instant.parse(entry.getKey()).toEpochMilli(), new BigDecimal(entry.getValue()));
                 }
-                pillarMap.put(pillar, Map.copyOf(asOfMap));
+                pillarMap.put(pillar, asOfMap);
             }
-            result.put(seriesName, Map.copyOf(pillarMap));
+            result.put(seriesName, Collections.unmodifiableMap(pillarMap));
         }
-        return Map.copyOf(result);
+        return Collections.unmodifiableMap(result);
     }
 
     private Map<String, Map<String, BigDecimal>> parseIndices(String json) {
@@ -144,18 +152,18 @@ public class JsonMarketDataPort implements MarketDataPort {
         return Map.copyOf(result);
     }
 
-    private Map<String, Map<Instant, BigDecimal>> parseFxRates(String json) {
-        var result = new HashMap<String, Map<Instant, BigDecimal>>();
+    private Map<String, TreeMap<Long, BigDecimal>> parseFxRates(String json) {
+        var result = new HashMap<String, TreeMap<Long, BigDecimal>>();
         String fxBlock = extractObject(json, "fxRates");
         for (String pairName : extractKeys(fxBlock)) {
             String pairBlock = extractObject(fxBlock, pairName);
-            var rateMap = new HashMap<Instant, BigDecimal>();
+            var rateMap = new TreeMap<Long, BigDecimal>();
             for (var entry : extractKeyValuePairs(pairBlock)) {
-                rateMap.put(Instant.parse(entry.getKey()), new BigDecimal(entry.getValue()));
+                rateMap.put(Instant.parse(entry.getKey()).toEpochMilli(), new BigDecimal(entry.getValue()));
             }
-            result.put(pairName, Map.copyOf(rateMap));
+            result.put(pairName, rateMap);
         }
-        return Map.copyOf(result);
+        return Collections.unmodifiableMap(result);
     }
 
     static String extractObject(String json, String key) {
