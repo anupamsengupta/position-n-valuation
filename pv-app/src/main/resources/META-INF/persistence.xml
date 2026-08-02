@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<persistence xmlns="https://jakarta.ee/xml/ns/persistence"
+             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+             xsi:schemaLocation="https://jakarta.ee/xml/ns/persistence
+                                 https://jakarta.ee/xml/ns/persistence/persistence_3_2.xsd"
+             version="3.2">
+
+    <persistence-unit name="pv-unit" transaction-type="RESOURCE_LOCAL">
+        <provider>org.hibernate.jpa.HibernatePersistenceProvider</provider>
+
+        <class>com.power.posval.persistence.entity.FixingEntity</class>
+        <class>com.power.posval.persistence.entity.ForwardCurveEntity</class>
+        <class>com.power.posval.persistence.entity.FxRateEntity</class>
+        <class>com.power.posval.persistence.entity.IndexValueEntity</class>
+        <class>com.power.posval.persistence.entity.SpreadEntity</class>
+        <class>com.power.posval.persistence.entity.VolSurfaceEntity</class>
+        <class>com.power.posval.persistence.entity.VolumeSeriesEntity</class>
+        <class>com.power.posval.persistence.entity.VolumeIntervalEntity</class>
+        <class>com.power.posval.persistence.entity.PositionLedgerEntryEntity</class>
+        <class>com.power.posval.persistence.entity.SettlementCellEntity</class>
+        <class>com.power.posval.persistence.entity.StruckMarkEntity</class>
+        <class>com.power.posval.persistence.entity.TradeIntervalCacheEntity</class>
+        <class>com.power.posval.persistence.entity.OutboxEntity</class>
+
+        <exclude-unlisted-classes>true</exclude-unlisted-classes>
+
+        <properties>
+            <property name="hibernate.hbm2ddl.auto" value="update"/>
+            <property name="hibernate.show_sql" value="false"/>
+            <property name="hibernate.format_sql" value="false"/>
+            <property name="hibernate.jdbc.batch_size" value="50"/>
+            <property name="hibernate.order_inserts" value="true"/>
+            <property name="hibernate.order_updates" value="true"/>
+            <property name="hibernate.globally_quoted_identifiers" value="true"/>
+        </properties>
+    </persistence-unit>
+</persistence>

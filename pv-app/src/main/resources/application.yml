@@ -1,0 +1,15 @@
+server:
+  port: 8080
+
+pv:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/posval
+    username: posval
+    password: posval
+    pool-size: 10
+  kafka:
+    bootstrap-servers: localhost:9092
+  outbox:
+    relay-interval-ms: 500
+  seed:
+    enabled: true

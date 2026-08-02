@@ -20,6 +20,7 @@
         <module>pv-kafka</module>
         <module>pv-guice</module>
         <module>pv-integration-tests</module>
+        <module>pv-app</module>
     </modules>
 
     <properties>
