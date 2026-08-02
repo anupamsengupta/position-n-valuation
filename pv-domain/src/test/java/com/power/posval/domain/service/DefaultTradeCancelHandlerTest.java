@@ -45,10 +45,11 @@ class DefaultTradeCancelHandlerTest {
             @Override public void save(PositionLedgerEntry e) { store.add(e); }
             @Override public Optional<PositionLedgerEntry> findById(UUID id) { return Optional.empty(); }
             @Override public List<PositionLedgerEntry> findCurrentByTradeLeg(String t, String tr, String tl) {
-                return store.stream().filter(e -> e.tradeId().equals(tr)).toList();
+                return store.stream().filter(e -> e.tradeId().equals(tr) && e.tradeLegId().equals(tl)).toList();
             }
-            @Override public List<PositionLedgerEntry> findAsOf(String t, String tr, Instant b, Instant k) { return List.of(); }
-            @Override public List<PositionLedgerEntry> findByDeliveryRange(String t, Instant s, Instant e) { return List.of(); }
+            @Override public List<PositionLedgerEntry> findAsOf(String t, String tr, String tl, Instant b, Instant k) { return List.of(); }
+            @Override public List<PositionLedgerEntry> findAllByDeliveryRange(String t, Instant s, Instant e) { return List.of(); }
+            @Override public List<PositionLedgerEntry> findByDeliveryRangeForTradeLeg(String t, String tr, String tl, Instant s, Instant e) { return List.of(); }
             @Override public void supersede(List<PositionLedgerEntry> old, List<PositionLedgerEntry> nw) {
                 nw.forEach(store::add);
             }

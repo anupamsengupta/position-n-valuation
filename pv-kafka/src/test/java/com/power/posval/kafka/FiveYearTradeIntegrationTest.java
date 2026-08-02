@@ -328,11 +328,16 @@ class FiveYearTradeIntegrationTest {
                 .toList();
         }
         @Override public List<PositionLedgerEntry> findAsOf(String t, String tr,
-                                                             Instant b, Instant k) {
+                                                             String tl, Instant b, Instant k) {
             return List.of();
         }
-        @Override public List<PositionLedgerEntry> findByDeliveryRange(String t,
-                                                                        Instant s, Instant e) {
+        @Override public List<PositionLedgerEntry> findAllByDeliveryRange(String t,
+                                                                          Instant s, Instant e) {
+            return List.of();
+        }
+        @Override public List<PositionLedgerEntry> findByDeliveryRangeForTradeLeg(String t,
+                                                                                    String tr, String tl,
+                                                                                    Instant s, Instant e) {
             return List.of();
         }
         @Override public void supersede(List<PositionLedgerEntry> old,

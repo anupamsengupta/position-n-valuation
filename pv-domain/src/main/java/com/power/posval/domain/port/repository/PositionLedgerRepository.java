@@ -33,14 +33,21 @@ public interface PositionLedgerRepository {
     /** Current-knowledge entries for a trade-leg across all delivery months. */
     List<PositionLedgerEntry> findCurrentByTradeLeg(String tenantId, String tradeId, String tradeLegId);
 
-    /** Bitemporal as-of reconstruction (FR-007). */
-    List<PositionLedgerEntry> findAsOf(String tenantId, String tradeId,
+    /** Bitemporal as-of reconstruction (FR-007). Grain = trade-leg × delivery-month. */
+    List<PositionLedgerEntry> findAsOf(String tenantId, String tradeId, String tradeLegId,
                                        Instant businessDate, Instant knowledgeDate);
 
-    /** All current-knowledge entries within a delivery range for a tenant. */
-    List<PositionLedgerEntry> findByDeliveryRange(String tenantId,
-                                                   Instant deliveryStart,
-                                                   Instant deliveryEnd);
+    /** All current-knowledge entries within a delivery range for a tenant (portfolio-wide). */
+    List<PositionLedgerEntry> findAllByDeliveryRange(String tenantId,
+                                                      Instant deliveryStart,
+                                                      Instant deliveryEnd);
+
+    /** Current-knowledge entries for a specific trade-leg within a delivery range. */
+    List<PositionLedgerEntry> findByDeliveryRangeForTradeLeg(String tenantId,
+                                                              String tradeId,
+                                                              String tradeLegId,
+                                                              Instant deliveryStart,
+                                                              Instant deliveryEnd);
 
     /**
      * Supersede existing entries by closing known_to, then saving new versions.

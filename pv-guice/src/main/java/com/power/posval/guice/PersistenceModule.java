@@ -3,6 +3,7 @@ package com.power.posval.guice;
 import com.google.inject.AbstractModule;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
+import com.google.inject.name.Names;
 import com.power.posval.domain.port.cache.TradeIntervalCache;
 import com.power.posval.domain.port.datasource.DataSourceRouter;
 import com.power.posval.domain.port.repository.*;
@@ -65,6 +66,8 @@ public class PersistenceModule extends AbstractModule {
         bind(EntityManager.class)
             .toProvider(EntityManagerProvider.class);
 
+        bindConstant().annotatedWith(Names.named("pv.batch.size"))
+            .to(50);
         bind(BatchWriter.class).in(Singleton.class);
         bind(UnitOfWork.class).in(Singleton.class);
     }

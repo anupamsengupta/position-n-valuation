@@ -26,9 +26,10 @@ public class JpaStruckMarkRepository implements StruckMarkRepository {
     private final BatchWriter batchWriter;
 
     @Inject
-    public JpaStruckMarkRepository(Provider<EntityManager> emProvider) {
+    public JpaStruckMarkRepository(Provider<EntityManager> emProvider,
+                                    BatchWriter batchWriter) {
         this.emProvider = emProvider;
-        this.batchWriter = new BatchWriter(emProvider);
+        this.batchWriter = batchWriter;
     }
 
     @Override

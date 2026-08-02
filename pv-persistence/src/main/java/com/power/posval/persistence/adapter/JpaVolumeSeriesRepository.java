@@ -5,6 +5,7 @@ import com.power.posval.domain.model.value.DeliveryPeriod;
 import com.power.posval.domain.model.value.SeriesKey;
 import com.power.posval.domain.port.repository.VolumeSeriesRepository;
 import com.power.posval.domain.port.repository.VolumeSeriesSpec;
+import com.power.posval.persistence.batch.BatchWriter;
 import com.power.posval.persistence.entity.VolumeIntervalEntity;
 import com.power.posval.persistence.entity.VolumeSeriesEntity;
 import jakarta.inject.Inject;
@@ -27,10 +28,13 @@ import java.util.*;
 public class JpaVolumeSeriesRepository implements VolumeSeriesRepository {
 
     private final Provider<EntityManager> emProvider;
+    private final BatchWriter batchWriter;
 
     @Inject
-    public JpaVolumeSeriesRepository(Provider<EntityManager> emProvider) {
+    public JpaVolumeSeriesRepository(Provider<EntityManager> emProvider,
+                                      BatchWriter batchWriter) {
         this.emProvider = emProvider;
+        this.batchWriter = batchWriter;
     }
 
     @Override
@@ -38,10 +42,11 @@ public class JpaVolumeSeriesRepository implements VolumeSeriesRepository {
         EntityManager em = emProvider.get();
         VolumeSeriesEntity entity = toEntity(series);
         em.persist(entity);
-        for (VolumeInterval vi : series.intervals()) {
-            VolumeIntervalEntity vie = toIntervalEntity(vi, entity);
-            em.persist(vie);
-        }
+
+        List<VolumeIntervalEntity> intervalEntities = series.intervals().stream()
+            .map(vi -> toIntervalEntity(vi, entity))
+            .toList();
+        batchWriter.writeAll(intervalEntities);
     }
 
     @Override

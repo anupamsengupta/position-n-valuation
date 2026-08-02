@@ -1,6 +1,7 @@
 package com.power.posval.persistence.batch;
 
 import jakarta.inject.Inject;
+import jakarta.inject.Named;
 import jakarta.inject.Provider;
 import jakarta.persistence.EntityManager;
 import java.util.List;
@@ -12,17 +13,20 @@ import java.util.List;
  */
 public class BatchWriter {
 
+    static final int DEFAULT_BATCH_SIZE = 50;
+
     private final Provider<EntityManager> emProvider;
     private final int batchSize;
 
     @Inject
-    public BatchWriter(Provider<EntityManager> emProvider) {
-        this(emProvider, 50);
-    }
-
-    public BatchWriter(Provider<EntityManager> emProvider, int batchSize) {
+    public BatchWriter(Provider<EntityManager> emProvider,
+                       @Named("pv.batch.size") int batchSize) {
         this.emProvider = emProvider;
         this.batchSize = batchSize;
+    }
+
+    public BatchWriter(Provider<EntityManager> emProvider) {
+        this(emProvider, DEFAULT_BATCH_SIZE);
     }
 
     /**

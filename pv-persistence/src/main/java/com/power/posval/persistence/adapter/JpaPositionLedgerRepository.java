@@ -5,6 +5,7 @@ import com.power.posval.domain.model.VolumeUnit;
 import com.power.posval.domain.model.value.DeliveryRange;
 import com.power.posval.domain.model.value.SeriesKey;
 import com.power.posval.domain.port.repository.PositionLedgerRepository;
+import com.power.posval.persistence.batch.BatchWriter;
 import com.power.posval.persistence.entity.PositionLedgerEntryEntity;
 import jakarta.inject.Inject;
 import jakarta.inject.Provider;
@@ -24,10 +25,13 @@ import java.util.UUID;
 public class JpaPositionLedgerRepository implements PositionLedgerRepository {
 
     private final Provider<EntityManager> emProvider;
+    private final BatchWriter batchWriter;
 
     @Inject
-    public JpaPositionLedgerRepository(Provider<EntityManager> emProvider) {
+    public JpaPositionLedgerRepository(Provider<EntityManager> emProvider,
+                                        BatchWriter batchWriter) {
         this.emProvider = emProvider;
+        this.batchWriter = batchWriter;
     }
 
     @Override
@@ -37,16 +41,7 @@ public class JpaPositionLedgerRepository implements PositionLedgerRepository {
 
     @Override
     public void saveAll(List<PositionLedgerEntry> entries) {
-        if (entries.isEmpty()) return;
-        EntityManager em = emProvider.get();
-        int batchSize = 50;
-        for (int i = 0; i < entries.size(); i++) {
-            em.persist(toEntity(entries.get(i)));
-            if ((i + 1) % batchSize == 0) {
-                em.flush();
-                em.clear();
-            }
-        }
+        batchWriter.writeAll(entries.stream().map(this::toEntity).toList());
     }
 
     @Override
@@ -86,6 +81,7 @@ public class JpaPositionLedgerRepository implements PositionLedgerRepository {
     @Override
     public List<PositionLedgerEntry> findAsOf(String tenantId,
                                                String tradeId,
+                                               String tradeLegId,
                                                Instant businessDate,
                                                Instant knowledgeDate) {
         return emProvider.get()
@@ -93,14 +89,16 @@ public class JpaPositionLedgerRepository implements PositionLedgerRepository {
                 SELECT e FROM PositionLedgerEntryEntity e
                 WHERE e.tenantId   = :tenantId
                   AND e.tradeId    = :tradeId
+                  AND e.tradeLegId = :tradeLegId
                   AND e.validFrom <= :businessDate
                   AND (e.validTo   IS NULL OR e.validTo > :businessDate)
                   AND e.knownFrom <= :knowledgeDate
                   AND (e.knownTo   IS NULL OR e.knownTo > :knowledgeDate)
-                ORDER BY e.tradeLegId, e.deliveryStart
+                ORDER BY e.deliveryStart
                 """, PositionLedgerEntryEntity.class)
             .setParameter("tenantId", tenantId)
             .setParameter("tradeId", tradeId)
+            .setParameter("tradeLegId", tradeLegId)
             .setParameter("businessDate", businessDate)
             .setParameter("knowledgeDate", knowledgeDate)
             .getResultStream()
@@ -109,9 +107,9 @@ public class JpaPositionLedgerRepository implements PositionLedgerRepository {
     }
 
     @Override
-    public List<PositionLedgerEntry> findByDeliveryRange(String tenantId,
-                                                          Instant deliveryStart,
-                                                          Instant deliveryEnd) {
+    public List<PositionLedgerEntry> findAllByDeliveryRange(String tenantId,
+                                                             Instant deliveryStart,
+                                                             Instant deliveryEnd) {
         return emProvider.get()
             .createQuery("""
                 SELECT e FROM PositionLedgerEntryEntity e
@@ -119,9 +117,36 @@ public class JpaPositionLedgerRepository implements PositionLedgerRepository {
                   AND e.deliveryStart < :deliveryEnd
                   AND e.deliveryEnd > :deliveryStart
                   AND e.knownTo IS NULL
+                ORDER BY e.tradeLegId, e.deliveryStart
+                """, PositionLedgerEntryEntity.class)
+            .setParameter("tenantId", tenantId)
+            .setParameter("deliveryStart", deliveryStart)
+            .setParameter("deliveryEnd", deliveryEnd)
+            .getResultStream()
+            .map(this::toDomain)
+            .toList();
+    }
+
+    @Override
+    public List<PositionLedgerEntry> findByDeliveryRangeForTradeLeg(String tenantId,
+                                                                      String tradeId,
+                                                                      String tradeLegId,
+                                                                      Instant deliveryStart,
+                                                                      Instant deliveryEnd) {
+        return emProvider.get()
+            .createQuery("""
+                SELECT e FROM PositionLedgerEntryEntity e
+                WHERE e.tenantId   = :tenantId
+                  AND e.tradeId    = :tradeId
+                  AND e.tradeLegId = :tradeLegId
+                  AND e.deliveryStart < :deliveryEnd
+                  AND e.deliveryEnd > :deliveryStart
+                  AND e.knownTo IS NULL
                 ORDER BY e.deliveryStart
                 """, PositionLedgerEntryEntity.class)
             .setParameter("tenantId", tenantId)
+            .setParameter("tradeId", tradeId)
+            .setParameter("tradeLegId", tradeLegId)
             .setParameter("deliveryStart", deliveryStart)
             .setParameter("deliveryEnd", deliveryEnd)
             .getResultStream()

@@ -344,12 +344,12 @@ The system defines **six semantic precision domains**. Each domain carries an in
 
 | Domain | Semantic Scope | Default Scale | Default Precision | Examples |
 |--------|---------------|---------------|-------------------|----------|
-| `MONETARY` | Currency amounts, settlement values, mark-to-market | 4 | 18 | `Money.amount`, `SettlementCellEntity.amount`, `StruckMarkEntity.markValue` |
-| `PRICE` | Price-per-unit values (EUR/MWh, USD/therm) |8| 15 | `SettlementCellEntity.price`, `PriceEvaluator` leaf results |
-| `VOLUME` | Power capacity (MW), commodity quantity |8| 15 | `VolumeIntervalEntity.volume`, `PositionLedgerEntryEntity.quantity`, `CachedInterval.netMw` |
-| `ENERGY` | Energy delivered (MWh), commodity energy equivalent |8| 18 | `VolumeIntervalEntity.energy`, `SettlementCellEntity.volumeMwh`, `CachedInterval.netMwh` |
-| `MULTIPLIER` | Ratios, shares, allocation factors (0 < m ≤ 1) |8| 8 | `VolumeReference.multiplier`, `TradeIntervalCacheEntity.multiplier` |
-| `INTERMEDIATE` | Scratch values during multi-step computation; not persisted | 10 | 20 | `PriceEvaluator` sub-expression results, time-weighted averages |
+| `MONETARY` | Currency amounts, settlement values, mark-to-market | 4 | 20                | `Money.amount`, `SettlementCellEntity.amount`, `StruckMarkEntity.markValue` |
+| `PRICE` | Price-per-unit values (EUR/MWh, USD/therm) |8| 20                | `SettlementCellEntity.price`, `PriceEvaluator` leaf results |
+| `VOLUME` | Power capacity (MW), commodity quantity |8| 20                | `VolumeIntervalEntity.volume`, `PositionLedgerEntryEntity.quantity`, `CachedInterval.netMw` |
+| `ENERGY` | Energy delivered (MWh), commodity energy equivalent |8| 20                | `VolumeIntervalEntity.energy`, `SettlementCellEntity.volumeMwh`, `CachedInterval.netMwh` |
+| `MULTIPLIER` | Ratios, shares, allocation factors (0 < m ≤ 1) |8| 10                | `VolumeReference.multiplier`, `TradeIntervalCacheEntity.multiplier` |
+| `INTERMEDIATE` | Scratch values during multi-step computation; not persisted | 10 | 20                | `PriceEvaluator` sub-expression results, time-weighted averages |
 
 #### Port Interface (`pv-domain/port/`)
 
@@ -429,7 +429,7 @@ public record DefaultNumericPrecision() implements NumericPrecision {
         return switch (domain) {
             case MONETARY    -> 20;
             case PRICE       -> 20;
-            case VOLUME      -> 18;
+            case VOLUME      -> 20;
             case ENERGY      -> 20;
             case MULTIPLIER  -> 10;
             case INTERMEDIATE -> 24;

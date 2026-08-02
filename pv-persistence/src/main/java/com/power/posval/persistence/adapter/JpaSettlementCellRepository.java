@@ -22,9 +22,10 @@ public class JpaSettlementCellRepository implements SettlementCellRepository {
     private final BatchWriter batchWriter;
 
     @Inject
-    public JpaSettlementCellRepository(Provider<EntityManager> emProvider) {
+    public JpaSettlementCellRepository(Provider<EntityManager> emProvider,
+                                        BatchWriter batchWriter) {
         this.emProvider = emProvider;
-        this.batchWriter = new BatchWriter(emProvider);
+        this.batchWriter = batchWriter;
     }
 
     @Override
