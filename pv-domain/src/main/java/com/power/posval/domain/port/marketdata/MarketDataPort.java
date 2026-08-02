@@ -1,7 +1,9 @@
 package com.power.posval.domain.port.marketdata;
 
+import com.power.posval.domain.model.QualityState;
 import com.power.posval.domain.model.value.DeliveryPeriod;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.YearMonth;
 
@@ -25,4 +27,17 @@ public interface MarketDataPort {
 
     /** Lookup at a specific version for reproducibility (FR-048f input_version_set). */
     MarketDataLookup lookupAtVersion(String series, Instant intervalStart, long versionId);
+
+    /** Lookup a volatility surface point (strikeDelta x expiryTenor). */
+    default VolSurfaceLookup lookupVolSurface(String surfaceId, double strikeDelta,
+                                               String expiryTenor, Instant asOfDate) {
+        return new VolSurfaceLookup(BigDecimal.ZERO, 0L, surfaceId, strikeDelta,
+            expiryTenor, asOfDate, QualityState.PROVISIONAL);
+    }
+
+    /** Lookup a spread/basis value. Keyed identically to fixings. */
+    default MarketDataLookup lookupSpread(String series, Instant intervalStart) {
+        return new MarketDataLookup(BigDecimal.ZERO, 0L, series, intervalStart,
+            QualityState.PROVISIONAL);
+    }
 }

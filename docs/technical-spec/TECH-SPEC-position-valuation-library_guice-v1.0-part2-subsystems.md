@@ -678,6 +678,205 @@ public record MarketDataLookup(
 ) {}
 ```
 
+### 10.2 Extended Types — FR-064, FR-065, S4
+
+> **TR-020a** — `MarketDataPort` is extended with two default methods — `lookupVolSurface()` and `lookupSpread()` — returning zero/PROVISIONAL defaults. Default methods ensure backward compatibility: existing test stubs and the JSON-backed `JsonMarketDataPort` compile without modification. Production implementations (`CachingMarketDataPort`) override with cache-through behavior. (Extends FR-064, FR-065.)
+
+```java
+/** Discriminator for market data categories in cache and repository layers. */
+public enum MarketDataType {
+    FIXING, FORWARD_CURVE, FX_RATE, INDEX, VOL_SURFACE, SPREAD
+}
+
+/** Single volatility surface observation. Keyed by (surfaceId, strikeDelta, expiryTenor, asOfDate). */
+public record VolSurfaceLookup(
+    BigDecimal impliedVolatility,
+    long versionId,
+    String surfaceId,
+    double strikeDelta,
+    String expiryTenor,
+    Instant observationDate,
+    QualityState qualityState
+) {}
+```
+
+### 10.3 `MarketDataRepository` Port — Pattern #18, FR-066, FR-067, FR-068, S4
+
+> **TR-020b** — `MarketDataRepository` is a persistence port with 7 read methods and 6 write methods covering all 6 data types. Read methods return `Optional<MarketDataLookup>` (or `Optional<VolSurfaceLookup>` for vol surfaces). Query semantics differ by type: fixings/indices/spreads use exact match + latest version; forward curves/FX/vol surfaces use floor semantics on `as_of_date`. `findAtVersion()` bypasses floor semantics for reproducibility (FR-068). (Extends FR-066, FR-067.)
+
+```java
+public interface MarketDataRepository {
+    // reads — return latest version by default
+    Optional<MarketDataLookup> findFixing(String tenantId, String series, Instant intervalStart);
+    Optional<MarketDataLookup> findIndex(String tenantId, String series, String refMonthExpression);
+    Optional<MarketDataLookup> findForwardCurve(String tenantId, String series,
+                                                 YearMonth pillar, Instant asOfDate);
+    Optional<MarketDataLookup> findFxRate(String tenantId, String currencyPair, Instant referenceDate);
+    Optional<MarketDataLookup> findSpread(String tenantId, String series, Instant intervalStart);
+    Optional<VolSurfaceLookup> findVolSurface(String tenantId, String surfaceId,
+                                               double strikeDelta, String expiryTenor, Instant asOfDate);
+    Optional<MarketDataLookup> findAtVersion(String tenantId, String series,
+                                              Instant intervalStart, long versionId);
+    // writes (used by ingestion pipelines)
+    void saveFixing(String tenantId, String series, Instant intervalStart, MarketDataLookup lookup);
+    void saveForwardCurve(String tenantId, String series, YearMonth pillar,
+                          Instant asOfDate, MarketDataLookup lookup);
+    void saveFxRate(String tenantId, String currencyPair, Instant referenceDate, MarketDataLookup lookup);
+    void saveIndex(String tenantId, String series, String refMonthExpression, MarketDataLookup lookup);
+    void saveSpread(String tenantId, String series, Instant intervalStart, MarketDataLookup lookup);
+    void saveVolSurface(String tenantId, String surfaceId, double strikeDelta,
+                        String expiryTenor, Instant asOfDate, VolSurfaceLookup lookup);
+}
+```
+
+### 10.4 JPA Entities — FR-066, Pattern #23, S4
+
+> **TR-020c** — Six JPA entities in the `market_data` schema follow existing patterns: `@SequenceGenerator(allocationSize=50)`, `tenant_id` column, `version_id` for reproducibility, `created_at` timestamp. All numeric values use `NUMERIC(18,8)`. (Extends FR-066.)
+
+| Entity | Table | Key columns | Index |
+|--------|-------|-------------|-------|
+| `FixingEntity` | `market_data.fixing` | tenant_id, series, interval_start, value, version_id, quality_state | `(tenant_id, series, interval_start)` |
+| `ForwardCurveEntity` | `market_data.forward_curve` | tenant_id, series, pillar (VARCHAR 7), as_of_date, value, version_id | `(tenant_id, series, pillar, as_of_date DESC)` |
+| `FxRateEntity` | `market_data.fx_rate` | tenant_id, currency_pair, reference_date, rate, version_id | `(tenant_id, currency_pair, reference_date DESC)` |
+| `IndexValueEntity` | `market_data.index_value` | tenant_id, series, ref_month_expression, value, version_id | `(tenant_id, series, ref_month_expression)` |
+| `VolSurfaceEntity` | `market_data.vol_surface` | tenant_id, surface_id, strike_delta (DOUBLE), expiry_tenor, as_of_date, implied_volatility, version_id | `(tenant_id, surface_id, strike_delta, expiry_tenor, as_of_date DESC)` |
+| `SpreadEntity` | `market_data.spread` | tenant_id, series, interval_start, value, version_id | `(tenant_id, series, interval_start)` |
+
+### 10.5 `JpaMarketDataRepository` Adapter — Pattern #18, FR-067, S4
+
+> **TR-020d** — `JpaMarketDataRepository` implements `MarketDataRepository` using `Provider<EntityManager>` and JPQL. Floor semantics on forward curves, FX rates, and vol surfaces are implemented as `WHERE as_of_date <= :asOfDate ORDER BY as_of_date DESC, version_id DESC` with `setMaxResults(1)`. Exact-match queries (fixings, indices, spreads) use `ORDER BY version_id DESC` with `setMaxResults(1)`. Each query method has a corresponding `toEntity()`/`toDomain()` mapper. (Extends FR-067.)
+
+### 10.6 `MarketDataCache` Port — Pattern #29, #30, FR-069a, FR-069b, S4
+
+> **TR-020e** — `MarketDataCache` is a port interface in `pv-domain/port/cache/` mirroring the `VolumeCache` pattern. It abstracts the Redis-backed market data cache. Type-discriminated keys and differentiated TTLs isolate volatile from stable data. Invalidation supports both full-series and range-based modes. (Extends FR-069a, FR-069b.)
+
+```java
+public interface MarketDataCache {
+    Optional<MarketDataLookup> get(String tenantId, MarketDataType type,
+                                    String series, String lookupKey);
+    void put(String tenantId, MarketDataType type,
+             String series, String lookupKey, MarketDataLookup value);
+    Optional<VolSurfaceLookup> getVolSurface(String tenantId, String surfaceId, String lookupKey);
+    void putVolSurface(String tenantId, String surfaceId, String lookupKey, VolSurfaceLookup value);
+    void invalidate(String tenantId, MarketDataType type, String series);
+    void invalidate(String tenantId, MarketDataType type, String series,
+                    Instant rangeStart, Instant rangeEnd);
+}
+```
+
+`lookupKey` is a pre-formatted string encoding type-specific dimensions:
+- Fixings/Spreads: ISO instant string
+- Forward curves: `{pillar}:{asOfDate}`
+- FX: ISO instant string
+- Indices: refMonthExpression
+- Vol surfaces: `{strikeDelta}:{expiryTenor}:{asOfDate}`
+
+### 10.7 `RedisMarketDataCache` Adapter — Pattern #29, #30, FR-069a, FR-069b, S4
+
+> **TR-020f** — Redis key scheme: `md:{TYPE}:{tenant}:{series}:{lookupKey}`. Serialization: pipe-delimited strings matching `RedisVolumeCache` pattern. Invalidation uses SCAN + DEL for matching keys. Lettuce `RedisCommands<String, String>` injected via Guice. (Extends FR-069a, FR-069b.)
+
+| Data type | TTL | Rationale |
+|-----------|-----|-----------|
+| FIXING, FX_RATE, INDEX, SPREAD | 24 hours | Stable after publication; corrections are rare |
+| FORWARD_CURVE, VOL_SURFACE | 1 hour | Intraday ticks; stale data is more harmful than cache misses |
+
+### 10.8 `CachingMarketDataPort` — Production `MarketDataPort` — Pattern #29, FR-069a–FR-069d, S4
+
+> **TR-020g** — `CachingMarketDataPort` is the production `MarketDataPort` implementation. Lives in `pv-domain/service/` because it depends only on domain ports (`MarketDataCache`, `MarketDataRepository`, `TenantContext`) — no infrastructure imports. Each lookup method follows the read-through pattern: `cache.get()` → if hit, return → if miss, `repository.find()` → `cache.put()` → return. `lookupAtVersion()` always bypasses cache (FR-069c). Cache miss with no DB data returns `PROVISIONAL` quality with `BigDecimal.ZERO` / `versionId=0`. FX miss defaults to `BigDecimal.ONE` (neutral rate). (Extends FR-069a, FR-069c, FR-069d.)
+
+```java
+public class CachingMarketDataPort implements MarketDataPort {
+    @Inject MarketDataCache cache;
+    @Inject MarketDataRepository repository;
+    @Inject TenantContext tenantContext;
+
+    @Override
+    public MarketDataLookup lookupFixing(String series, Instant intervalStart) {
+        String tenant = tenantContext.currentTenantId();
+        String lookupKey = intervalStart.toString();
+        return cache.get(tenant, MarketDataType.FIXING, series, lookupKey)
+            .orElseGet(() -> {
+                var result = repository.findFixing(tenant, series, intervalStart)
+                    .orElse(provisional(series, intervalStart));
+                cache.put(tenant, MarketDataType.FIXING, series, lookupKey, result);
+                return result;
+            });
+    }
+    // ... analogous for other types; lookupAtVersion bypasses cache
+}
+```
+
+### 10.9 Domain Events — FR-069e, FR-069f, FR-069g, Pattern #26, #27, S4
+
+> **TR-020h** — Two domain events support the market data lifecycle. `MarketDataUpdated` triggers cache invalidation via `MarketDataUpdatedConsumer` (Kafka). `CurveTick` triggers forward mark recalculation via `CurveTickConsumer` (Kafka). Both consumers extend `IdempotentConsumer<E>`. (Extends FR-069e, FR-069f, FR-069g.)
+
+```java
+/** Cache invalidation trigger. */
+public record MarketDataUpdated(
+    String tenantId,
+    MarketDataType dataType,
+    String series,
+    Instant affectedRangeStart,   // nullable → full series invalidation
+    Instant affectedRangeEnd,     // nullable
+    long newVersionId,
+    Instant eventTime
+) {}
+
+/** Forward curve update event. Replaces Object placeholder in CurveTickConsumer. */
+public record CurveTick(
+    String tenantId,
+    String series,
+    List<YearMonth> affectedPillars,
+    Instant observationTime,
+    long versionId,
+    Instant eventTime
+) {}
+```
+
+**`MarketDataUpdatedConsumer`** — extends `IdempotentConsumer<MarketDataUpdated>`:
+
+```java
+@Override protected void process(MarketDataUpdated event) {
+    if (event.affectedRangeStart() != null && event.affectedRangeEnd() != null) {
+        cache.invalidate(event.tenantId(), event.dataType(), event.series(),
+            event.affectedRangeStart(), event.affectedRangeEnd());
+    } else {
+        cache.invalidate(event.tenantId(), event.dataType(), event.series());
+    }
+}
+```
+
+**`CurveTickConsumer`** — extends `IdempotentConsumer<CurveTick>`:
+
+```java
+@Override protected void process(CurveTick event) {
+    DeliveryRange range = new DeliveryRange(
+        Collections.min(event.affectedPillars()),
+        Collections.max(event.affectedPillars()), UTC);
+    List<DependencyEdge> affected = dependencyIndex.findAffectedCells(
+        event.tenantId(), event.series(), range, null);
+    for (DependencyEdge edge : affected) {
+        positionLedgerRepository.findById(edge.cellId())
+            .ifPresent(pos -> forwardMarkJob.execute(pos, range));
+    }
+}
+```
+
+### 10.10 `MarketDataModule` — Guice Wiring — S4
+
+> **TR-020i** — `MarketDataModule` is a Guice module that wires the production market data stack. Install instead of `StubServiceModule`'s `MarketDataPort` binding for production deployments. `StubServiceModule` remains for unit test profiles. (Extends §16.7.)
+
+```java
+public class MarketDataModule extends AbstractModule {
+    @Override protected void configure() {
+        bind(MarketDataRepository.class).to(JpaMarketDataRepository.class).in(Singleton.class);
+        bind(MarketDataCache.class).to(RedisMarketDataCache.class).in(Singleton.class);
+        bind(MarketDataPort.class).to(CachingMarketDataPort.class).in(Singleton.class);
+        bind(MarketDataUpdatedConsumer.class).in(Singleton.class);
+    }
+}
+```
+
 ---
 
 ## §11 — S5: Valuation

@@ -231,6 +231,7 @@ public class BitemporalAuditListener {
 | `valuation.settlement.computed` | `{position_id}` | `SettlementComputed` | `position_id` | Dependency index, rollups |
 | `marketdata.fixing.published` | `{series}` | `SettlementPublished` | `series` | Valuation (S5a) |
 | `marketdata.curve.tick` | `{series}` | `CurveTick` | `series` | Valuation (S5b), forward marks |
+| `marketdata.updated` | `{series}` | `MarketDataUpdated` | `series` | Market data cache invalidation (S4) |
 
 **Headers** (on all messages):
 
@@ -532,6 +533,7 @@ public class KafkaModule extends AbstractModule {
         bind(VolumeSupersededConsumer.class).in(Singleton.class);
         bind(SettlementPublishedConsumer.class).in(Singleton.class);
         bind(CurveTickConsumer.class).in(Singleton.class);
+        bind(MarketDataUpdatedConsumer.class).in(Singleton.class);
 
         // Kafka producer/consumer configuration
         bind(KafkaProducer.class)
@@ -1428,7 +1430,8 @@ public class PositionValuationApp {
             injector.getInstance(TradeCapturedConsumer.class),
             injector.getInstance(VolumeSupersededConsumer.class),
             injector.getInstance(SettlementPublishedConsumer.class),
-            injector.getInstance(CurveTickConsumer.class)
+            injector.getInstance(CurveTickConsumer.class),
+            injector.getInstance(MarketDataUpdatedConsumer.class)
         );
 
         // Each consumer runs on a virtual thread
@@ -1470,7 +1473,8 @@ public class PositionValuationApp {
 | FR-030–FR-037 | Position Ledger attributes | `PositionLedgerEntry` (signed qty, Builder, delivery-month blocks), `TradeCaptureHandler`, `TradeAmendHandler`, `TradeCancelHandler`, `NumericPrecision` (FR-036: configurable precision) |
 | FR-040–FR-048h | PriceExpression | `PriceExpression` sealed hierarchy (13 types), `PriceEvaluator.evaluate()`, pattern-matching `switch`, `PriceResolution` (value, activeLeaves, inputVersionSet) |
 | FR-050–FR-057a | Volume Series | `VolumeSeries`, `VolumeInterval`, `VolumeResolver`, `VolumeSeriesFactory`, `VolumeSeriesRepository`, `VolumeSeriesSpec`, `MaterializationStrategy` (`EagerStrategy`), `BatchWriter`, `VolumePublished`, `VolumeSuperseded` |
-| FR-060–FR-063 | Market Data Store | `MarketDataPort` (read-only, version pinning), `MarketDataLookup` |
+| FR-060–FR-063 | Market Data Store (port) | `MarketDataPort` (read-only, version pinning), `MarketDataLookup`, `VolSurfaceLookup`, `MarketDataType` |
+| FR-064–FR-069g | Market Data Store (production) | `MarketDataCache`, `RedisMarketDataCache`, `MarketDataRepository`, `JpaMarketDataRepository`, `CachingMarketDataPort`, `MarketDataUpdated`, `CurveTick`, `MarketDataUpdatedConsumer`, `MarketDataModule`, 6 JPA entities (`FixingEntity`, `ForwardCurveEntity`, `FxRateEntity`, `IndexValueEntity`, `VolSurfaceEntity`, `SpreadEntity`) |
 | FR-070–FR-074 | Settlement cells | `SettlementCellEntity`, `SettlementMaterializationJob`, `input_version_set` JSONB column |
 | FR-075–FR-076 | Forward marks | `ForwardMarkStore` (ephemeral), `ForwardMark` record |
 | FR-077–FR-079 | EOD struck marks | `StruckMarkEntity`, `curveVersionSet` JSONB column |
@@ -1490,7 +1494,7 @@ public class PositionValuationApp {
 | S1 | Position Ledger | `PositionLedgerEntry`, `PositionLedgerEntryEntity`, `PositionLedgerRepository`, `JpaPositionLedgerRepository`, `TradeCaptureHandler`, `TradeAmendHandler`, `TradeCancelHandler`, `DefaultTradeCaptureHandler` |
 | S2 | PriceExpression | `PriceExpression` (sealed, 13 types), `PriceEvaluator`, `DefaultPriceEvaluator`, `PriceResolution`, `ResolutionPurpose` |
 | S3 | VolumeSeries | `VolumeSeries`, `VolumeSeriesEntity`, `VolumeInterval`, `VolumeIntervalEntity`, `VolumeReference`, `MeteredActualVolumeSeries`, `VolumeResolver`, `ProfileResolver`, `ForecastResolver`, `VolumeSeriesFactory`, `VolumeSeriesRepository`, `VolumeSeriesSpec`, `MaterializationStrategy` (`EagerStrategy`), `BatchWriter`, `VolumePublished`, `VolumeSuperseded` |
-| S4 | Market Data Store | `MarketDataPort`, `MarketDataLookup` |
+| S4 | Market Data Store | `MarketDataPort`, `MarketDataLookup`, `VolSurfaceLookup`, `MarketDataType`, `MarketDataCache`, `RedisMarketDataCache`, `MarketDataRepository`, `JpaMarketDataRepository`, `CachingMarketDataPort`, `MarketDataUpdated`, `CurveTick`, `MarketDataUpdatedConsumer`, `MarketDataModule`, `FixingEntity`, `ForwardCurveEntity`, `FxRateEntity`, `IndexValueEntity`, `VolSurfaceEntity`, `SpreadEntity` |
 | S5a | Settlement cells | `SettlementCellEntity`, `SettlementCellRepository` (incl. `saveAll`), `JpaSettlementCellRepository` (BatchWriter-backed), `SettlementMaterializationJob`, `SettlementComputed`, `DomainEventPublisher.publishAll()` |
 | S5b | Forward marks | `ForwardMarkStore`, `ForwardMark`, `ForwardMarkJob`, `ForwardMarkJob.MarkEntry` |
 | S5c | EOD struck marks | `StruckMarkEntity`, `StruckMarkRepository` (incl. `saveAll`), `JpaStruckMarkRepository` (BatchWriter-backed), `EodStrikeJob` |

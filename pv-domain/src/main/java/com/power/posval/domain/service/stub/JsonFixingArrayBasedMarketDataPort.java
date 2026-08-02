@@ -4,6 +4,7 @@ import com.power.posval.domain.model.QualityState;
 import com.power.posval.domain.model.value.DeliveryPeriod;
 import com.power.posval.domain.port.marketdata.MarketDataLookup;
 import com.power.posval.domain.port.marketdata.MarketDataPort;
+import com.power.posval.domain.port.marketdata.VolSurfaceLookup;
 import jakarta.inject.Singleton;
 
 import java.math.BigDecimal;
@@ -100,6 +101,19 @@ public class JsonFixingArrayBasedMarketDataPort implements MarketDataPort {
     @Override
     public MarketDataLookup lookupAtVersion(String series, Instant intervalStart, long versionId) {
         return lookupFixing(series, intervalStart);
+    }
+
+    @Override
+    public VolSurfaceLookup lookupVolSurface(String surfaceId, double strikeDelta,
+                                              String expiryTenor, Instant asOfDate) {
+        return new VolSurfaceLookup(BigDecimal.ZERO, 1L, surfaceId, strikeDelta,
+            expiryTenor, asOfDate, QualityState.VALIDATED);
+    }
+
+    @Override
+    public MarketDataLookup lookupSpread(String series, Instant intervalStart) {
+        return new MarketDataLookup(BigDecimal.ZERO, 1L, series, intervalStart,
+            QualityState.VALIDATED);
     }
 
     // -----------------------------------------------------------------------

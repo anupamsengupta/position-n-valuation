@@ -294,14 +294,16 @@ Ports are interfaces in `domain/port/`. The domain says "I need something that c
 | `StruckMarkRepository` | Save/load EOD marks | `JpaStruckMarkRepository` |
 | `PriceExpressionRepository` | Load price formulas | `JsonPriceExpressionRepository` (stub) |
 | `MeteredActualRepository` | Load meter readings | `JsonMeteredActualRepository` (stub) |
-| `MarketDataPort` | Look up market prices | `JsonMarketDataPort` (stub) |
+| `MarketDataPort` | Look up market prices | `CachingMarketDataPort` (production), `JsonMarketDataPort` (stub) |
+| `MarketDataCache` | Cache market data lookups | `RedisMarketDataCache` |
+| `MarketDataRepository` | Persist/load market data | `JpaMarketDataRepository` |
 | `VolumeCache` | Cache volume lookups | `RedisVolumeCache` |
 | `ForwardMarkStore` | Store ephemeral marks | `RedisForwardMarkStore` |
 | `DomainEventPublisher` | Publish events | `OutboxDomainEventPublisher` |
 | `DependencyIndex` | Track what depends on what | `JpaDependencyIndex` |
 | `RollupRepository` | Aggregated views | `JpaRollupRepository` |
 
-**Stub implementations:** Three external services have JSON-file-backed stubs in `service/stub/`. These load realistic test data from `src/main/resources/stub/*.json`:
+**Production vs Stub implementations:** Market data has a full production stack: `CachingMarketDataPort` (domain service) checks `RedisMarketDataCache` first, falls back to `JpaMarketDataRepository` (Postgres), and populates the cache on miss. Cache invalidation is event-driven via `MarketDataUpdatedConsumer` (Kafka). The production stack is wired by `MarketDataModule`; the JSON stub is wired by `StubServiceModule` for unit tests. Two other external services still have JSON-file-backed stubs in `service/stub/`. All stubs load realistic test data from `src/main/resources/stub/*.json`:
 
 - **`stub/market-data.json`** (~1,250 lines) — 3 full days of EPEX DA15 fixings (288 intervals at 15-min granularity with realistic intraday price curves: ~25 EUR/MWh at night, ~80 EUR/MWh at peak), NORDPOOL system prices in NOK, EEX baseload forward curves spanning 24 months (2-year horizon), HICP-DE inflation index, and daily EUR/USD and EUR/NOK FX rates.
 
@@ -572,11 +574,13 @@ The `BitemporalAuditListener` (a JPA entity listener) enforces:
 
 Open `pv-redis/src/main/java/com/power/posval/redis/`.
 
-Two things live in Redis:
+Three things live in Redis:
 
 1. **Volume Cache** (`RedisVolumeCache`) — caches netted volume lookups. Key format: `vol:{tenant}:{seriesKey}:{startIso}`. TTL: 24 hours. Invalidated when a `VolumeSuperseded` event arrives.
 
-2. **Forward Mark Store** (`RedisForwardMarkStore`) — stores current forward marks. These are ephemeral (no history) — each new calculation overwrites the previous value. That's intentional: forward marks show "what's the value RIGHT NOW", not "what was it yesterday."
+2. **Market Data Cache** (`RedisMarketDataCache`) — caches market data lookups (fixings, curves, FX, indices, vol surfaces, spreads). Key format: `md:{TYPE}:{tenant}:{series}:{lookupKey}`. TTL varies: 24 hours for stable data (fixings, FX, indices, spreads), 1 hour for volatile data (forward curves, vol surfaces). Invalidated when a `MarketDataUpdated` event arrives via Kafka. This is the production cache behind `CachingMarketDataPort` — on a cache miss, the port loads from Postgres via `JpaMarketDataRepository` and populates the cache before returning.
+
+3. **Forward Mark Store** (`RedisForwardMarkStore`) — stores current forward marks. These are ephemeral (no history) — each new calculation overwrites the previous value. That's intentional: forward marks show "what's the value RIGHT NOW", not "what was it yesterday."
 
 ---
 
@@ -584,14 +588,15 @@ Two things live in Redis:
 
 Open `pv-kafka/src/main/java/com/power/posval/kafka/`.
 
-### Four Consumers
+### Five Consumers
 
 | Consumer | Listens for | What it triggers |
 |---|---|---|
 | `TradeCapturedConsumer` | `PositionCaptured` | Settlement materialization for each position |
 | `VolumeSupersededConsumer` | `VolumeSuperseded` | Cache invalidation + revaluation cascade |
 | `SettlementPublishedConsumer` | `SettlementComputed` | Rollup refresh |
-| `CurveTickConsumer` | Market data updates | Forward mark recalculation |
+| `CurveTickConsumer` | `CurveTick` | Forward mark recalculation via dependency index |
+| `MarketDataUpdatedConsumer` | `MarketDataUpdated` | Market data Redis cache invalidation |
 
 ### The Outbox Relay
 
@@ -612,7 +617,8 @@ Google Guice connects interfaces to implementations. The app has 8 modules:
 | `CacheModule` | VolumeCache → RedisVolumeCache, Redis connection |
 | `KafkaModule` | Consumers, producers, Kafka client config |
 | `EventModule` | DomainEventPublisher, ForwardMarkStore |
-| `StubServiceModule` | MarketData, PriceExpression, MeteredActual stubs |
+| `StubServiceModule` | MarketData, PriceExpression, MeteredActual stubs (dev/test) |
+| `MarketDataModule` | Production market data: JPA repo, Redis cache, CachingMarketDataPort |
 | `TenantModule` | Tenant context and AOP interceptor |
 | `ObservabilityModule` | Metrics and health checks |
 
@@ -625,7 +631,8 @@ public static Injector createInjector() {
     return Guice.createInjector(
         new PersistenceModule(),
         new DomainModule(),
-        new StubServiceModule(),     // swap this for real services later
+        new MarketDataModule(),      // production: Postgres + Redis + CachingMarketDataPort
+        new StubServiceModule(),     // remaining stubs: PriceExpression, MeteredActual
         new TenantModule(),
         new EventModule(),
         new CacheModule(),
@@ -635,7 +642,7 @@ public static Injector createInjector() {
 }
 ```
 
-When you need to swap the JSON stubs for real services, you just replace `StubServiceModule` with a module that binds real implementations.
+`MarketDataModule` wires the production market data stack (Postgres persistence via `JpaMarketDataRepository`, Redis cache via `RedisMarketDataCache`, and `CachingMarketDataPort` as the `MarketDataPort` implementation). `StubServiceModule` still provides JSON stubs for `PriceExpressionRepository` and `MeteredActualRepository` — these will be swapped for real service modules later. For unit tests, `StubServiceModule` alone provides `JsonMarketDataPort` instead.
 
 ---
 
@@ -1043,11 +1050,14 @@ Use smoke tests for quick CI verification. Use the full JMH runner (via `exec:ex
 4. Update `SettlementMaterializationJob.buildResult()` to populate it
 5. Write a test
 
-### Example C: "Swap the JSON market data stub for a real service"
+### Example C: "The JSON market data stub has already been swapped for a production service"
 
-1. Create a new module (e.g., `pv-marketdata`) with a class that implements `MarketDataPort`
-2. Create a new Guice module (e.g., `RealMarketDataModule`) that binds `MarketDataPort` to your implementation
-3. In `PositionValuationApp.createInjector()`, replace `StubServiceModule` (or remove just the MarketData binding) with your new module
+This has already been done. The production stack is:
+1. `CachingMarketDataPort` (in `pv-domain/service/`) implements `MarketDataPort` — checks Redis cache first, falls back to Postgres, populates cache on miss
+2. `JpaMarketDataRepository` (in `pv-persistence/adapter/`) — 6 JPA entity tables in `market_data` schema (fixings, forward curves, FX rates, indices, vol surfaces, spreads)
+3. `RedisMarketDataCache` (in `pv-redis/`) — tenant-isolated Redis cache with type-differentiated TTLs
+4. `MarketDataUpdatedConsumer` (in `pv-kafka/`) — Kafka consumer invalidates cache on data changes
+5. `MarketDataModule` (in `pv-guice/`) — wires it all together
 4. Done — everything else stays the same because the domain only talks to the `MarketDataPort` interface
 
 ---
@@ -1081,8 +1091,15 @@ Quick reference for when you're reading code and hit an unfamiliar type:
 | `TimeGranularity` | `domain.model` | MIN_5, MIN_15, HOURLY, etc. |
 | `VolumeUnit` | `domain.model` | MW_CAPACITY or MWH_PER_PERIOD |
 | `DomainEventPublisher` | `domain.port.event` | Publishes events to outbox |
-| `MarketDataPort` | `domain.port.marketdata` | Looks up market prices |
+| `MarketDataPort` | `domain.port.marketdata` | Looks up market prices (fixings, curves, FX, indices, vol surfaces, spreads) |
 | `MarketDataLookup` | `domain.port.marketdata` | Single market data observation |
+| `VolSurfaceLookup` | `domain.port.marketdata` | Single volatility surface observation |
+| `MarketDataType` | `domain.port.marketdata` | Enum: FIXING, FORWARD_CURVE, FX_RATE, INDEX, VOL_SURFACE, SPREAD |
+| `MarketDataCache` | `domain.port.cache` | Cache port for market data (Redis-backed) |
+| `MarketDataRepository` | `domain.port.repository` | Persistence port for market data (Postgres-backed) |
+| `CachingMarketDataPort` | `domain.service` | Production MarketDataPort: cache → DB → populate |
+| `MarketDataUpdated` | `domain.event` | Cache invalidation event for market data changes |
+| `CurveTick` | `domain.event` | Forward curve update event triggering S5b recalc |
 | `DependencyEdge` | `domain.port.repository` | "Cell X depends on input Y" |
 
 ---

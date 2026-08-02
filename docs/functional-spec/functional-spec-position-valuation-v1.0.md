@@ -816,6 +816,40 @@ This example demonstrates the full chain: volume supersession event → dependen
 
 **FR-063.** Forward curves are stored at curve pillars with a defined expansion rule to atomic intervals (shaping profiles); the valuation layer consumes expanded per-interval values but records the **curve version**, not per-interval copies.
 
+### 8.3 Extended market data types
+
+**FR-064.** The market data port supports six data types, classified by `MarketDataType` enum: `FIXING`, `FORWARD_CURVE`, `FX_RATE`, `INDEX`, `VOL_SURFACE`, `SPREAD`. Volatility surfaces are keyed by `(surfaceId, strikeDelta, expiryTenor, asOfDate)` and return implied volatility. Spreads are keyed identically to fixings and return a basis value.
+
+**FR-065.** `lookupVolSurface()` and `lookupSpread()` are default methods on `MarketDataPort`, returning zero/PROVISIONAL defaults for implementations that do not support them (backward compatibility with existing stubs and test harnesses).
+
+### 8.4 Market data persistence
+
+**FR-066.** Market data is persisted in 6 JPA entity tables in a `market_data` PostgreSQL schema: `fixing`, `forward_curve`, `fx_rate`, `index_value`, `vol_surface`, `spread`. All numeric values use `NUMERIC(18,8)`. Every row carries `tenant_id`, `version_id`, `quality_state`, and `created_at`.
+
+**FR-067.** Query semantics differ by type: fixings, indices, and spreads use **exact match** on natural key + latest `version_id`; forward curves, FX rates, and vol surfaces use **floor semantics** on `as_of_date` (greatest date <= requested date) + latest `version_id`.
+
+**FR-068.** Version-pinned lookup (`findAtVersion`) bypasses floor semantics and matches exactly on `(tenant_id, series, interval_start, version_id)`.
+
+### 8.5 Market data caching
+
+**FR-069a.** A tenant-isolated Redis cache sits in front of the database. Key scheme: `md:{TYPE}:{tenant}:{series}:{lookupKey}`. Cache hit returns without database access. Cache miss loads from the database and populates the cache before returning.
+
+**FR-069b.** TTL is differentiated by volatility: **stable data** (fixings, FX, indices, spreads) = 24 hours; **volatile data** (forward curves, vol surfaces) = 1 hour.
+
+**FR-069c.** `lookupAtVersion()` always bypasses the cache to guarantee reproducibility (FR-048f). Version-pinned queries go directly to the database.
+
+**FR-069d.** Cache miss with no database data returns a `PROVISIONAL` quality result with `BigDecimal.ZERO` (or `BigDecimal.ONE` for FX rates, preserving the neutral-rate pattern).
+
+### 8.6 Market data cache invalidation
+
+**FR-069e.** The `MarketDataUpdated` event carries `(tenantId, dataType, series, affectedRangeStart, affectedRangeEnd, newVersionId, eventTime)`. When `affectedRangeStart` and `affectedRangeEnd` are both non-null, only the affected range is invalidated; when null, the full series is invalidated.
+
+**FR-069f.** `MarketDataUpdatedConsumer` (Kafka, Pattern #26) consumes `MarketDataUpdated` events and delegates to `MarketDataCache.invalidate()`. Invalidation is idempotent — re-processing the same event is a no-op.
+
+### 8.7 CurveTick event formalization
+
+**FR-069g.** The `CurveTick` event carries `(tenantId, series, affectedPillars, observationTime, versionId, eventTime)`. `affectedPillars` is a `List<YearMonth>` identifying which forward curve months changed. The `CurveTickConsumer` computes a `DeliveryRange` from `min/max(affectedPillars)`, queries the dependency index for affected cells, and re-executes `ForwardMarkJob` for each affected position.
+
 ---
 
 ## 9. S5 — PositionValuation
