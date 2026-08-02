@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<persistence xmlns="https://jakarta.ee/xml/ns/persistence"
+             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+             xsi:schemaLocation="https://jakarta.ee/xml/ns/persistence
+                                 https://jakarta.ee/xml/ns/persistence/persistence_3_2.xsd"
+             version="3.2">
+
+    <persistence-unit name="pv-integration-test" transaction-type="RESOURCE_LOCAL">
+        <provider>org.hibernate.jpa.HibernatePersistenceProvider</provider>
+
+        <!-- All JPA entities from pv-persistence -->
+        <class>com.power.posval.persistence.entity.FixingEntity</class>
+        <class>com.power.posval.persistence.entity.ForwardCurveEntity</class>
+        <class>com.power.posval.persistence.entity.FxRateEntity</class>
+        <class>com.power.posval.persistence.entity.IndexValueEntity</class>
+        <class>com.power.posval.persistence.entity.SpreadEntity</class>
+        <class>com.power.posval.persistence.entity.VolSurfaceEntity</class>
+        <class>com.power.posval.persistence.entity.VolumeSeriesEntity</class>
+        <class>com.power.posval.persistence.entity.VolumeIntervalEntity</class>
+        <class>com.power.posval.persistence.entity.PositionLedgerEntryEntity</class>
+        <class>com.power.posval.persistence.entity.SettlementCellEntity</class>
+        <class>com.power.posval.persistence.entity.StruckMarkEntity</class>
+        <class>com.power.posval.persistence.entity.TradeIntervalCacheEntity</class>
+        <class>com.power.posval.persistence.entity.OutboxEntity</class>
+
+        <exclude-unlisted-classes>true</exclude-unlisted-classes>
+
+        <properties>
+            <!-- H2 in-memory with multi-schema support -->
+            <property name="jakarta.persistence.jdbc.driver" value="org.h2.Driver"/>
+            <property name="jakarta.persistence.jdbc.url"
+                      value="jdbc:h2:mem:pvtest;DB_CLOSE_DELAY=-1;INIT=CREATE DOMAIN IF NOT EXISTS &quot;jsonb&quot; AS CLOB\;CREATE SCHEMA IF NOT EXISTS &quot;market_data&quot;\;CREATE SCHEMA IF NOT EXISTS &quot;volume_series&quot;\;CREATE SCHEMA IF NOT EXISTS &quot;position&quot;\;CREATE SCHEMA IF NOT EXISTS &quot;valuation&quot;\;CREATE SCHEMA IF NOT EXISTS &quot;trade&quot;"/>
+            <property name="jakarta.persistence.jdbc.user" value="sa"/>
+            <property name="jakarta.persistence.jdbc.password" value=""/>
+
+            <!-- Hibernate settings -->
+            <property name="hibernate.hbm2ddl.auto" value="create-drop"/>
+            <property name="hibernate.show_sql" value="true"/>
+            <property name="hibernate.format_sql" value="false"/>
+            <property name="hibernate.jdbc.batch_size" value="50"/>
+            <property name="hibernate.order_inserts" value="true"/>
+            <property name="hibernate.order_updates" value="true"/>
+            <!-- Quote identifiers to avoid H2 reserved word conflicts (e.g. "value") -->
+            <property name="hibernate.globally_quoted_identifiers" value="true"/>
+        </properties>
+    </persistence-unit>
+</persistence>

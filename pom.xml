@@ -19,6 +19,7 @@
         <module>pv-redis</module>
         <module>pv-kafka</module>
         <module>pv-guice</module>
+        <module>pv-integration-tests</module>
     </modules>
 
     <properties>
