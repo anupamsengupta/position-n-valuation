@@ -9,7 +9,6 @@ import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
 import java.time.Instant;
-import java.time.YearMonth;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.Map;
@@ -47,15 +46,6 @@ class EventSmokeTest {
         assertNull(event.seriesType());
         assertNull(event.oldVersionId());
         assertEquals(2L, event.newVersionId());
-    }
-
-    @Test
-    void volumeChunkMaterialized() {
-        var event = new VolumeChunkMaterialized(
-            new SeriesKey("VS-1"), VolumeLayer.VOLUME, SeriesType.FORECAST,
-            YearMonth.of(2025, 3), 1L, 744, MaterializationStatus.FULL, NOW);
-        assertEquals(YearMonth.of(2025, 3), event.chunkMonth());
-        assertEquals(744, event.intervalCount());
     }
 
     @Test

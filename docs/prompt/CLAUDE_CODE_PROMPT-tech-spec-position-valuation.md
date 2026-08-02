@@ -54,10 +54,10 @@ Cite inline in a header line:
 ### Java 21 features to apply consistently
 
 - `record` for every value object, event payload, and command payload
-- `sealed interface … permits …` for `PriceExpression`, `VolumeResolver`, `MaterializationStrategy`
+- `sealed interface … permits …` for `PriceExpression`, `VolumeResolver`
 - Pattern matching `switch` for `PriceExpression` tree walkers and event dispatch — show at least one exhaustive `switch` with all arms
 - `SequencedCollection` / `SequencedSet` for ordered `VolumeInterval` collections
-- Virtual threads via `Executors.newVirtualThreadPerTaskExecutor()` for chunked materialization (S3, S6b)
+- Virtual threads via `Executors.newVirtualThreadPerTaskExecutor()` for batch import and settlement materialization
 - Text blocks for JPQL and multi-line SQL fragments
 
 ## Deliverable structure
@@ -70,7 +70,7 @@ Single markdown file, sections in this exact order. If a section is not applicab
 4. **Module structure** — reproduce ADR §1.1 tree; add a per-module `build.gradle` **dependency skeleton only** (deps + repositories, no plugins config).
 5. **Domain model — value objects, events, commands** (`pv-domain`)
    - Records: `DeliveryPeriod`, `SeriesKey`, `Money`, `TimeRange`, `DeliveryRange`, `VolumeReference` — full declarations, static factories, validation invariants.
-   - Event records: `VolumePublished`, `VolumeSuperseded`, `VolumeChunkMaterialized`, `SettlementComputed`.
+   - Event records: `VolumePublished`, `VolumeSuperseded`, `SettlementComputed`.
    - Command records: `TradeCapture`, `TradeAmend`, `TradeCancel`.
    - Enums with behavior: `QualityState` (transition guards as methods), `SeriesType`, `VolumeUnit`.
 6. **Domain model — aggregates & entities** (`pv-domain` interfaces + `pv-persistence` JPA classes clearly separated)
@@ -91,7 +91,7 @@ Single markdown file, sections in this exact order. If a section is not applicab
    - `VolumeResolver` sealed interface + `ProfileResolver`, `ForecastResolver` (D-11: no branching in code — resolution is data-driven).
    - `VolumeSeriesFactory.createForTrade()` — Pattern #7 routing PROFILE vs FORECAST.
    - `VolumeSeriesRepository` + `VolumeSeriesSpec` (Pattern #18, #19) — functional-interface specification composable via `.and()`/`.or()`.
-   - `MaterializationStrategy` sealed interface + `RollingHorizonStrategy` excerpt.
+   - `MaterializationStrategy` interface with `EagerStrategy` for PROFILE series. FORECAST/METERED_ACTUAL intervals arrive via import.
    - `BatchWriter` (Pattern #20) — flush/clear every 50 entities.
    - Event publishing: `DomainEventPublisher` port; `VolumePublished` payload including `series_key + version_id + delivery_range + quality_state` (FR-052a, Pattern #27).
 10. **S4 — Market Data Store**

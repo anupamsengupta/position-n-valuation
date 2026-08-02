@@ -48,7 +48,7 @@ power-position-valuation/
 │   ├── service/                      ← Domain services, strategies, state machines
 │   │   ├── VolumeResolver.java       ← sealed interface
 │   │   ├── PriceEvaluator.java       ← sealed interface
-│   │   ├── MaterializationStrategy.java
+│   │   ├── MaterializationStrategy.java  ← EagerStrategy only (PROFILE); FORECAST/METERED_ACTUAL use import
 │   │   └── QualityStateTransition.java
 │   ├── command/                      ← TradeCapture, TradeAmend, TradeCancel (records)
 │   └── event/                        ← VolumePublished, VolumeSuperseded (records)
@@ -119,7 +119,7 @@ power-position-valuation/
 |---|---|---|---|---|
 | 9 | Strategy — Volume Resolution | `VolumeResolver` sealed interface in `pv-domain` with `ProfileResolver` and `ForecastResolver`. In practice, one code path — the "strategy" is the data properties, not branching code (D-11: no category branching). Implementations are pure domain logic, no framework dependency | D-11, FR-050–FR-051, V3.0 §2.3 | `sealed interface` |
 | 10 | Strategy — Price Evaluation | Tree walker in `pv-domain` dispatches per node type via pattern matching `switch`: `ConstantLeaf` → return value; `MarketDataLeaf` → lookup from `MarketDataPort` at correct version; `IndexLeaf` → macro index with ref-month mapping; `Clamp` → floor/cap/collar; `Escalate` → base × CPI ratio; `ConditionalGate` → neg-price zeroing; `ConditionalPassThrough` → neg-price pass-through (FR-042a). Purpose-based leaf resolution (FR-048e): forward marks use forward curve, settlement uses DA settlement series. Market data access via `MarketDataPort` interface, not direct DB call | D-2, FR-020, FR-040, FR-048–FR-048f, §6.4–§6.5 | Pattern matching `switch` over `sealed` types |
-| 11 | Strategy — Materialization | `MaterializationStrategy` interface in `pv-domain`: `EagerStrategy`, `RollingHorizonStrategy`, `ChunkStrategy`. Persistence via `VolumeSeriesRepository` port — strategy does not know whether JPA, JDBC, or a mock backs it | FR-056, V3.0 §4.1–§4.3, S6b | — |
+| 11 | Strategy — Materialization | `MaterializationStrategy` interface in `pv-domain` with `EagerStrategy` for PROFILE series interval generation during trade capture. FORECAST and METERED_ACTUAL intervals are ingested via import (see `TECH-SPEC-volume-series-import-v1.0.md`). Persistence via `VolumeSeriesRepository` port — strategy does not know whether JPA, JDBC, or a mock backs it | FR-056, V3.0 §4.1, S3 | — |
 | 12 | Composite | `PriceExpression` tree in `pv-domain` — recursive `evaluate(interval, marketData)`. Leaf nodes are terminals (`ConstantLeaf`, `MarketDataLeaf`, `IndexLeaf`); operator nodes compose children (`Clamp` for collar, `Escalate` for CPI, `ConditionalGate` for neg-price zeroing, `FxConvert` for cross-currency). Clause precedence encoded per expression (contract law, not hard-coded — FR-042). Resolution emits `(value, active_leaves, input_version_set)` per FR-048f: collar-inside → CPI inactive; neg-gate fires → everything below inactive. Complexity ranges from 1 leaf / 0 operators (fixed price) to 6+ leaves / 5+ operators (full PPA — FR-048d). Entirely in `pv-domain` | D-2, FR-025, FR-042, FR-048d–FR-048g, §6.2, §6.5 | Pattern matching for tree traversal |
 | 13 | Decorator / Filter Chain | `TenantContextFilter` → `AuditFilter` → `RequestHandler`. **Guice variant:** Guice `MethodInterceptor` bound via `bindInterceptor(Matchers.annotatedWith(TenantAware.class), ...)` in `TenantModule`. The `@TenantAware` annotation itself lives in `pv-domain`; the interceptor implementation lives in `pv-guice` | O-2, FR-075, V2.0 §11, P1 | — |
 
@@ -129,7 +129,7 @@ power-position-valuation/
 
 | # | Pattern | Where Applied | Spec Reference | Java 21 Feature |
 |---|---|---|---|---|
-| 14 | Observer / Domain Events | `VolumePublished`, `VolumeSuperseded`, `VolumeChunkMaterialized`, `SettlementComputed` — all `record` types in `pv-domain/event/`. Published via `DomainEventPublisher` port interface. **Guice variant:** bound to an in-process event bus (Guava `EventBus` or custom) for unit testing, or to a Kafka-backed implementation (`pv-kafka`) for production | V3.0 §8.1–§8.3, FR-052a–FR-052c, V2.0 §13.2 | `record` for event payloads |
+| 14 | Observer / Domain Events | `VolumePublished`, `VolumeSuperseded`, `SettlementComputed` — all `record` types in `pv-domain/event/`. Published via `DomainEventPublisher` port interface. **Guice variant:** bound to an in-process event bus (Guava `EventBus` or custom) for unit testing, or to a Kafka-backed implementation (`pv-kafka`) for production | V3.0 §8.1–§8.2, FR-052a–FR-052c, V2.0 §13.2 | `record` for event payloads |
 | 15 | Template Method | `AbstractMaterializationJob<R>` in `pv-domain/service/` with collect-then-flush hooks: `resolveVolume()`, `evaluatePrice()`, `buildResult()` (pure computation), `flushResults()` (batch I/O via `saveAll` + `publishAll`). Concrete implementations for settlement (S5a), forward marks (S5b), EOD strike (S5c). Repository and cache ports are constructor-injected via `@Inject` (JSR-330) | FR-056, S5a/S5b/S5c | — |
 | 16 | State Machine | `QualityState` transitions with guard conditions. Pure enum logic in `pv-domain` — no framework dependency. Guards are methods on the enum: `canTransitionTo(QualityState target)`, `transitionTo(QualityState target)` throws `IllegalStateTransitionException` | FR-054, V3.0 §3.2.6, P2 | Enum with `transitionTo(target)` method + guard |
 | 17 | Command | `TradeCapture`, `TradeAmend`, `TradeCancel` — `record` types in `pv-domain/command/`. Each encapsulates a full transactional unit. Command handlers in `pv-domain/service/` accept commands and interact with ports. Transaction boundary managed by the Guice `@Transactional` interceptor (from `guice-persist`) or a custom `UnitOfWork` wrapper | FR-001–FR-005, FR-037–FR-038, V2.0 §13.1 | `record` for command payloads |
@@ -189,10 +189,10 @@ power-position-valuation/
 | # | Java 21 Feature | Application | Code Example |
 |---|---|---|---|
 | 1 | Records | All value objects: `DeliveryPeriod`, `SeriesKey`, `Money`, `TimeRange`, `DeliveryRange`. Event payloads: `VolumePublished`, `VolumeSuperseded`. Command payloads: `TradeCapture`, `TradeAmend` | `record DeliveryPeriod(ZonedDateTime start, ZonedDateTime end, ZoneId zone) { }` |
-| 2 | Sealed interfaces | `PriceExpression` hierarchy (3 leaf types + 10 operator types per FR-048h), `VolumeResolver`, `MaterializationStrategy`. Compiler-enforced exhaustive matching in `switch` — adding a new operator produces compile errors at every unhandled dispatch | `sealed interface PriceExpression permits ConstantLeaf, MarketDataLeaf, IndexLeaf, Add, Subtract, Multiply, Divide, Clamp, Escalate, ConditionalGate, ConditionalPassThrough, TimeAverage, FxConvert { }` |
+| 2 | Sealed interfaces | `PriceExpression` hierarchy (3 leaf types + 10 operator types per FR-048h), `VolumeResolver`. Compiler-enforced exhaustive matching in `switch` — adding a new operator produces compile errors at every unhandled dispatch | `sealed interface PriceExpression permits ConstantLeaf, MarketDataLeaf, IndexLeaf, Add, Subtract, Multiply, Divide, Clamp, Escalate, ConditionalGate, ConditionalPassThrough, TimeAverage, FxConvert { }` |
 | 3 | Pattern matching (`switch`) | PriceExpression tree walker: dispatch evaluation per node type (FR-048h). Event routing: dispatch handler per event type. QualityState transitions | `case ConstantLeaf c -> c.value(); case MarketDataLeaf m -> lookupMarketData(m, purpose); case Clamp cl -> clamp(eval(cl.min()), eval(cl.max()), eval(cl.inner()));` |
 | 4 | Text blocks | JPQL queries, SQL fragments for complex bitemporal filters, Flyway migration SQL, outbox payload templates | `String jpql = """ SELECT v FROM VolumeSeries v WHERE v.seriesKey = :key AND v.qualityState = 'CURRENT' """;` |
-| 5 | Virtual threads | I/O-bound chunk materialization workers — each chunk (one delivery month, ~2,976 intervals) is independent. No Spring thread pool dependency — direct use of `Executors.newVirtualThreadPerTaskExecutor()` | `try (var executor = Executors.newVirtualThreadPerTaskExecutor()) { chunks.forEach(c -> executor.submit(() -> materialize(c))); }` |
+| 5 | Virtual threads | I/O-bound workers for batch import and settlement materialization. No Spring thread pool dependency — direct use of `Executors.newVirtualThreadPerTaskExecutor()` | `try (var executor = Executors.newVirtualThreadPerTaskExecutor()) { batches.forEach(b -> executor.submit(() -> process(b))); }` |
 | 6 | `SequencedCollection` | Ordered interval lists on `VolumeSeries.intervals` (ordered by `intervalStart`), version chains on audit history (`getFirst()` / `getLast()` for boundary access) | `SequencedSet<VolumeInterval> intervals = new TreeSet<>(Comparator.comparing(VolumeInterval::intervalStart));` |
 
 ---
@@ -285,7 +285,7 @@ public class DomainModule extends AbstractModule {
     protected void configure() {
         bind(VolumeSeriesFactory.class).in(Singleton.class);
         bind(PriceEvaluator.class).to(CompositePriceEvaluator.class);
-        bind(MaterializationStrategy.class).to(RollingHorizonStrategy.class);
+        bind(MaterializationStrategy.class).to(EagerStrategy.class);
     }
 }
 ```

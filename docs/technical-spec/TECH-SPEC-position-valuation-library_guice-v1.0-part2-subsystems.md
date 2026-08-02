@@ -489,73 +489,28 @@ var spec = VolumeSeriesSpec.byAsset("WP-NORDSEE")
 List<VolumeSeries> results = repo.findAll(tenantId, spec);
 ```
 
-### 9.4 `MaterializationStrategy` Sealed Interface — Pattern #11, FR-056, V3.0 §4.1–§4.3, S3, S6b
+### 9.4 `MaterializationStrategy` — Pattern #11, FR-056, S3
 
-> **TR-016** — `MaterializationStrategy` is a `sealed interface` with three permits corresponding to V3.0 §4.1–§4.3: `EagerStrategy` (short-tenor), `RollingHorizonStrategy` (long-tenor PPA/bilateral), and `ChunkStrategy` (per-month parallel chunk). Selection is data-driven: based on `totalExpectedIntervals` and `seriesType`. (Extends FR-056.)
+> **TR-016** — `MaterializationStrategy` provides `EagerStrategy` for PROFILE series interval generation during trade capture. FORECAST and METERED_ACTUAL intervals arrive via the volume-series import path (see `TECH-SPEC-volume-series-import-v1.0.md`), not through system-generated materialization. (Extends FR-056.)
 
 ```java
 /**
- * Sealed materialization strategy for volume series interval generation.
+ * Materialization strategy for volume series interval generation.
+ * Only EagerStrategy is used — for PROFILE series during trade capture.
+ * FORECAST and METERED_ACTUAL intervals are ingested via import.
  * Lives in pv-domain/service/.
  */
-public sealed interface MaterializationStrategy
-    permits EagerStrategy, RollingHorizonStrategy, ChunkStrategy {
+public interface MaterializationStrategy {
 
     /**
      * Materialize intervals for the given series.
      * @param series target volume series
      * @param writer batch writer for persistence (Pattern #20)
-     * @param publisher event publisher for VolumePublished/ChunkMaterialized
+     * @param publisher event publisher for VolumePublished
      */
     void materialize(VolumeSeries series,
                      BatchWriter writer,
                      DomainEventPublisher publisher);
-}
-```
-
-**`RollingHorizonStrategy` excerpt:**
-
-```java
-/**
- * Rolling-horizon: materialize M+1 through M+3, enqueue remaining as chunks.
- * V3.0 §4.2: long-tenor trades (PPAs, multi-year bilateral).
- */
-public record RollingHorizonStrategy(
-    int horizonMonths,    // default: 3 (M+1..M+3)
-    ChunkEnqueuer enqueuer
-) implements MaterializationStrategy {
-
-    @Override
-    public void materialize(VolumeSeries series,
-                            BatchWriter writer,
-                            DomainEventPublisher publisher) {
-        YearMonth now = YearMonth.now();
-        YearMonth through = now.plusMonths(horizonMonths);
-
-        // Near-term: materialize immediately
-        List<VolumeInterval> nearTerm = generateIntervals(
-            series, now.atDay(1), through.atEndOfMonth());
-        writer.writeAll(nearTerm);
-
-        // Update series status
-        series.setMaterializationStatus(MaterializationStatus.PARTIAL);
-        series.setMaterializedThrough(through);
-
-        publisher.publish(new VolumePublished(
-            series.seriesKey().value(), VolumeLayer.VOLUME,
-            series.seriesType(), series.versionId(),
-            series.deliveryRange(), series.granularity(),
-            series.qualityState(), "PARTIAL", Instant.now()));
-
-        // Far-dated: enqueue monthly chunks (Kafka messages)
-        // V3.0 §4.3: each chunk is an independent Kafka message
-        YearMonth month = through.plusMonths(1);
-        YearMonth end = YearMonth.from(series.deliveryPeriod().end());
-        while (!month.isAfter(end)) {
-            enqueuer.enqueue(series.seriesKey(), month);
-            month = month.plusMonths(1);
-        }
-    }
 }
 ```
 
@@ -608,7 +563,7 @@ public class BatchWriter {
 
 ### 9.6 Event Publishing — Pattern #27, FR-052a, FR-052c, V3.0 §8, S3
 
-> **TR-019** — Volume events (`VolumePublished`, `VolumeSuperseded`, `VolumeChunkMaterialized`) carry sufficient state for downstream routing without fetching the event source: `series_key + version_id + delivery_range + quality_state`. The `DomainEventPublisher` port writes to the outbox within the same transaction as the volume mutation. (Extends FR-052a, Pattern #27.)
+> **TR-019** — Volume events (`VolumePublished`, `VolumeSuperseded`) carry sufficient state for downstream routing without fetching the event source: `series_key + version_id + delivery_range + quality_state`. The `DomainEventPublisher` port writes to the outbox within the same transaction as the volume mutation. (Extends FR-052a, Pattern #27.)
 
 Event record declarations are in Part 1 §5.2. The `DomainEventPublisher` port:
 

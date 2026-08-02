@@ -171,7 +171,7 @@ power-position-valuation/
 │   ├── service/                      ← Domain services, strategies
 │   │   ├── VolumeResolver.java       ← sealed interface
 │   │   ├── PriceEvaluator.java
-│   │   ├── MaterializationStrategy.java ← sealed interface
+│   │   ├── MaterializationStrategy.java ← EagerStrategy only (PROFILE); FORECAST/METERED_ACTUAL use import
 │   │   └── VolumeSeriesFactory.java
 │   ├── command/                      ← TradeCapture, TradeAmend, TradeCancel
 │   └── event/                        ← VolumePublished, VolumeSuperseded, ...
@@ -725,25 +725,6 @@ public record VolumeSuperseded(
     Long oldVersionId,         // nullable for first publication
     long newVersionId,
     QualityState qualityState,
-    Instant eventTime
-) {}
-```
-
-#### `VolumeChunkMaterialized` — Pattern #14, FR-056, S3
-
-```java
-/**
- * Emitted when a chunk of a PARTIAL series is materialized (rolling-horizon extension).
- * V3.0 §8.3.
- */
-public record VolumeChunkMaterialized(
-    SeriesKey seriesKey,
-    VolumeLayer layer,
-    SeriesType seriesType,
-    YearMonth chunkMonth,
-    long versionId,
-    int intervalCount,
-    MaterializationStatus materializationStatus,
     Instant eventTime
 ) {}
 ```

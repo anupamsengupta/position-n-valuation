@@ -228,7 +228,6 @@ public class BitemporalAuditListener {
 | `trade.position.cancelled` | `{trade_id}` | `PositionCancelled` | `trade_id` | Volume service, valuation, slot cache |
 | `volume.series.published` | `{series_key}` | `VolumePublished` | `series_key` | Valuation (S5b), slot cache (S6), S6b |
 | `volume.series.superseded` | `{series_key}` | `VolumeSuperseded` | `series_key` | Valuation (S5a, S5b), slot cache, S6b, dependency index |
-| `volume.chunk.materialized` | `{series_key}` | `VolumeChunkMaterialized` | `series_key` | Monitoring dashboard |
 | `valuation.settlement.computed` | `{position_id}` | `SettlementComputed` | `position_id` | Dependency index, rollups |
 | `marketdata.fixing.published` | `{series}` | `SettlementPublished` | `series` | Valuation (S5a) |
 | `marketdata.curve.tick` | `{series}` | `CurveTick` | `series` | Valuation (S5b), forward marks |
@@ -1470,7 +1469,7 @@ public class PositionValuationApp {
 | FR-020–FR-025 | Market, DeliveryPoint, Calendar | `DeliveryPeriod`, `MarketDataPort`, `PriceEvaluator` |
 | FR-030–FR-037 | Position Ledger attributes | `PositionLedgerEntry` (signed qty, Builder, delivery-month blocks), `TradeCaptureHandler`, `TradeAmendHandler`, `TradeCancelHandler`, `NumericPrecision` (FR-036: configurable precision) |
 | FR-040–FR-048h | PriceExpression | `PriceExpression` sealed hierarchy (13 types), `PriceEvaluator.evaluate()`, pattern-matching `switch`, `PriceResolution` (value, activeLeaves, inputVersionSet) |
-| FR-050–FR-057a | Volume Series | `VolumeSeries`, `VolumeInterval`, `VolumeResolver`, `VolumeSeriesFactory`, `VolumeSeriesRepository`, `VolumeSeriesSpec`, `MaterializationStrategy`, `BatchWriter`, `VolumePublished`, `VolumeSuperseded` |
+| FR-050–FR-057a | Volume Series | `VolumeSeries`, `VolumeInterval`, `VolumeResolver`, `VolumeSeriesFactory`, `VolumeSeriesRepository`, `VolumeSeriesSpec`, `MaterializationStrategy` (`EagerStrategy`), `BatchWriter`, `VolumePublished`, `VolumeSuperseded` |
 | FR-060–FR-063 | Market Data Store | `MarketDataPort` (read-only, version pinning), `MarketDataLookup` |
 | FR-070–FR-074 | Settlement cells | `SettlementCellEntity`, `SettlementMaterializationJob`, `input_version_set` JSONB column |
 | FR-075–FR-076 | Forward marks | `ForwardMarkStore` (ephemeral), `ForwardMark` record |
@@ -1490,7 +1489,7 @@ public class PositionValuationApp {
 |-----------|-------------|----------------|
 | S1 | Position Ledger | `PositionLedgerEntry`, `PositionLedgerEntryEntity`, `PositionLedgerRepository`, `JpaPositionLedgerRepository`, `TradeCaptureHandler`, `TradeAmendHandler`, `TradeCancelHandler`, `DefaultTradeCaptureHandler` |
 | S2 | PriceExpression | `PriceExpression` (sealed, 13 types), `PriceEvaluator`, `DefaultPriceEvaluator`, `PriceResolution`, `ResolutionPurpose` |
-| S3 | VolumeSeries | `VolumeSeries`, `VolumeSeriesEntity`, `VolumeInterval`, `VolumeIntervalEntity`, `VolumeReference`, `MeteredActualVolumeSeries`, `VolumeResolver`, `ProfileResolver`, `ForecastResolver`, `VolumeSeriesFactory`, `VolumeSeriesRepository`, `VolumeSeriesSpec`, `MaterializationStrategy`, `RollingHorizonStrategy`, `BatchWriter`, `VolumePublished`, `VolumeSuperseded`, `VolumeChunkMaterialized` |
+| S3 | VolumeSeries | `VolumeSeries`, `VolumeSeriesEntity`, `VolumeInterval`, `VolumeIntervalEntity`, `VolumeReference`, `MeteredActualVolumeSeries`, `VolumeResolver`, `ProfileResolver`, `ForecastResolver`, `VolumeSeriesFactory`, `VolumeSeriesRepository`, `VolumeSeriesSpec`, `MaterializationStrategy` (`EagerStrategy`), `BatchWriter`, `VolumePublished`, `VolumeSuperseded` |
 | S4 | Market Data Store | `MarketDataPort`, `MarketDataLookup` |
 | S5a | Settlement cells | `SettlementCellEntity`, `SettlementCellRepository` (incl. `saveAll`), `JpaSettlementCellRepository` (BatchWriter-backed), `SettlementMaterializationJob`, `SettlementComputed`, `DomainEventPublisher.publishAll()` |
 | S5b | Forward marks | `ForwardMarkStore`, `ForwardMark`, `ForwardMarkJob`, `ForwardMarkJob.MarkEntry` |
@@ -1593,7 +1592,7 @@ Extends functional-spec §16 (O-1 through O-8) with implementation-specific item
 | JEP | Feature | Usage in This Spec |
 |-----|---------|-------------------|
 | JEP 395 | Records | All value objects, event payloads, command payloads, `PriceExpression` types |
-| JEP 409 | Sealed Classes | `PriceExpression` (13 types), `VolumeResolver` (2 types), `MaterializationStrategy` (3 types), `PrunePolicy` (2 types) |
+| JEP 409 | Sealed Classes | `PriceExpression` (13 types), `VolumeResolver` (2 types), `PrunePolicy` (2 types) |
 | JEP 441 | Pattern Matching for `switch` | `PriceEvaluator` tree walker (exhaustive dispatch over 13 types) |
 | JEP 378 | Text Blocks | JPQL bitemporal as-of query (§8.3), SQL fragments |
 | JEP 444 | Virtual Threads | `TradeIntervalCacheRebuilder` chunk processing, Kafka consumer threads (§19.1) |
@@ -1636,7 +1635,7 @@ Extends functional-spec §16 (O-1 through O-8) with implementation-specific item
 | TR-013 | FR-037 | §8.4 | Trade commands are exclusive position producers |
 | TR-014 | D-9, V2.0 §13.4 | §8.5 | Outbox write in same transaction |
 | TR-015 | D-11, FR-051 | §9.1 | `VolumeResolver` sealed, unified resolution |
-| TR-016 | FR-056 | §9.4 | `MaterializationStrategy` sealed, data-driven selection |
+| TR-016 | FR-056 | §9.4 | `MaterializationStrategy` with `EagerStrategy` for PROFILE; FORECAST/METERED_ACTUAL via import |
 | TR-017 | V2.0 §17 | §9.5 | `BatchWriter` flush/clear every 50, order_inserts=true |
 | TR-018 | FR-006 | Part 1 §6.3 | Bitemporal columns stored as UTC `timestamptz` |
 | TR-019 | FR-052a, Pattern #27 | §9.6 | Volume events carry routing state |

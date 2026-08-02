@@ -106,7 +106,6 @@ Data carriers — minimal validation, just record declarations matching spec sig
 |------|---------|---------|
 | `VolumePublished` | `event/` | `seriesType` nullable |
 | `VolumeSuperseded` | `event/` | `oldVersionId` nullable (boxed `Long`) |
-| `VolumeChunkMaterialized` | `event/` | — |
 | `SettlementComputed` | `event/` | references `Money`, `Set<String>`, `Map<String,Long>` |
 | `TradeCapture` | `command/` | `assetId`, `meteredSeriesKey` nullable |
 | `TradeAmend` | `command/` | nullable "changed" fields |
@@ -187,10 +186,10 @@ Interfaces declared in Part 1 module tree, fully specified in Parts 2/3. Impleme
 | `TenantContext` | `port/tenant/` |
 | `DataSourceRouter` | `port/datasource/` |
 | `VolumeResolver` (sealed) + `ProfileResolver`, `ForecastResolver` stubs | `service/` |
-| `MaterializationStrategy` (sealed) + permitted type stubs | `service/` |
+| `MaterializationStrategy` + `EagerStrategy` (PROFILE only; FORECAST/METERED_ACTUAL use import) | `service/` |
 | `VolumeSeriesFactory` | `service/` |
 
-Sealed interface permitted subtypes declared as `non-sealed interface` stubs to satisfy `permits` clause.
+`VolumeResolver` sealed interface permitted subtypes declared as `non-sealed interface` stubs to satisfy `permits` clause.
 
 **Tests:** Compile-only — no behavioral tests for pure stubs.
 
@@ -245,7 +244,7 @@ Sealed interface permitted subtypes declared as `non-sealed interface` stubs to 
 | `PositionLedgerEntryTest` | 11 | Builder with all required fields, 9 missing-field throws, optional nulls |
 | `PriceExpressionTest` | 6 | Construction, tree building, exhaustive switch |
 | `DefaultPriceEvaluatorTest` | 18 | Fixed price, add/sub/mul/div, clamp (inside/floor/ceiling), ConditionalGate, FxConvert, MarketDataLeaf (forward/settlement), Escalate, nested PPA tree, version tracking, ConditionalPassThrough |
-| `EventSmokeTest` | 4 | VolumePublished, VolumeSuperseded, VolumeChunkMaterialized, SettlementComputed |
+| `EventSmokeTest` | 3 | VolumePublished, VolumeSuperseded, SettlementComputed |
 | `CommandSmokeTest` | 3 | TradeCapture, TradeAmend, TradeCancel |
 
 ---

@@ -787,7 +787,7 @@ The codebase uses `sealed interface` in three places:
 
 2. **`VolumeResolver`** — 2 subtypes (`ProfileResolver`, `ForecastResolver`). Sealed because the volume resolution strategy must be one of exactly these two.
 
-3. **`MaterializationStrategy`** — 3 subtypes for controlling when intervals are materialized.
+3. **`MaterializationStrategy`** — `EagerStrategy` for PROFILE series interval generation during trade capture. FORECAST and METERED_ACTUAL intervals arrive via import, not system-generated materialization.
 
 ### Records (Java 16+)
 
