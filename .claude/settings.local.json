@@ -15,7 +15,11 @@
       "Bash(mvn clean:*)",
       "Bash(find .:*)",
       "Bash(ls:*)",
-      "Bash(mvn:*)"
+      "Bash(mvn:*)",
+      "Bash(netstat:*)",
+      "Bash(taskkill:*)",
+      "Bash(curl:*)",
+      "Bash(xargs -I{} taskkill //PID {} //F)"
     ]
   }
 }

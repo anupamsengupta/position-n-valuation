@@ -3,10 +3,8 @@ package com.power.posval.app.config;
 import com.power.posval.app.provider.SpringEntityManagerProvider;
 import com.power.posval.app.provider.TransactionalExecutor;
 import com.power.posval.domain.port.event.DomainEventPublisher;
-import com.power.posval.domain.port.repository.MarketDataRepository;
 import com.power.posval.domain.port.repository.PositionLedgerRepository;
 import com.power.posval.domain.port.repository.SettlementCellRepository;
-import com.power.posval.domain.port.repository.VolumeSeriesRepository;
 import com.power.posval.persistence.adapter.JpaMarketDataRepository;
 import com.power.posval.persistence.adapter.JpaPositionLedgerRepository;
 import com.power.posval.persistence.adapter.JpaSettlementCellRepository;
@@ -16,10 +14,8 @@ import com.power.posval.persistence.batch.UnitOfWork;
 import com.power.posval.persistence.event.OutboxDomainEventPublisher;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
-import jakarta.inject.Provider;
-import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityManagerFactory;
-import jakarta.persistence.Persistence;
+import org.hibernate.jpa.HibernatePersistenceProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -58,17 +54,13 @@ public class PersistenceConfig {
     public EntityManagerFactory entityManagerFactory(DataSource dataSource) {
         Map<String, Object> props = new HashMap<>();
         props.put("jakarta.persistence.nonJtaDataSource", dataSource);
-        return Persistence.createEntityManagerFactory("pv-unit", props);
+        return new HibernatePersistenceProvider()
+                .createEntityManagerFactory("pv-unit", props);
     }
 
     @Bean
-    public SpringEntityManagerProvider springEntityManagerProvider(EntityManagerFactory emf) {
+    public SpringEntityManagerProvider entityManagerProvider(EntityManagerFactory emf) {
         return new SpringEntityManagerProvider(emf);
-    }
-
-    @Bean
-    public Provider<EntityManager> entityManagerProvider(SpringEntityManagerProvider provider) {
-        return provider;
     }
 
     @Bean
@@ -78,45 +70,40 @@ public class PersistenceConfig {
     }
 
     @Bean
-    public BatchWriter batchWriter(Provider<EntityManager> emProvider) {
+    public BatchWriter batchWriter(SpringEntityManagerProvider emProvider) {
         return new BatchWriter(emProvider);
     }
 
     @Bean
-    public UnitOfWork unitOfWork(Provider<EntityManager> emProvider) {
+    public UnitOfWork unitOfWork(SpringEntityManagerProvider emProvider) {
         return new UnitOfWork(emProvider);
     }
 
     @Bean
-    public JpaMarketDataRepository jpaMarketDataRepository(Provider<EntityManager> emProvider) {
+    public JpaMarketDataRepository marketDataRepository(SpringEntityManagerProvider emProvider) {
         return new JpaMarketDataRepository(emProvider);
     }
 
     @Bean
-    public MarketDataRepository marketDataRepository(JpaMarketDataRepository repo) {
-        return repo;
-    }
-
-    @Bean
-    public PositionLedgerRepository positionLedgerRepository(Provider<EntityManager> emProvider,
+    public PositionLedgerRepository positionLedgerRepository(SpringEntityManagerProvider emProvider,
                                                               BatchWriter batchWriter) {
         return new JpaPositionLedgerRepository(emProvider, batchWriter);
     }
 
     @Bean
-    public JpaVolumeSeriesRepository jpaVolumeSeriesRepository(Provider<EntityManager> emProvider,
+    public JpaVolumeSeriesRepository jpaVolumeSeriesRepository(SpringEntityManagerProvider emProvider,
                                                                 BatchWriter batchWriter) {
         return new JpaVolumeSeriesRepository(emProvider, batchWriter);
     }
 
     @Bean
-    public SettlementCellRepository settlementCellRepository(Provider<EntityManager> emProvider,
+    public SettlementCellRepository settlementCellRepository(SpringEntityManagerProvider emProvider,
                                                               BatchWriter batchWriter) {
         return new JpaSettlementCellRepository(emProvider, batchWriter);
     }
 
     @Bean
-    public DomainEventPublisher domainEventPublisher(Provider<EntityManager> emProvider) {
+    public DomainEventPublisher domainEventPublisher(SpringEntityManagerProvider emProvider) {
         return new OutboxDomainEventPublisher(emProvider);
     }
 }

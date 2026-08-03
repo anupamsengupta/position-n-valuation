@@ -15,6 +15,7 @@ import com.power.posval.domain.port.repository.PriceExpressionRepository;
 import com.power.posval.persistence.adapter.JpaVolumeSeriesRepository;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 
 import java.util.List;
 import java.util.Optional;
@@ -59,6 +60,7 @@ public class DomainServiceConfig {
     }
 
     @Bean
+    @Primary
     public VolumeSeriesRepository volumeSeriesRepository(JpaVolumeSeriesRepository jpaRepo) {
         return new VolumeSeriesRepository() {
             @Override public void save(VolumeSeries s) { jpaRepo.save(s); }

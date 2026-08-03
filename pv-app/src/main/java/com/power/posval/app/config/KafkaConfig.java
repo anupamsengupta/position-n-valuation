@@ -3,10 +3,9 @@ package com.power.posval.app.config;
 import com.power.posval.domain.port.repository.PositionLedgerRepository;
 import com.power.posval.domain.port.repository.VolumeSeriesRepository;
 import com.power.posval.domain.service.SettlementMaterializationJob;
+import com.power.posval.app.provider.SpringEntityManagerProvider;
 import com.power.posval.kafka.OutboxRelayProducer;
 import com.power.posval.kafka.TradeCapturedConsumer;
-import jakarta.inject.Provider;
-import jakarta.persistence.EntityManager;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
@@ -49,7 +48,7 @@ public class KafkaConfig {
     }
 
     @Bean
-    public OutboxRelayProducer outboxRelayProducer(Provider<EntityManager> emProvider,
+    public OutboxRelayProducer outboxRelayProducer(SpringEntityManagerProvider emProvider,
                                                     KafkaProducer<String, String> kafkaProducer) {
         return new OutboxRelayProducer(emProvider, kafkaProducer);
     }
