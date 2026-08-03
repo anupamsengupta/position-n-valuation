@@ -53,6 +53,7 @@ public class DefaultTradeAmendHandler implements TradeAmendHandler {
                 .deliveryPointId(existing.deliveryPointId())
                 .originType(existing.originType())
                 .volumeSeriesKey(existing.volumeSeriesKey())
+                .multiplier(cmd.multiplier() != null ? cmd.multiplier() : existing.multiplier())
                 .validFrom(cmd.businessEffectiveDate())
                 .knownFrom(Instant.now())
                 .status("ACTIVE")

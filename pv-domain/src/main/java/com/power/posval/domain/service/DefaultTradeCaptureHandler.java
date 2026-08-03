@@ -49,6 +49,7 @@ public class DefaultTradeCaptureHandler implements TradeCaptureHandler {
                 .deliveryPointId(cmd.deliveryPointId())
                 .originType(cmd.originType())
                 .volumeSeriesKey(cmd.volumeSeriesKey())
+                .multiplier(cmd.multiplier())
                 .validFrom(cmd.businessEffectiveDate())
                 .knownFrom(Instant.now())
                 .status("ACTIVE")

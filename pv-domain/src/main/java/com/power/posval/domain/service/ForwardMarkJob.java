@@ -87,7 +87,7 @@ public class ForwardMarkJob extends AbstractMaterializationJob<ForwardMarkJob.Ma
             .id(UUID.randomUUID())
             .tradeLegId(position.tradeLegId())
             .tradeId(position.tradeId())
-            .multiplier(BigDecimal.ONE)
+            .multiplier(position.multiplier())
             .volumeSeriesKey(position.volumeSeriesKey())
             .effectiveFrom(ZonedDateTime.ofInstant(
                 position.validFrom(), position.deliveryRange().deliveryTimezone()))

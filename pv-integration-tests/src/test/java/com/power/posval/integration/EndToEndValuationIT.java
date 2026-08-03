@@ -143,6 +143,7 @@ class EndToEndValuationIT {
         // We process only the first trade per asset to keep test fast
         wiring.publishedEvents.clear();
 
+        long start = System.currentTimeMillis();
         for (PositionCaptured event : capturedEvents) {
             wiring.unitOfWork.run(em -> {
                 wiring.tradeCapturedConsumer.handle(event);
@@ -150,6 +151,9 @@ class EndToEndValuationIT {
         }
         System.out.println("Phase 4: Settlement materialization complete, " +
             wiring.publishedEvents.size() + " settlement events published");
+
+        long end = System.currentTimeMillis();
+        System.out.println("Time taken for settlement: " + (end-start)/1000 + " secs");
 
         // === Phase 5: Verify Database State ===
         Long cellCount = wiring.unitOfWork.execute(em ->
@@ -200,6 +204,7 @@ class EndToEndValuationIT {
         System.out.println("Phase 6: Cache hits=" + wiring.cache.cacheHits.get() +
             ", misses=" + wiring.cache.cacheMisses.get() +
             ", store size=" + wiring.cache.store.size());
+        System.out.println("Time taken for settlement: " + (end-start)/1000 + " secs");
     }
 
     @Test

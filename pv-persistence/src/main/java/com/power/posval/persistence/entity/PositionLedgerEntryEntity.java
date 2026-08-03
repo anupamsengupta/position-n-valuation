@@ -64,6 +64,9 @@ public class PositionLedgerEntryEntity {
     @Column(name = "volume_series_key", length = 128)
     private String volumeSeriesKey;
 
+    @Column(name = "multiplier", nullable = false, precision = 15, scale = 8)
+    private BigDecimal multiplier = BigDecimal.ONE;
+
     @Column(name = "valid_from", nullable = false)
     private Instant validFrom;
 
@@ -125,6 +128,9 @@ public class PositionLedgerEntryEntity {
 
     public String getVolumeSeriesKey() { return volumeSeriesKey; }
     public void setVolumeSeriesKey(String volumeSeriesKey) { this.volumeSeriesKey = volumeSeriesKey; }
+
+    public BigDecimal getMultiplier() { return multiplier; }
+    public void setMultiplier(BigDecimal multiplier) { this.multiplier = multiplier; }
 
     public Instant getValidFrom() { return validFrom; }
     public void setValidFrom(Instant validFrom) { this.validFrom = validFrom; }

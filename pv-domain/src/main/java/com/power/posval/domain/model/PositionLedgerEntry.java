@@ -28,6 +28,7 @@ public final class PositionLedgerEntry {
     private final String deliveryPointId;
     private final String originType;
     private final SeriesKey volumeSeriesKey;    // nullable for flat-block (FR-056a)
+    private final BigDecimal multiplier;        // D-11: volume allocation share (0 < m ≤ 1]
     private final String cascadeParentId;       // nullable (FR-03A)
     private final int cascadeGeneration;        // 0 for originals
     // Bitemporal axes
@@ -52,6 +53,7 @@ public final class PositionLedgerEntry {
         this.deliveryPointId = b.deliveryPointId;
         this.originType = b.originType;
         this.volumeSeriesKey = b.volumeSeriesKey;
+        this.multiplier = b.multiplier != null ? b.multiplier : BigDecimal.ONE;
         this.cascadeParentId = b.cascadeParentId;
         this.cascadeGeneration = b.cascadeGeneration;
         this.validFrom = b.validFrom;
@@ -77,6 +79,7 @@ public final class PositionLedgerEntry {
     public String deliveryPointId() { return deliveryPointId; }
     public String originType() { return originType; }
     public SeriesKey volumeSeriesKey() { return volumeSeriesKey; }
+    public BigDecimal multiplier() { return multiplier; }
     public String cascadeParentId() { return cascadeParentId; }
     public int cascadeGeneration() { return cascadeGeneration; }
     public Instant validFrom() { return validFrom; }
@@ -102,6 +105,7 @@ public final class PositionLedgerEntry {
         private String deliveryPointId;
         private String originType;
         private SeriesKey volumeSeriesKey;
+        private BigDecimal multiplier;
         private String cascadeParentId;
         private int cascadeGeneration;
         private Instant validFrom;
@@ -124,6 +128,7 @@ public final class PositionLedgerEntry {
         public Builder deliveryPointId(String v) { this.deliveryPointId = v; return this; }
         public Builder originType(String v) { this.originType = v; return this; }
         public Builder volumeSeriesKey(SeriesKey v) { this.volumeSeriesKey = v; return this; }
+        public Builder multiplier(BigDecimal v) { this.multiplier = v; return this; }
         public Builder cascadeParentId(String v) { this.cascadeParentId = v; return this; }
         public Builder cascadeGeneration(int v) { this.cascadeGeneration = v; return this; }
         public Builder validFrom(Instant v) { this.validFrom = v; return this; }

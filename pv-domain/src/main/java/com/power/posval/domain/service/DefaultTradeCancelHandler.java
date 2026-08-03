@@ -50,6 +50,7 @@ public class DefaultTradeCancelHandler implements TradeCancelHandler {
                 .deliveryPointId(existing.deliveryPointId())
                 .originType(existing.originType())
                 .volumeSeriesKey(existing.volumeSeriesKey())
+                .multiplier(existing.multiplier())
                 .validFrom(cmd.businessEffectiveDate())
                 .knownFrom(Instant.now())
                 .status("CANCELLED")
