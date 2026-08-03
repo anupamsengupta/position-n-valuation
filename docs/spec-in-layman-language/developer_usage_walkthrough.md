@@ -79,18 +79,20 @@ The three core questions the system answers:
 
 ---
 
-## 2. Project Layout — The 6 Modules
+## 2. Project Layout — The 8 Modules
 
-Open the root folder. You'll see 6 Maven modules:
+Open the root folder. You'll see 8 Maven modules:
 
 ```
 position-and-valuation/
-├── pv-domain/          ← The brain. All business logic lives here.
-├── pv-persistence/     ← Database adapters (PostgreSQL via JPA/Hibernate)
-├── pv-redis/           ← Cache adapters (Redis via Lettuce)
-├── pv-kafka/           ← Event consumers and producers (Kafka)
-├── pv-guice/           ← Dependency injection wiring (Google Guice)
-└── pom.xml             ← Parent POM tying it all together
+├── pv-domain/              ← The brain. All business logic lives here.
+├── pv-persistence/         ← Database adapters (PostgreSQL via JPA/Hibernate)
+├── pv-redis/               ← Cache adapters (Redis via Lettuce)
+├── pv-kafka/               ← Event consumers and producers (Kafka)
+├── pv-guice/               ← Dependency injection wiring (Google Guice)
+├── pv-integration-tests/   ← End-to-end tests with real H2 database
+├── pv-app/                 ← Runnable Spring Boot app with REST API
+└── pom.xml                 ← Parent POM tying it all together
 ```
 
 ### The Golden Rule: Dependencies Flow Inward
@@ -99,13 +101,18 @@ position-and-valuation/
 pv-guice  ──→  pv-kafka  ──→  pv-domain  ←──  pv-persistence
                                    ↑
                                pv-redis
+
+pv-app  ──→  pv-kafka + pv-persistence + pv-domain  (Spring Boot wiring)
+pv-integration-tests  ──→  pv-kafka + pv-persistence + pv-domain  (manual wiring)
 ```
 
 - `pv-domain` depends on **nothing** (except `jakarta.inject` annotations). It has zero knowledge of databases, Redis, or Kafka.
 - `pv-persistence`, `pv-redis`, `pv-kafka` all depend on `pv-domain` — they implement the interfaces (ports) that the domain defines.
-- `pv-guice` depends on everything — it wires the interfaces to their implementations.
+- `pv-guice` depends on everything — it wires the interfaces to their implementations using Google Guice.
+- `pv-app` wires the same classes using **Spring Boot** instead of Guice, adds REST controllers, and runs against PostgreSQL + Kafka.
+- `pv-integration-tests` wires everything **manually** (no framework) against an H2 in-memory database for fast, debuggable end-to-end tests.
 
-**Why this matters:** When you're debugging business logic, you only need to look inside `pv-domain`. When you're debugging "why isn't this getting saved to the database", look at `pv-persistence`. When you're debugging "why didn't this event trigger", look at `pv-kafka`.
+**Why this matters:** When you're debugging business logic, you only need to look inside `pv-domain`. When you're debugging "why isn't this getting saved to the database", look at `pv-persistence`. When you're debugging "why didn't this event trigger", look at `pv-kafka`. When you want to run the full system with HTTP endpoints, use `pv-app`. When you want to step through the entire pipeline with breakpoints, run `pv-integration-tests`.
 
 ---
 
@@ -1012,6 +1019,82 @@ Use smoke tests for quick CI verification. Use the full JMH runner (via `exec:ex
 3. JMH forks a separate JVM for each benchmark class (controlled by `@Fork`), runs warmup iterations (controlled by `@Warmup`), then measurement iterations (controlled by `@Measurement`).
 4. The `@Setup(Level.Trial)` method pre-loads all data into memory before any measurement begins, so you're benchmarking pure computation — not I/O.
 
+### End-to-End Integration Tests with Real Database (`pv-integration-tests`)
+
+The `TradeToSettlementIntegrationTest` above uses **in-memory stubs** (HashMaps instead of databases). That's great for speed and isolation, but it doesn't exercise real SQL, real batch writing, or real cache-through patterns.
+
+The `pv-integration-tests` module goes further — it wires all **real JPA adapters** against an **H2 in-memory database**, runs real SQL, and verifies the full pipeline with actual persistence.
+
+**Key files:**
+
+```
+pv-integration-tests/
+  src/test/
+    resources/META-INF/persistence.xml       # H2 config with 5 schemas + jsonb domain
+    java/com/power/posval/integration/
+      EndToEndValuationIT.java               # Main test (6 phases)
+      support/
+        IntegrationTestWiring.java           # Manual DI — no Guice, no Spring
+        VolumeSeriesGenerator.java           # Synthetic wind/solar volume data
+        MarketDataDbLoader.java              # stub/market-data.json → H2 via JPA
+```
+
+**Why manual wiring?** Rather than starting Guice or Spring Boot, `IntegrationTestWiring` constructs every component by hand — `new JpaMarketDataRepository(emProvider)`, `new BatchWriter(emProvider)`, etc. This means zero framework overhead, ~2 second startup, and you can set a breakpoint at any constructor to watch the entire object graph assemble.
+
+**How the EntityManager is shared:** A `ThreadLocal<EntityManager>` lambda provider ensures all components in a call chain get the same EM:
+
+```java
+Provider<EntityManager> emProvider = () -> {
+    EntityManager em = emThreadLocal.get();
+    if (em == null || !em.isOpen()) {
+        em = emf.createEntityManager();
+        emThreadLocal.set(em);
+    }
+    return em;
+};
+```
+
+**The 6-phase test pipeline:**
+
+```
+Phase 1: Load Market Data
+  stub/market-data.json → MarketDataDbLoader → JpaMarketDataRepository
+  → H2: INSERT INTO market_data.fixing ... (x ~8,800 fixings)
+
+Phase 2: Create Volume Series (2 assets)
+  VolumeSeriesGenerator → wind (2,976 intervals) + solar (1,488 intervals)
+  → H2: INSERT INTO volume_series.volume_interval ... (batch writer)
+
+Phase 3: Capture 6 Trades (3 per asset, multipliers 0.3 + 0.3 + 0.4 = 1.0)
+  TradeCapture commands → DefaultTradeCaptureHandler → 12 ledger entries per trade
+  → H2: INSERT INTO position.position_ledger_entry ...
+
+Phase 4: Settlement Materialization
+  TradeCapturedConsumer → SettlementMaterializationJob
+  → CachingMarketDataPort (cache miss → H2 query → cache hit on repeat)
+  → PriceEvaluator evaluates EXPR-4 (CPI-escalated collar → ~74.38 EUR/MWh)
+  → H2: INSERT INTO valuation.settlement_cell ... (x 13,392 cells)
+
+Phase 5: Verify Database State
+  Direct JPQL queries confirm all 13,392 cells persisted with correct prices
+
+Phase 6: Verify Cache Behavior
+  cache.cacheHits = 23,807 (repeated lookups)
+  cache.cacheMisses = 2,977 (first lookup per key)
+```
+
+**To run:**
+
+```bash
+mvn clean test -pl pv-integration-tests -am
+```
+
+**To debug:** Set a breakpoint at `CachingMarketDataPort.lookupFixing()` to watch cache misses hit H2 and populate the cache. Set a breakpoint at `SettlementMaterializationJob.buildResult()` to inspect the CPI-escalated price calculation.
+
+**Performance:** The full 6-phase pipeline runs in ~21 seconds single-threaded against in-process H2.
+
+> **Tech spec reference:** `docs/technical-spec/integration-testing-tech-spec.md`
+
 ---
 
 ## 13. How to Add a New Feature — Practical Examples
@@ -1062,7 +1145,220 @@ This has already been done. The production stack is:
 
 ---
 
-## 14. Glossary of Key Types
+## 14. Volume Series Import — Getting Data Into the System
+
+Sections 3–9 show how trades flow through the system. But where does the **volume data** come from? PROFILE series (per-trade volume shapes) are created automatically during trade capture. But FORECAST series (shared wind/solar predictions) and METERED_ACTUAL series (real meter readings from the TSO) arrive from outside the system via **import**.
+
+### The Import Pipeline
+
+The import system follows a three-phase pipeline: **parse → validate → persist**.
+
+```
+External Source                    Domain Port                     Database
+─────────────────                 ──────────                      ────────
+CSV files (2-file)  ─→ CsvImportParser ─┐
+Excel workbook      ─→ ExcelImportParser─┤─→ DefaultVolumeSeriesImporter ─→ JpaVolumeSeriesRepository
+Programmatic API    ─────────────────────┘     (validate + persist)            (BatchWriter)
+                                                      │
+                                                      ▼
+                                               DomainEventPublisher
+                                          (VolumePublished / VolumeSuperseded)
+```
+
+### Three Ways to Import
+
+**1. CSV (two-file approach):**
+
+Two CSV files linked by `series_key`:
+- `series_metadata.csv` — one row per series (key, type, asset, granularity, delivery window)
+- `intervals.csv` — many rows per series (timestamp, volume, optional energy)
+
+```csv
+# series_metadata.csv
+series_key,series_type,asset_id,volume_unit,time_granularity,delivery_start,delivery_end,delivery_timezone
+FCST-WP-NORDSEE,FORECAST,WP-NORDSEE,MW_CAPACITY,MIN_15,2025-01-01T00:00:00+01:00,2030-01-01T00:00:00+01:00,Europe/Berlin
+
+# intervals.csv
+series_key,interval_start,interval_end,volume,energy
+FCST-WP-NORDSEE,2025-01-01T00:00:00Z,2025-01-01T00:15:00Z,48.500,
+FCST-WP-NORDSEE,2025-01-01T00:15:00Z,2025-01-01T00:30:00Z,47.200,
+```
+
+When `energy` is left blank, the system computes it: `energy = volume × (duration_hours)`. For 48.5 MW over 15 minutes: `48.5 × 0.25 = 12.125 MWh`.
+
+**2. Excel (.xlsx workbook):**
+
+Same data, two sheets: Sheet 1 = "SeriesMetadata", Sheet 2 = "Intervals". Parsed by `ExcelImportParser` using Apache POI.
+
+**3. Programmatic API:**
+
+For system-to-system integration (weather forecast feeds, metering APIs):
+
+```java
+var request = new SeriesImportRequest(
+    "FCST-WP-NORDSEE", SeriesType.FORECAST, "WP-NORDSEE", null,
+    VolumeUnit.MW_CAPACITY, TimeGranularity.MIN_15,
+    deliveryPeriod, null, null, null, intervals);
+ImportResult result = importer.importSeries(List.of(request), "TN_0042");
+```
+
+### Auto-Supersession — What Happens When Data Is Updated
+
+When you import a series with a `series_key` that already exists:
+
+1. The system finds the existing series via `findCurrentBySeriesKey()`
+2. If the existing series has the **same type** (e.g., both FORECAST) → **supersede**: mark old as SUPERSEDED, create new with incremented version
+3. If the existing series has a **different type** → **reject** with error (you can't change a FORECAST into a PROFILE)
+4. If the `(key, version)` already exists → **skip** (idempotent, already imported)
+
+Supersession triggers a `VolumeSuperseded` event, which cascades downstream: settlement cells are revalued, caches are invalidated, and forward marks are recalculated.
+
+### Validation Rules
+
+The importer validates aggressively before persisting anything:
+
+| Check | What it catches |
+|-------|----------------|
+| `series_key` non-blank, ≤ 128 chars | Malformed identifiers |
+| FORECAST requires `asset_id`; PROFILE requires `trade_leg_id` | Ownership violations (D-11) |
+| `delivery_end > delivery_start` | Backwards time ranges |
+| All intervals within `[delivery_start, delivery_end)` | Out-of-range data |
+| No overlapping intervals | Duplicate time slots |
+| Interval duration matches `time_granularity` | Mismatched granularity (warning) |
+
+Each series in a batch is an independent unit-of-work. If series A fails validation, series B and C are still imported.
+
+### Performance
+
+A 5-year PPA at 15-minute granularity = ~175,200 intervals. Target: imported in under 30 seconds per series. The `BatchWriter` flushes/clears every 50 rows (configurable via `pv.batch.size`) to keep memory bounded.
+
+> **Tech spec reference:** `docs/technical-spec/TECH-SPEC-volume-series-import-v1.0.md`
+
+---
+
+## 15. Running the Spring Boot App (`pv-app`)
+
+Everything described in Sections 1–13 runs as library code wired by Guice (production) or manual DI (tests). The `pv-app` module packages the same code into a **runnable Spring Boot application** with REST endpoints, so you can interact with the system via HTTP.
+
+### Quick Start
+
+```bash
+# Start PostgreSQL + Kafka (Docker required)
+cd pv-app
+docker compose up -d
+
+# Build and run
+cd ..
+mvn clean install -pl pv-app -am -DskipTests
+mvn -pl pv-app spring-boot:run
+```
+
+The app starts on port 8080. On startup it seeds ~9,000 market data entries from `stub/market-data.json` into PostgreSQL.
+
+### How Spring Boot Wires the Same Classes
+
+The domain services use `jakarta.inject.@Inject` — which works in both Guice and Spring. The tricky part is `Provider<EntityManager>`: every JPA adapter calls `emProvider.get()` to obtain an EntityManager. Spring Boot's normal `@PersistenceContext` injection wouldn't work here.
+
+The solution is a `ThreadLocal`-based provider called `SpringEntityManagerProvider`:
+
+```
+REST request → TenantFilter (set tenant from X-Tenant-Id header)
+  → Controller → TransactionalExecutor.execute()
+    → SpringEntityManagerProvider.bind(em)  ← all components now share this EM
+    → begin TX
+      → TradeCaptureHandler.handle()
+        → PositionLedgerRepository.save()           [same EM via emProvider.get()]
+        → OutboxDomainEventPublisher.publish()       [same EM, same TX]
+    → commit TX
+    → unbind + close EM
+```
+
+This ensures the trade save and the outbox event write happen in the **same database transaction** — exactly like the Guice production wiring.
+
+### REST API Overview
+
+**Trade lifecycle** — the main write operations:
+
+| Endpoint | What it does |
+|----------|-------------|
+| `POST /api/trades/capture` | Capture a new trade → creates position ledger entries |
+| `POST /api/trades/amend` | Amend an existing trade → supersedes old entries |
+| `POST /api/trades/cancel` | Cancel a trade → forward unwind or void |
+
+**Queries** — read from the database:
+
+| Endpoint | What it returns |
+|----------|----------------|
+| `GET /api/positions?tenantId=...&tradeId=...&tradeLegId=...` | Current position ledger entries |
+| `GET /api/positions/as-of?...&businessDate=...&knowledgeDate=...` | Positions as they were known at a point in time |
+| `GET /api/positions/by-range?...&deliveryStart=...&deliveryEnd=...` | All positions in a delivery window |
+| `GET /api/settlements?tenantId=...&positionId=...&rangeStart=...&rangeEnd=...` | Settlement cells (price × volume = money) |
+| `GET /api/volume-series?tenantId=...` | All volume series for a tenant |
+| `GET /api/market-data/fixings?tenantId=...&series=...&intervalStart=...` | A single market data fixing |
+
+**Operations:**
+
+| Endpoint | What it returns |
+|----------|----------------|
+| `GET /api/health` | Database connectivity status |
+| `GET /api/cache/stats` | Cache sizes, hit/miss counters |
+
+### The Async Settlement Pipeline
+
+When you capture a trade via `POST /api/trades/capture`, settlement doesn't happen immediately. Instead:
+
+```
+You:     POST /api/trades/capture        → 200 OK (ledger entries)
+         ↓ (same transaction writes to outbox)
+System:  OutboxRelayScheduler (every 500ms)
+         → reads outbox → sends to Kafka topic "posval.PositionCaptured"
+         ↓
+System:  TradeCapturedKafkaListener (daemon thread)
+         → receives event → runs SettlementMaterializationJob
+         → volume × price → settlement cells saved to PostgreSQL
+         ↓
+You:     GET /api/settlements?...         → settlement cells with prices
+```
+
+The ~2 second delay between capture and settlement is the outbox relay interval + Kafka delivery.
+
+### What's Different from Production Guice Wiring
+
+| Concern | `pv-guice` (production) | `pv-app` (Spring Boot) |
+|---------|------------------------|----------------------|
+| DI framework | Google Guice | Spring Boot |
+| Database | Aurora PostgreSQL | Local PostgreSQL (Docker) |
+| Cache | Redis (`pv-redis`) | In-memory (`ConcurrentHashMap`) |
+| Tenant isolation | RLS via `SET LOCAL app.tenant_id` | Header-based only (no RLS) |
+| Schema management | Flyway migrations | `hibernate.hbm2ddl.auto=update` |
+| Auth | Production auth | None (open endpoints) |
+
+The **domain services are identical** — same `DefaultTradeCaptureHandler`, same `SettlementMaterializationJob`, same `DefaultPriceEvaluator`. Only the infrastructure wiring differs.
+
+### Smoke Testing the Full Flow
+
+```bash
+# 1. Health check
+curl http://localhost:8080/api/health
+
+# 2. Check seeded market data
+curl "http://localhost:8080/api/market-data/fixings?tenantId=default&series=EPEX_DA15&intervalStart=2025-03-01T00:00:00Z"
+
+# 3. Capture a trade (see tech spec for full JSON payload)
+curl -X POST http://localhost:8080/api/trades/capture \
+  -H "Content-Type: application/json" \
+  -H "X-Tenant-Id: default" \
+  -d '{ ... }'
+
+# 4. Wait ~2 seconds, then query settlements
+curl "http://localhost:8080/api/settlements?tenantId=default&positionId=<uuid>&rangeStart=...&rangeEnd=..."
+```
+
+> **Tech spec reference:** `docs/technical-spec/TECH-SPEC-spring-boot-service-module-v1.0.md`
+
+---
+
+## 16. Glossary of Key Types
 
 Quick reference for when you're reading code and hit an unfamiliar type:
 
@@ -1101,12 +1397,22 @@ Quick reference for when you're reading code and hit an unfamiliar type:
 | `MarketDataUpdated` | `domain.event` | Cache invalidation event for market data changes |
 | `CurveTick` | `domain.event` | Forward curve update event triggering S5b recalc |
 | `DependencyEdge` | `domain.port.repository` | "Cell X depends on input Y" |
+| `VolumeSeriesImporter` | `domain.port.ingest` | Port for CSV/Excel/programmatic volume import |
+| `SeriesImportRequest` | `domain.port.ingest` | One series to import (header + intervals) |
+| `ImportResult` | `domain.port.ingest` | Import outcome: counts + errors |
+| `SpringEntityManagerProvider` | `app.provider` | ThreadLocal `Provider<EntityManager>` for Spring Boot |
+| `TransactionalExecutor` | `app.provider` | EM bind → begin TX → work → commit → unbind → close |
+| `ApiResponse` | `app.dto` | `{ data, message, timestamp }` REST response wrapper |
 
 ---
 
-## 15. Where to Go Next
+## 17. Where to Go Next
 
 - **README.md** (in this folder) — non-technical overview of the business domain
 - **functional-spec-position-valuation-v1.0.md** — the binding specification (FR-001 through FR-120)
 - **CONTEXT-position-valuation-design.md** — why each design decision was made
+- **integration-testing-tech-spec.md** — detailed spec for the H2-backed integration test module
+- **TECH-SPEC-volume-series-import-v1.0.md** — CSV/Excel/API import pipeline specification
+- **TECH-SPEC-spring-boot-service-module-v1.0.md** — Spring Boot app architecture, REST API, async settlement
 - **The tests** — the best way to learn is to run the tests in debug mode and step through
+- **The Spring Boot app** — `cd pv-app && docker compose up -d`, then `mvn -pl pv-app spring-boot:run` for a live system
