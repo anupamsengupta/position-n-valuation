@@ -1,6 +1,9 @@
 package com.power.posval.persistence.entity;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
@@ -62,9 +65,11 @@ public class SettlementCellEntity {
     @Column(name = "currency", length = 3, nullable = false)
     private String currency;
 
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "active_leaves", columnDefinition = "jsonb")
     private String activeLeaves;
 
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "input_version_set", columnDefinition = "jsonb", nullable = false)
     private String inputVersionSet;
 

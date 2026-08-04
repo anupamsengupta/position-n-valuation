@@ -1,6 +1,9 @@
 package com.power.posval.persistence.entity;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -42,12 +45,14 @@ public class StruckMarkEntity {
     @Column(name = "currency", length = 3, nullable = false)
     private String currency;
 
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "curve_version_set", columnDefinition = "jsonb", nullable = false)
     private String curveVersionSet;
 
     @Column(name = "fx_version", length = 64)
     private String fxVersion;
 
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "volume_version_set", columnDefinition = "jsonb")
     private String volumeVersionSet;
 
