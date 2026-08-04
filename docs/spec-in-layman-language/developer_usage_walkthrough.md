@@ -160,6 +160,7 @@ PositionLedgerEntry
 ├── quantity              ← how much power (signed: + = buying, - = selling)
 ├── priceExpressionId     ← UUID pointing to the price formula
 ├── volumeSeriesKey       ← key to find the volume data
+├── multiplier            ← volume allocation share (0.3 = 30% of asset, 1.0 = dedicated)
 ├── validFrom / validTo   ← "when was this TRUE in the real world?"
 ├── knownFrom / knownTo   ← "when did the SYSTEM learn about this?"
 └── status                ← ACTIVE, SUPERSEDED, or CANCELLED
