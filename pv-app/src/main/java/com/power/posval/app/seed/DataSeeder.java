@@ -4,6 +4,7 @@ import com.power.posval.app.provider.TransactionalExecutor;
 import com.power.posval.domain.model.QualityState;
 import com.power.posval.domain.port.marketdata.MarketDataLookup;
 import com.power.posval.domain.port.repository.MarketDataRepository;
+import com.power.posval.domain.port.repository.VolumeSeriesRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -28,13 +29,16 @@ public class DataSeeder implements ApplicationRunner {
     private static final String TENANT_ID = "default";
 
     private final MarketDataRepository marketDataRepo;
+    private final VolumeSeriesRepository volumeSeriesRepo;
     private final TransactionalExecutor txExecutor;
     private final boolean seedEnabled;
 
     public DataSeeder(MarketDataRepository marketDataRepo,
+                       VolumeSeriesRepository volumeSeriesRepo,
                        TransactionalExecutor txExecutor,
                        @Value("${pv.seed.enabled:true}") boolean seedEnabled) {
         this.marketDataRepo = marketDataRepo;
+        this.volumeSeriesRepo = volumeSeriesRepo;
         this.txExecutor = txExecutor;
         this.seedEnabled = seedEnabled;
     }
@@ -46,28 +50,50 @@ public class DataSeeder implements ApplicationRunner {
             return;
         }
 
-        // Check if already seeded
-        boolean alreadySeeded = txExecutor.execute(
+        // --- Phase 1: JSON-based market data (legacy fixings, curves from stub file) ---
+        boolean jsonSeeded = txExecutor.execute(
                 () -> marketDataRepo.findFixing(TENANT_ID, "EPEX_DA15",
                         Instant.parse("2025-03-01T00:00:00Z")).isPresent());
-        if (alreadySeeded) {
-            log.info("Market data already seeded, skipping");
-            return;
+        if (jsonSeeded) {
+            log.info("JSON market data already seeded, skipping");
+        } else {
+            log.info("Seeding market data from stub/market-data.json...");
+            String json = readResource();
+            int[] counts = new int[4];
+            txExecutor.run(() -> {
+                counts[0] = loadFixings(json);
+                counts[1] = loadForwardCurves(json);
+                counts[2] = loadIndices(json);
+                counts[3] = loadFxRates(json);
+            });
+            log.info("Seeded {} fixings, {} forward curves, {} indices, {} FX rates",
+                    counts[0], counts[1], counts[2], counts[3]);
         }
 
-        log.info("Seeding market data from stub/market-data.json...");
-        String json = readResource();
-        int[] counts = new int[4]; // fixings, forwardCurves, indices, fxRates
+        // --- Phase 2: 15-min market data (Jul 2026 → Jul 2028) ---
+        boolean seriesSeeded = txExecutor.execute(
+                () -> marketDataRepo.findFixing(TENANT_ID, "EPEX_DA15",
+                        Instant.parse("2026-07-01T00:00:00Z")).isPresent());
+        if (seriesSeeded) {
+            log.info("15-min market data series already seeded, skipping");
+        } else {
+            log.info("Seeding 15-min market data (fixings Jul 2026 → now, curves now → Jul 2028)...");
+            int[] mktCounts = txExecutor.execute(() -> MarketDataSeriesSeeder.seed(marketDataRepo));
+            log.info("Seeded {} fixings+nordpool, {} forward curve points, {} FX rates, {} indices",
+                    mktCounts[0], mktCounts[1], mktCounts[2], mktCounts[3]);
+        }
 
-        txExecutor.run(() -> {
-            counts[0] = loadFixings(json);
-            counts[1] = loadForwardCurves(json);
-            counts[2] = loadIndices(json);
-            counts[3] = loadFxRates(json);
-        });
-
-        log.info("Seeded {} fixings, {} forward curves, {} indices, {} FX rates",
-                counts[0], counts[1], counts[2], counts[3]);
+        // --- Phase 3: Volume series (wind + solar, Jul 2026 → Jul 2028, 15-min UTC) ---
+        boolean volumeExists = txExecutor.execute(
+                () -> volumeSeriesRepo.findCurrentBySeriesKey(TENANT_ID,
+                        VolumeSeriesSeeder.WIND_SERIES_KEY.value()).isPresent());
+        if (volumeExists) {
+            log.info("Volume series already seeded, skipping");
+        } else {
+            log.info("Seeding volume series (Jul 2026 → Jul 2028, 15-min UTC)...");
+            int[] volCounts = txExecutor.execute(() -> VolumeSeriesSeeder.seed(volumeSeriesRepo));
+            log.info("Seeded {} wind intervals, {} solar intervals", volCounts[0], volCounts[1]);
+        }
     }
 
     private int loadFixings(String json) {
