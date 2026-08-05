@@ -17,6 +17,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -67,6 +68,10 @@ public class DomainServiceConfig {
             @Override public Optional<VolumeSeries> findById(UUID id) { return jpaRepo.findById(id); }
             @Override public Optional<VolumeSeries> findCurrentBySeriesKey(String tenantId, String sk) {
                 return jpaRepo.findCurrentBySeriesKey(DEFAULT_TENANT, sk);
+            }
+            @Override public Optional<VolumeSeries> findCurrentBySeriesKeyAndRange(String tenantId, String sk,
+                                                                                     Instant rangeStart, Instant rangeEnd) {
+                return jpaRepo.findCurrentBySeriesKeyAndRange(DEFAULT_TENANT, sk, rangeStart, rangeEnd);
             }
             @Override public List<VolumeSeries> findByTenantId(String t) { return jpaRepo.findByTenantId(DEFAULT_TENANT); }
             @Override public List<VolumeSeries> findAll(String t, VolumeSeriesSpec s) { return jpaRepo.findAll(DEFAULT_TENANT, s); }

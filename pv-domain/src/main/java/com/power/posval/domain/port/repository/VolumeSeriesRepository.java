@@ -2,6 +2,7 @@ package com.power.posval.domain.port.repository;
 
 import com.power.posval.domain.model.VolumeSeries;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -18,9 +19,24 @@ public interface VolumeSeriesRepository {
 
     /**
      * Find current (non-superseded) series by series key.
-     * WHERE quality_state IN ('CURRENT', 'EFFECTIVE')
+     * Loads ALL intervals. Use {@link #findCurrentBySeriesKeyAndRange} for
+     * large series to avoid loading hundreds of thousands of intervals.
      */
     Optional<VolumeSeries> findCurrentBySeriesKey(String tenantId, String seriesKey);
+
+    /**
+     * Find current series by series key, loading only intervals that overlap
+     * the given range [rangeStart, rangeEnd). For a 25-year series at 15-min
+     * granularity (~876k intervals), this loads only the ~2,976 intervals for
+     * a single month instead of the entire series.
+     *
+     * <p>Default implementation delegates to {@link #findCurrentBySeriesKey} —
+     * the JPA adapter overrides this with a range-filtered SQL query.
+     */
+    default Optional<VolumeSeries> findCurrentBySeriesKeyAndRange(String tenantId, String seriesKey,
+                                                                    Instant rangeStart, Instant rangeEnd) {
+        return findCurrentBySeriesKey(tenantId, seriesKey);
+    }
 
     List<VolumeSeries> findByTenantId(String tenantId);
 

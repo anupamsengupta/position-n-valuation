@@ -40,8 +40,12 @@ public abstract class AbstractMaterializationJob<R> {
      */
     public final void execute(PositionLedgerEntry position,
                                DeliveryRange intervalRange) {
+        long start = System.currentTimeMillis();
         List<VolumeRecord> volumes = resolveVolume(position, intervalRange);
+        long end = System.currentTimeMillis();
+        System.out.println("AbstractMaterializationJob.execute.resolveVolume() : " + (end-start) + " milli secs");
 
+        start = System.currentTimeMillis();
         List<R> results = new ArrayList<>(volumes.size());
         for (VolumeRecord vol : volumes) {
             DeliveryPeriod interval = new DeliveryPeriod(
@@ -56,8 +60,13 @@ public abstract class AbstractMaterializationJob<R> {
 
             results.add(buildResult(position, vol, priceRes));
         }
+        end = System.currentTimeMillis();
+        System.out.println("AbstractMaterializationJob.execute.priceCalc() : " + (end-start) + " milli secs");
 
+        start = System.currentTimeMillis();
         flushResults(position, results);
+        end = System.currentTimeMillis();
+        System.out.println("AbstractMaterializationJob.execute.flushResults() : " + (end-start) + " milli secs");
     }
 
     /** Hook: resolve volume from the appropriate source. */

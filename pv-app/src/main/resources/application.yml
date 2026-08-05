@@ -9,7 +9,15 @@ pv:
     pool-size: 10
   kafka:
     bootstrap-servers: localhost:9092
+  redis:
+    host: localhost
+    port: 6379
   outbox:
     relay-interval-ms: 500
   seed:
     enabled: true
+  cache:
+    warmup:
+      enabled: true
+      lookback-days: 120
+      pool-size: 4

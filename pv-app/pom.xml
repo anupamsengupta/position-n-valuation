@@ -63,6 +63,10 @@
         </dependency>
         <dependency>
             <groupId>com.power</groupId>
+            <artifactId>pv-redis</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.power</groupId>
             <artifactId>pv-kafka</artifactId>
         </dependency>
 

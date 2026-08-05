@@ -119,6 +119,10 @@ public class IntegrationTestWiring {
             @Override public Optional<VolumeSeries> findCurrentBySeriesKey(String tenantId, String sk) {
                 return volumeSeriesRepo.findCurrentBySeriesKey(TENANT_ID, sk);
             }
+            @Override public Optional<VolumeSeries> findCurrentBySeriesKeyAndRange(String tenantId, String sk,
+                                                                                     java.time.Instant rangeStart, java.time.Instant rangeEnd) {
+                return volumeSeriesRepo.findCurrentBySeriesKeyAndRange(TENANT_ID, sk, rangeStart, rangeEnd);
+            }
             @Override public List<VolumeSeries> findByTenantId(String t) { return volumeSeriesRepo.findByTenantId(TENANT_ID); }
             @Override public List<VolumeSeries> findAll(String t, VolumeSeriesSpec s) { return volumeSeriesRepo.findAll(TENANT_ID, s); }
             @Override public boolean existsByTradeIdAndTradeVersion(String tid, int tv) {

@@ -10,6 +10,7 @@ services:
       POSTGRES_PASSWORD: posval
     volumes:
       - ./src/main/resources/db/init-schemas.sql:/docker-entrypoint-initdb.d/01-schemas.sql
+      - ./src/main/resources/db/create-indexes.sql:/docker-entrypoint-initdb.d/02-indexes.sql
       - posval-postgres-data:/var/lib/postgresql/data
     networks:
       - app-network

@@ -36,8 +36,10 @@ public record ForecastResolver(
 
     private List<VolumeRecord> resolveFromForecast(VolumeReference ref,
                                                     DeliveryRange intervalRange) {
-        var seriesOpt = seriesRepo.findCurrentBySeriesKey(
-            ref.tradeId(), ref.volumeSeriesKey().value());
+        var seriesOpt = seriesRepo.findCurrentBySeriesKeyAndRange(
+            ref.tradeId(), ref.volumeSeriesKey().value(),
+            intervalRange.startInstant().toInstant(),
+            intervalRange.endInstant().toInstant());
         if (seriesOpt.isEmpty()) {
             return List.of();
         }
