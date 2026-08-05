@@ -57,8 +57,9 @@ class VolumeResolverTest {
             .effectiveTo(ZonedDateTime.of(2026, 1, 1, 0, 0, 0, 0, CET))
             .build();
 
-        var range = DeliveryRange.ofMonth(YearMonth.of(2025, 3), CET);
-        List<VolumeRecord> records = resolver.resolve(ref, range, ResolutionPurpose.FORWARD);
+        List<VolumeRecord> records = resolver.resolve(ref,
+            Instant.parse("2025-03-01T00:00:00Z"), Instant.parse("2025-04-01T00:00:00Z"),
+            ResolutionPurpose.FORWARD);
 
         assertEquals(1, records.size());
         assertEquals(0, new BigDecimal("50.0").compareTo(records.get(0).volume()));
@@ -79,8 +80,9 @@ class VolumeResolverTest {
             .effectiveTo(ZonedDateTime.of(2026, 1, 1, 0, 0, 0, 0, CET))
             .build();
 
-        var range = DeliveryRange.ofMonth(YearMonth.of(2025, 3), CET);
-        List<VolumeRecord> records = resolver.resolve(ref, range, ResolutionPurpose.FORWARD);
+        List<VolumeRecord> records = resolver.resolve(ref,
+            Instant.parse("2025-03-01T00:00:00Z"), Instant.parse("2025-04-01T00:00:00Z"),
+            ResolutionPurpose.FORWARD);
 
         assertTrue(records.isEmpty());
     }
@@ -119,8 +121,9 @@ class VolumeResolverTest {
             .effectiveTo(ZonedDateTime.of(2026, 1, 1, 0, 0, 0, 0, CET))
             .build();
 
-        var range = DeliveryRange.ofMonth(YearMonth.of(2025, 3), CET);
-        List<VolumeRecord> records = resolver.resolve(ref, range, ResolutionPurpose.FORWARD);
+        List<VolumeRecord> records = resolver.resolve(ref,
+            Instant.parse("2025-03-01T00:00:00Z"), Instant.parse("2025-04-01T00:00:00Z"),
+            ResolutionPurpose.FORWARD);
 
         assertEquals(1, records.size());
         assertEquals(0, new BigDecimal("60.0").compareTo(records.get(0).volume()));

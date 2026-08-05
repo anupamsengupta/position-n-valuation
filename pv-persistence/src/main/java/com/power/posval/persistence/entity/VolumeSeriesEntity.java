@@ -67,7 +67,7 @@ public class VolumeSeriesEntity {
     @Column(name = "delivery_timezone", length = 64)
     private String deliveryTimezone;
 
-    @OneToMany(mappedBy = "series", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OneToMany(mappedBy = "series", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     @OrderBy("intervalStart ASC")
     private List<VolumeIntervalEntity> intervals = new ArrayList<>();
 

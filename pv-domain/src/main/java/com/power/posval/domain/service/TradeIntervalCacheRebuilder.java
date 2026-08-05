@@ -49,7 +49,10 @@ public class TradeIntervalCacheRebuilder {
                     DeliveryRange monthRange = DeliveryRange.ofMonth(
                         month, fullRange.deliveryTimezone());
                     List<VolumeRecord> volumes = resolver.resolve(
-                        ref, monthRange, ResolutionPurpose.FORWARD);
+                        ref,
+                        monthRange.startInstant().toInstant(),
+                        monthRange.endInstant().toInstant(),
+                        ResolutionPurpose.FORWARD);
                     List<TradeIntervalRecord> records = volumes.stream()
                         .map(v -> new TradeIntervalRecord(
                             ref.tradeLegId(),

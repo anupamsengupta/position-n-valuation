@@ -1,11 +1,11 @@
 package com.power.posval.domain.service;
 
-import com.power.posval.domain.model.value.DeliveryRange;
 import com.power.posval.domain.model.value.VolumeReference;
 import com.power.posval.domain.port.NumericPrecision;
 import com.power.posval.domain.port.repository.MeteredActualRepository;
 import com.power.posval.domain.port.repository.VolumeSeriesRepository;
 
+import java.time.Instant;
 import java.util.List;
 
 /**
@@ -25,39 +25,41 @@ public record ForecastResolver(
 
     @Override
     public List<VolumeRecord> resolve(VolumeReference ref,
-                                       DeliveryRange intervalRange,
+                                       Instant rangeStart,
+                                       Instant rangeEnd,
                                        ResolutionPurpose purpose) {
         if (purpose == ResolutionPurpose.SETTLEMENT
                 && ref.meteredSeriesKey() != null) {
-            return resolveFromMetered(ref, intervalRange);
+            return resolveFromMetered(ref, rangeStart, rangeEnd);
         }
-        return resolveFromForecast(ref, intervalRange);
+        return resolveFromForecast(ref, rangeStart, rangeEnd);
     }
 
     private List<VolumeRecord> resolveFromForecast(VolumeReference ref,
-                                                    DeliveryRange intervalRange) {
+                                                    Instant rangeStart,
+                                                    Instant rangeEnd) {
         var seriesOpt = seriesRepo.findCurrentBySeriesKeyAndRange(
             ref.tradeId(), ref.volumeSeriesKey().value(),
-            intervalRange.startInstant().toInstant(),
-            intervalRange.endInstant().toInstant());
+            rangeStart, rangeEnd);
         if (seriesOpt.isEmpty()) {
             return List.of();
         }
         var series = seriesOpt.get();
-        return VolumeFilterMapper.filterAndMap(series.intervals(), intervalRange,
+        return VolumeFilterMapper.filterAndMap(series.intervals(), rangeStart, rangeEnd,
             ref.multiplier(), series.versionId(), series.qualityState(),
             series.seriesType(), null, np);
     }
 
     private List<VolumeRecord> resolveFromMetered(VolumeReference ref,
-                                                   DeliveryRange intervalRange) {
+                                                   Instant rangeStart,
+                                                   Instant rangeEnd) {
         var seriesOpt = meteredRepo.findCurrentBySeriesKey(
             ref.tradeId(), ref.meteredSeriesKey());
         if (seriesOpt.isEmpty()) {
             return List.of();
         }
         var series = seriesOpt.get();
-        return VolumeFilterMapper.filterAndMapMetered(series.intervals(), intervalRange,
+        return VolumeFilterMapper.filterAndMapMetered(series.intervals(), rangeStart, rangeEnd,
             ref.multiplier(), series.versionId(), series.qualityState(),
             series.meteringPointId(), np);
     }

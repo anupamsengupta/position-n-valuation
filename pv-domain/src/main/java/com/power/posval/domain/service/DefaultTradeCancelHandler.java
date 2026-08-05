@@ -43,6 +43,8 @@ public class DefaultTradeCancelHandler implements TradeCancelHandler {
                 .tradeLegId(cmd.tradeLegId())
                 .tradeVersion(cmd.tradeVersion())
                 .deliveryRange(existing.deliveryRange())
+                .deliveryStart(existing.deliveryStart())
+                .deliveryEnd(existing.deliveryEnd())
                 .quantity(existing.quantity())
                 .volumeUnit(existing.volumeUnit())
                 .priceExpressionId(existing.priceExpressionId())

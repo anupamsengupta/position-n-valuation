@@ -21,6 +21,8 @@ public final class PositionLedgerEntry {
     private final String tradeLegId;
     private final int tradeVersion;
     private final DeliveryRange deliveryRange;
+    private final Instant deliveryStart;        // exact trade delivery start (sub-month precision)
+    private final Instant deliveryEnd;          // exact trade delivery end (sub-month precision)
     private final BigDecimal quantity;          // signed: +long, -short
     private final VolumeUnit volumeUnit;
     private final UUID priceExpressionId;
@@ -46,6 +48,10 @@ public final class PositionLedgerEntry {
         this.tradeLegId = b.tradeLegId;
         this.tradeVersion = b.tradeVersion;
         this.deliveryRange = b.deliveryRange;
+        this.deliveryStart = b.deliveryStart != null ? b.deliveryStart
+                : b.deliveryRange.startInstant().toInstant();
+        this.deliveryEnd = b.deliveryEnd != null ? b.deliveryEnd
+                : b.deliveryRange.endInstant().toInstant();
         this.quantity = b.quantity;
         this.volumeUnit = b.volumeUnit;
         this.priceExpressionId = b.priceExpressionId;
@@ -72,6 +78,8 @@ public final class PositionLedgerEntry {
     public String tradeLegId() { return tradeLegId; }
     public int tradeVersion() { return tradeVersion; }
     public DeliveryRange deliveryRange() { return deliveryRange; }
+    public Instant deliveryStart() { return deliveryStart; }
+    public Instant deliveryEnd() { return deliveryEnd; }
     public BigDecimal quantity() { return quantity; }
     public VolumeUnit volumeUnit() { return volumeUnit; }
     public UUID priceExpressionId() { return priceExpressionId; }
@@ -98,6 +106,8 @@ public final class PositionLedgerEntry {
         private String tradeLegId;
         private int tradeVersion;
         private DeliveryRange deliveryRange;
+        private Instant deliveryStart;
+        private Instant deliveryEnd;
         private BigDecimal quantity;
         private VolumeUnit volumeUnit;
         private UUID priceExpressionId;
@@ -121,6 +131,8 @@ public final class PositionLedgerEntry {
         public Builder tradeLegId(String v) { this.tradeLegId = v; return this; }
         public Builder tradeVersion(int v) { this.tradeVersion = v; return this; }
         public Builder deliveryRange(DeliveryRange v) { this.deliveryRange = v; return this; }
+        public Builder deliveryStart(Instant v) { this.deliveryStart = v; return this; }
+        public Builder deliveryEnd(Instant v) { this.deliveryEnd = v; return this; }
         public Builder quantity(BigDecimal v) { this.quantity = v; return this; }
         public Builder volumeUnit(VolumeUnit v) { this.volumeUnit = v; return this; }
         public Builder priceExpressionId(UUID v) { this.priceExpressionId = v; return this; }

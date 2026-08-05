@@ -94,7 +94,7 @@ public class CacheWarmer implements ApplicationRunner {
         ZonedDateTime rangeStart = now.minusDays(lookbackDays)
                 .withDayOfMonth(1).withHour(0).withMinute(0).withSecond(0).withNano(0);
         // Forward to end of volume series coverage
-        ZonedDateTime rangeEnd = ZonedDateTime.of(2100, 12, 31, 0, 0, 0, 0, ZoneOffset.UTC);
+        ZonedDateTime rangeEnd = ZonedDateTime.of(2026, 12, 31, 0, 0, 0, 0, ZoneOffset.UTC);
 
         List<YearMonth> months = buildMonthlyChunks(rangeStart, rangeEnd);
         log.info("Cache warm-up starting: {} months, pool-size={}, lookback={} days ({} → {})",

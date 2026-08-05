@@ -3,6 +3,7 @@ package com.power.posval.app.config;
 import com.power.posval.domain.model.VolumeSeries;
 import com.power.posval.domain.port.DefaultNumericPrecision;
 import com.power.posval.domain.port.NumericPrecision;
+import com.power.posval.domain.port.cache.VolumeCache;
 import com.power.posval.domain.port.event.DomainEventPublisher;
 import com.power.posval.domain.port.marketdata.MarketDataPort;
 import com.power.posval.domain.port.repository.PositionLedgerRepository;
@@ -84,8 +85,10 @@ public class DomainServiceConfig {
 
     @Bean
     public VolumeResolver volumeResolver(VolumeSeriesRepository volumeSeriesRepo,
+                                          VolumeCache volumeCache,
                                           NumericPrecision np) {
-        return new ProfileResolver(volumeSeriesRepo, np);
+        var profileResolver = new ProfileResolver(volumeSeriesRepo, np);
+        return new CachingVolumeResolver(profileResolver, volumeCache, volumeSeriesRepo, np);
     }
 
     @Bean

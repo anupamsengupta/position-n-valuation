@@ -49,7 +49,10 @@ public class SettlementMaterializationJob extends AbstractMaterializationJob<Set
     protected List<VolumeRecord> resolveVolume(PositionLedgerEntry position,
                                                 DeliveryRange intervalRange) {
         VolumeReference ref = buildVolumeReference(position);
-        return volumeResolver.resolve(ref, intervalRange, ResolutionPurpose.SETTLEMENT);
+        // Use exact delivery boundaries, not month-aligned DeliveryRange
+        return volumeResolver.resolve(ref,
+            position.deliveryStart(), position.deliveryEnd(),
+            ResolutionPurpose.SETTLEMENT);
     }
 
     @Override

@@ -34,26 +34,40 @@ public class DefaultTradeCaptureHandler implements TradeCaptureHandler {
         // FR-030: decompose delivery period into monthly blocks
         List<DeliveryRange> monthBlocks = cmd.deliveryPeriod().toMonthBlocks();
 
+        // Trade's exact delivery boundaries
+        Instant tradeStart = cmd.deliveryPeriod().start().toInstant();
+        Instant tradeEnd = cmd.deliveryPeriod().end().toInstant();
+
         List<PositionLedgerEntry> entries = monthBlocks.stream()
-            .map(block -> PositionLedgerEntry.builder()
-                .id(UUID.randomUUID())
-                .tenantId(cmd.tenantId())
-                .tradeId(cmd.tradeId())
-                .tradeLegId(cmd.tradeLegId())
-                .tradeVersion(cmd.tradeVersion())
-                .deliveryRange(block)
-                .quantity(cmd.quantity())
-                .volumeUnit(cmd.volumeUnit())
-                .priceExpressionId(cmd.priceExpressionId())
-                .portfolioId(cmd.portfolioId())
-                .deliveryPointId(cmd.deliveryPointId())
-                .originType(cmd.originType())
-                .volumeSeriesKey(cmd.volumeSeriesKey())
-                .multiplier(cmd.multiplier())
-                .validFrom(cmd.businessEffectiveDate())
-                .knownFrom(Instant.now())
-                .status("ACTIVE")
-                .build())
+            .map(block -> {
+                // Clamp exact delivery start/end to this month's boundaries
+                Instant blockStart = block.startInstant().toInstant();
+                Instant blockEnd = block.endInstant().toInstant();
+                Instant effectiveStart = tradeStart.isAfter(blockStart) ? tradeStart : blockStart;
+                Instant effectiveEnd = tradeEnd.isBefore(blockEnd) ? tradeEnd : blockEnd;
+
+                return PositionLedgerEntry.builder()
+                    .id(UUID.randomUUID())
+                    .tenantId(cmd.tenantId())
+                    .tradeId(cmd.tradeId())
+                    .tradeLegId(cmd.tradeLegId())
+                    .tradeVersion(cmd.tradeVersion())
+                    .deliveryRange(block)
+                    .deliveryStart(effectiveStart)
+                    .deliveryEnd(effectiveEnd)
+                    .quantity(cmd.quantity())
+                    .volumeUnit(cmd.volumeUnit())
+                    .priceExpressionId(cmd.priceExpressionId())
+                    .portfolioId(cmd.portfolioId())
+                    .deliveryPointId(cmd.deliveryPointId())
+                    .originType(cmd.originType())
+                    .volumeSeriesKey(cmd.volumeSeriesKey())
+                    .multiplier(cmd.multiplier())
+                    .validFrom(cmd.businessEffectiveDate())
+                    .knownFrom(Instant.now())
+                    .status("ACTIVE")
+                    .build();
+            })
             .toList();
 
         entries.forEach(ledgerRepo::save);

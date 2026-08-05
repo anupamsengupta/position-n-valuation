@@ -181,8 +181,8 @@ public class JpaPositionLedgerRepository implements PositionLedgerRepository {
         e.setTradeId(d.tradeId());
         e.setTradeLegId(d.tradeLegId());
         e.setTradeVersion(d.tradeVersion());
-        e.setDeliveryStart(d.deliveryRange().startInstant().toInstant());
-        e.setDeliveryEnd(d.deliveryRange().endInstant().toInstant());
+        e.setDeliveryStart(d.deliveryStart());
+        e.setDeliveryEnd(d.deliveryEnd());
         e.setDeliveryTimezone(d.deliveryRange().deliveryTimezone().getId());
         e.setQuantity(d.quantity());
         e.setVolumeUnit(d.volumeUnit().name());
@@ -211,6 +211,8 @@ public class JpaPositionLedgerRepository implements PositionLedgerRepository {
                 YearMonth.from(e.getDeliveryStart().atZone(tz)),
                 YearMonth.from(e.getDeliveryEnd().minusNanos(1).atZone(tz)),
                 tz))
+            .deliveryStart(e.getDeliveryStart())
+            .deliveryEnd(e.getDeliveryEnd())
             .quantity(e.getQuantity())
             .volumeUnit(VolumeUnit.valueOf(e.getVolumeUnit()))
             .priceExpressionId(e.getPriceExpressionId())
