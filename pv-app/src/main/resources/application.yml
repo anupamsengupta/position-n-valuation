@@ -9,6 +9,9 @@ pv:
     pool-size: 10
   kafka:
     bootstrap-servers: localhost:9092
+    consumer:
+      max-poll-records: 50
+      concurrency: 5
   redis:
     host: localhost
     port: 6379

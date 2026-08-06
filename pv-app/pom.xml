@@ -96,10 +96,10 @@
             <artifactId>HikariCP</artifactId>
         </dependency>
 
-        <!-- Kafka -->
+        <!-- Kafka (Spring Kafka for @KafkaListener, container management, DLQ) -->
         <dependency>
-            <groupId>org.apache.kafka</groupId>
-            <artifactId>kafka-clients</artifactId>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka</artifactId>
         </dependency>
 
         <!-- Jackson (provided by spring-boot-starter-web, explicit for ObjectMapper usage) -->

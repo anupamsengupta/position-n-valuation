@@ -71,8 +71,7 @@ The listener adapts Kafka to these — it does not replace them.
 
 ## Reference implementation
 
-<!-- FILL THIS IN once you have a canonical good listener -->
-Canonical reference: `com.power.posval.app.kafka.<REFERENCE_CLASS>`
+Canonical reference: `com.power.posval.app.kafka.TradeCapturedKafkaListener`
 Read this class before implementing a new listener. New listeners should
 structurally mirror it (config class + `@KafkaListener` bean + error handler +
 DLQ topic naming).
