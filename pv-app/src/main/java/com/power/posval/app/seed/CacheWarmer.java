@@ -54,7 +54,8 @@ public class CacheWarmer implements ApplicationRunner {
             VolumeSeriesSeeder.SOLAR_SERIES_KEY.value()
     };
 
-    private static final int INTERVAL_MINUTES = 15;
+    // Market data fixings are always at 15-min granularity (EPEX DA15 auction)
+    private static final int MARKET_DATA_INTERVAL_MINUTES = 15;
 
     private final MarketDataPort marketDataPort;
     private final VolumeSeriesRepository volumeSeriesRepo;
@@ -156,7 +157,7 @@ public class CacheWarmer implements ApplicationRunner {
                                 count.incrementAndGet();
                             } catch (Exception ignored) {}
                         }
-                        cursor = cursor.plusMinutes(INTERVAL_MINUTES);
+                        cursor = cursor.plusMinutes(MARKET_DATA_INTERVAL_MINUTES);
                     }
                 }
 
@@ -169,7 +170,7 @@ public class CacheWarmer implements ApplicationRunner {
                                     month, cursor.toInstant());
                             count.incrementAndGet();
                         } catch (Exception ignored) {}
-                        cursor = cursor.plusMinutes(INTERVAL_MINUTES);
+                        cursor = cursor.plusMinutes(MARKET_DATA_INTERVAL_MINUTES);
                     }
                 }
 

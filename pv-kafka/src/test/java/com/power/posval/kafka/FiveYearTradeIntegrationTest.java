@@ -146,7 +146,7 @@ class FiveYearTradeIntegrationTest {
 
         tradeCaptureHandler = new DefaultTradeCaptureHandler(ledgerRepo, eventPublisher);
         tradeCapturedConsumer = new TradeCapturedConsumer(
-            seriesRepo, ledgerRepo, settlementJob);
+            ledgerRepo, cellRepo, settlementJob);
     }
 
     @Test

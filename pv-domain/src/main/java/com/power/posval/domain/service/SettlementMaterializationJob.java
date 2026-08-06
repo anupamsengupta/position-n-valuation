@@ -118,6 +118,7 @@ public class SettlementMaterializationJob extends AbstractMaterializationJob<Set
             .id(UUID.randomUUID())
             .tradeLegId(position.tradeLegId())
             .tradeId(position.tradeId())
+            .tenantId(position.tenantId())
             .multiplier(position.multiplier())
             .volumeSeriesKey(position.volumeSeriesKey())
             .effectiveFrom(ZonedDateTime.ofInstant(

@@ -39,6 +39,22 @@ public class JpaSettlementCellRepository implements SettlementCellRepository {
     }
 
     @Override
+    public boolean existsByPositionId(String tenantId, UUID positionId) {
+        Long count = emProvider.get()
+            .createQuery("""
+                SELECT COUNT(e) FROM SettlementCellEntity e
+                WHERE e.tenantId   = :tenantId
+                  AND e.positionId = :positionId
+                  AND e.knownTo IS NULL
+                """, Long.class)
+            .setParameter("tenantId", tenantId)
+            .setParameter("positionId", positionId)
+            .setMaxResults(1)
+            .getSingleResult();
+        return count > 0;
+    }
+
+    @Override
     public List<SettlementCell> findByPosition(String tenantId, UUID positionId,
                                                 Instant rangeStart, Instant rangeEnd) {
         return emProvider.get()

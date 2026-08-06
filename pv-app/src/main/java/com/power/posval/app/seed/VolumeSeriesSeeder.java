@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
@@ -33,9 +34,10 @@ public final class VolumeSeriesSeeder {
     public static final SeriesKey SOLAR_SERIES_KEY = new SeriesKey("FCST-SOLAR-01");
     public static final String SOLAR_ASSET_ID = "ASSET-SOLAR-01";
 
-    private static final int INTERVAL_MINUTES = 15;
+    private static final TimeGranularity GRANULARITY = TimeGranularity.MIN_15;
+    private static final long INTERVAL_MINUTES = GRANULARITY.getFixedDuration().toMinutes();
     private static final BigDecimal HOURS_PER_INTERVAL = BigDecimal.valueOf(INTERVAL_MINUTES)
-            .divide(BigDecimal.valueOf(60), 4, RoundingMode.HALF_UP); // 0.2500
+            .divide(BigDecimal.valueOf(60), 4, RoundingMode.HALF_UP);
 
     private VolumeSeriesSeeder() {}
 
@@ -94,7 +96,7 @@ public final class VolumeSeriesSeeder {
                 .assetId(WIND_ASSET_ID)
                 .versionId(1L)
                 .volumeUnit(VolumeUnit.MW_CAPACITY)
-                .granularity(TimeGranularity.MIN_15)
+                .granularity(GRANULARITY)
                 .deliveryPeriod(new DeliveryPeriod(start, end, ZoneOffset.UTC))
                 .qualityState(QualityState.CURRENT)
                 .transactionTime(Instant.now())
@@ -139,7 +141,7 @@ public final class VolumeSeriesSeeder {
                 .assetId(SOLAR_ASSET_ID)
                 .versionId(1L)
                 .volumeUnit(VolumeUnit.MW_CAPACITY)
-                .granularity(TimeGranularity.MIN_15)
+                .granularity(GRANULARITY)
                 .deliveryPeriod(new DeliveryPeriod(start, end, ZoneOffset.UTC))
                 .qualityState(QualityState.CURRENT)
                 .transactionTime(Instant.now())

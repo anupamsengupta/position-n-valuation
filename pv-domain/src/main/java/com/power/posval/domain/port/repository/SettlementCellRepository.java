@@ -27,4 +27,10 @@ public interface SettlementCellRepository {
     /** Find current-knowledge settlement cells for a position within a range. */
     List<SettlementCell> findByPosition(String tenantId, UUID positionId,
                                          Instant rangeStart, Instant rangeEnd);
+
+    /** Check if any settlement cells exist for a given position (idempotency check). */
+    default boolean existsByPositionId(String tenantId, UUID positionId) {
+        return !findByPosition(tenantId, positionId,
+                Instant.EPOCH, Instant.parse("2100-01-01T00:00:00Z")).isEmpty();
+    }
 }

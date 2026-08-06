@@ -212,6 +212,7 @@ CREATE TABLE IF NOT EXISTS volume_series.volume_series (
     asset_id                VARCHAR(64),
     trade_leg_id            VARCHAR(64),
     version_id              BIGINT      NOT NULL,
+    time_granularity        VARCHAR(16) NOT NULL,
     quality_state           VARCHAR(16) NOT NULL,
     materialization_status  VARCHAR(16) NOT NULL,
     transaction_time        TIMESTAMPTZ NOT NULL,

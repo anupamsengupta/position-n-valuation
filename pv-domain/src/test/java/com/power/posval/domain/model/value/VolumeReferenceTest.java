@@ -20,6 +20,7 @@ class VolumeReferenceTest {
             .id(UUID.randomUUID())
             .tradeLegId("LEG-1")
             .tradeId("T-100")
+            .tenantId("default")
             .multiplier(BigDecimal.ONE)
             .volumeSeriesKey(new SeriesKey("VS-1"))
             .effectiveFrom(FROM)

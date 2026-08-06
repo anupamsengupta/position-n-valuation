@@ -46,6 +46,9 @@ public class VolumeSeriesEntity {
     @Column(name = "version_id", nullable = false)
     private long versionId;
 
+    @Column(name = "time_granularity", nullable = false, length = 16)
+    private String timeGranularity;
+
     @Column(name = "quality_state", nullable = false, length = 16)
     private String qualityState;
 
@@ -96,6 +99,9 @@ public class VolumeSeriesEntity {
 
     public long getVersionId() { return versionId; }
     public void setVersionId(long versionId) { this.versionId = versionId; }
+
+    public String getTimeGranularity() { return timeGranularity; }
+    public void setTimeGranularity(String timeGranularity) { this.timeGranularity = timeGranularity; }
 
     public String getQualityState() { return qualityState; }
     public void setQualityState(String qualityState) { this.qualityState = qualityState; }

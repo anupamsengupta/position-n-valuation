@@ -108,6 +108,7 @@ public class DomainBenchmarkSuite {
             .id(UUID.randomUUID())
             .tradeLegId("LEG-1")
             .tradeId("T-7788")
+            .tenantId("default")
             .assetId("WP-NORDSEE")
             .multiplier(new BigDecimal("0.3"))
             .volumeSeriesKey(new SeriesKey("FCST-WP-NORDSEE"))

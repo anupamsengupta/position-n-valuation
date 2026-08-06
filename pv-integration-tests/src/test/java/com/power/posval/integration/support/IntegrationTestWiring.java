@@ -139,7 +139,7 @@ public class IntegrationTestWiring {
 
         tradeCaptureHandler = new DefaultTradeCaptureHandler(ledgerRepo, eventPublisher);
         tradeCapturedConsumer = new TradeCapturedConsumer(
-            tenantNormalizedRepo, ledgerRepo, settlementJob);
+            ledgerRepo, cellRepo, settlementJob);
     }
 
     public static IntegrationTestWiring create() {

@@ -3,7 +3,7 @@ package com.power.posval.kafka;
 import com.power.posval.domain.event.PositionCaptured;
 import com.power.posval.domain.model.PositionLedgerEntry;
 import com.power.posval.domain.port.repository.PositionLedgerRepository;
-import com.power.posval.domain.port.repository.VolumeSeriesRepository;
+import com.power.posval.domain.port.repository.SettlementCellRepository;
 import com.power.posval.domain.service.SettlementMaterializationJob;
 import jakarta.inject.Inject;
 
@@ -15,24 +15,32 @@ import java.util.List;
  */
 public class TradeCapturedConsumer extends IdempotentConsumer<PositionCaptured> {
 
-    private final VolumeSeriesRepository seriesRepo;
     private final PositionLedgerRepository ledgerRepo;
+    private final SettlementCellRepository cellRepo;
     private final SettlementMaterializationJob settlementJob;
 
     @Inject
-    public TradeCapturedConsumer(VolumeSeriesRepository seriesRepo,
-                                  PositionLedgerRepository ledgerRepo,
+    public TradeCapturedConsumer(PositionLedgerRepository ledgerRepo,
+                                  SettlementCellRepository cellRepo,
                                   SettlementMaterializationJob settlementJob) {
-        this.seriesRepo = seriesRepo;
         this.ledgerRepo = ledgerRepo;
+        this.cellRepo = cellRepo;
         this.settlementJob = settlementJob;
     }
 
     @Override
     protected boolean alreadyProcessed(PositionCaptured event) {
-        // D-7: natural key (tradeId, tradeVersion) for idempotency
-        return seriesRepo.existsByTradeIdAndTradeVersion(
-            event.tradeId(), event.tradeVersion());
+        // Check if settlement cells already exist for this trade's positions.
+        // Find current ledger entries, then check if the first one has cells.
+        List<PositionLedgerEntry> entries = ledgerRepo.findCurrentByTradeLeg(
+            event.tenantId(), event.tradeId(), event.tradeLegId());
+
+        if (entries.isEmpty()) {
+            return false; // no entries → not processed yet
+        }
+
+        // If the first position already has settlement cells, this event was processed
+        return cellRepo.existsByPositionId(event.tenantId(), entries.get(0).id());
     }
 
     @Override

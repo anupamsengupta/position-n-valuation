@@ -1,7 +1,5 @@
 package com.power.posval.domain.service;
 
-import com.power.posval.domain.model.QualityState;
-import com.power.posval.domain.model.SeriesType;
 import com.power.posval.domain.model.VolumeInterval;
 import com.power.posval.domain.model.VolumeSeries;
 import com.power.posval.domain.model.value.VolumeReference;
@@ -17,12 +15,20 @@ import java.util.*;
 
 /**
  * Cache-through decorator for {@link VolumeResolver}.
- * Checks {@link VolumeCache} first; on miss, delegates to the wrapped resolver,
- * then populates the cache with raw (pre-multiplier) interval data.
+ * Checks {@link VolumeCache} first; on miss, queries DB once,
+ * populates cache, applies multiplier, and returns — no double DB query.
  *
  * <p>Cache key: ({tenantId}, {seriesKey}, {intervalStart}).
  * Cache stores raw MW/MWh from the volume series (before multiplier).
  * Multiplier is applied after cache retrieval.
+ *
+ * <p>Flow:
+ * <ol>
+ *   <li>Query series metadata from DB (lightweight, no intervals) to get granularity</li>
+ *   <li>Build expected interval starts from granularity</li>
+ *   <li>Bulk cache lookup — if full hit, apply multiplier and return (no interval DB query)</li>
+ *   <li>On miss: load intervals from DB, populate cache, apply multiplier, return</li>
+ * </ol>
  *
  * <p>Pattern #29 (read-through), FR-079.
  */
@@ -49,11 +55,20 @@ public final class CachingVolumeResolver implements VolumeResolver {
                                        Instant rangeEnd,
                                        ResolutionPurpose purpose) {
         String seriesKey = ref.volumeSeriesKey().value();
-        // Use tradeId as tenantId (same normalization as ProfileResolver)
-        String tenantId = ref.tradeId();
+        String tenantId = ref.tenantId();
 
-        // Build list of expected 15-min interval starts in [rangeStart, rangeEnd)
-        List<Instant> expectedStarts = buildIntervalStarts(rangeStart, rangeEnd);
+        // Load series with intervals in range (single DB query)
+        Optional<VolumeSeries> seriesOpt = seriesRepo.findCurrentBySeriesKeyAndRange(
+                tenantId, seriesKey, rangeStart, rangeEnd);
+        if (seriesOpt.isEmpty()) {
+            return List.of();
+        }
+
+        VolumeSeries series = seriesOpt.get();
+        Duration step = series.granularity().getFixedDuration();
+
+        // Build expected interval starts based on actual series granularity
+        List<Instant> expectedStarts = buildIntervalStarts(rangeStart, rangeEnd, step);
         if (expectedStarts.isEmpty()) {
             return List.of();
         }
@@ -62,48 +77,41 @@ public final class CachingVolumeResolver implements VolumeResolver {
         List<CachedInterval> cached = cache.getAll(tenantId, seriesKey, expectedStarts);
 
         if (cached.size() == expectedStarts.size()) {
-            // Full cache hit — apply multiplier and return
-            return applyMultiplier(cached, ref.multiplier(), purpose);
+            // Full cache hit — apply multiplier and return (no extra DB query)
+            return applyMultiplier(cached, ref.multiplier(),
+                    series.versionId(), series.qualityState(), series.seriesType());
         }
 
-        // Cache miss (partial or full) — delegate to underlying resolver
-        List<VolumeRecord> resolved = delegate.resolve(ref, rangeStart, rangeEnd, purpose);
-
-        // Populate cache with raw (pre-multiplier) intervals from DB
-        populateCache(tenantId, seriesKey, ref, rangeStart, rangeEnd);
-
-        return resolved;
-    }
-
-    private void populateCache(String tenantId, String seriesKey,
-                                VolumeReference ref,
-                                Instant rangeStart, Instant rangeEnd) {
-        try {
-            Optional<VolumeSeries> seriesOpt = seriesRepo.findCurrentBySeriesKeyAndRange(
-                    tenantId, seriesKey, rangeStart, rangeEnd);
-            if (seriesOpt.isPresent()) {
-                Map<Instant, CachedInterval> entries = new HashMap<>();
-                for (VolumeInterval vi : seriesOpt.get().intervals()) {
-                    if (!vi.intervalStart().isBefore(rangeEnd)) break;
-                    if (vi.intervalEnd().isAfter(rangeStart)) {
-                        entries.put(vi.intervalStart(), new CachedInterval(
-                                vi.intervalStart(), vi.intervalEnd(),
-                                vi.volume(), vi.energy(),
-                                false, String.valueOf(seriesOpt.get().versionId()), "v1"));
-                    }
-                }
-                if (!entries.isEmpty()) {
-                    cache.putAll(tenantId, seriesKey, entries);
-                }
+        // Cache miss — populate cache from the already-loaded series intervals
+        Map<Instant, CachedInterval> entries = new HashMap<>();
+        for (VolumeInterval vi : series.intervals()) {
+            if (!vi.intervalStart().isBefore(rangeEnd)) break;
+            if (vi.intervalEnd().isAfter(rangeStart)) {
+                entries.put(vi.intervalStart(), new CachedInterval(
+                        vi.intervalStart(), vi.intervalEnd(),
+                        vi.volume(), vi.energy(),
+                        false, String.valueOf(series.versionId()), "v1"));
             }
-        } catch (Exception e) {
-            // Cache population failure should not break resolution
         }
+        if (!entries.isEmpty()) {
+            try {
+                cache.putAll(tenantId, seriesKey, entries);
+            } catch (Exception ignored) {
+                // Cache population failure should not break resolution
+            }
+        }
+
+        // Apply multiplier to the already-loaded intervals (no second DB query)
+        return VolumeFilterMapper.filterAndMap(
+                series.intervals(), rangeStart, rangeEnd, ref.multiplier(),
+                series.versionId(), series.qualityState(), series.seriesType(), null, np);
     }
 
     private List<VolumeRecord> applyMultiplier(List<CachedInterval> cached,
                                                 BigDecimal multiplier,
-                                                ResolutionPurpose purpose) {
+                                                long versionId,
+                                                com.power.posval.domain.model.QualityState quality,
+                                                com.power.posval.domain.model.SeriesType seriesType) {
         boolean unitMultiplier = BigDecimal.ONE.compareTo(multiplier) == 0;
         var result = new ArrayList<VolumeRecord>(cached.size());
         for (CachedInterval ci : cached) {
@@ -119,18 +127,15 @@ public final class CachingVolumeResolver implements VolumeResolver {
             result.add(new VolumeRecord(
                     ci.intervalStart(), ci.intervalEnd(),
                     vol, energy,
-                    Long.parseLong(ci.calendarVersion()),
-                    QualityState.CURRENT,
-                    SeriesType.FORECAST,
-                    null, multiplier));
+                    versionId, quality,
+                    seriesType, null, multiplier));
         }
         return result;
     }
 
-    private List<Instant> buildIntervalStarts(Instant rangeStart, Instant rangeEnd) {
+    private List<Instant> buildIntervalStarts(Instant rangeStart, Instant rangeEnd, Duration step) {
         var starts = new ArrayList<Instant>();
         Instant cursor = rangeStart;
-        Duration step = Duration.ofMinutes(15);
         while (cursor.isBefore(rangeEnd)) {
             starts.add(cursor);
             cursor = cursor.plus(step);

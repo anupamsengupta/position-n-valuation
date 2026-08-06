@@ -18,6 +18,7 @@ public record VolumeReference(
     String tradeLegId,
     String tradeId,
     String assetId,           // nullable — set for asset-linked trades
+    String tenantId,
     BigDecimal multiplier,
     SeriesKey volumeSeriesKey,
     SeriesKey meteredSeriesKey, // nullable — null for exchange/bilateral
@@ -28,6 +29,7 @@ public record VolumeReference(
         Objects.requireNonNull(id, "id");
         Objects.requireNonNull(tradeLegId, "tradeLegId");
         Objects.requireNonNull(tradeId, "tradeId");
+        Objects.requireNonNull(tenantId, "tenantId");
         Objects.requireNonNull(multiplier, "multiplier");
         Objects.requireNonNull(volumeSeriesKey, "volumeSeriesKey");
         Objects.requireNonNull(effectiveFrom, "effectiveFrom");
@@ -49,7 +51,7 @@ public record VolumeReference(
 
     public static final class Builder {
         private UUID id;
-        private String tradeLegId, tradeId, assetId;
+        private String tradeLegId, tradeId, assetId, tenantId;
         private BigDecimal multiplier;
         private SeriesKey volumeSeriesKey, meteredSeriesKey;
         private ZonedDateTime effectiveFrom, effectiveTo;
@@ -58,6 +60,7 @@ public record VolumeReference(
         public Builder tradeLegId(String v) { this.tradeLegId = v; return this; }
         public Builder tradeId(String v) { this.tradeId = v; return this; }
         public Builder assetId(String v) { this.assetId = v; return this; }
+        public Builder tenantId(String v) { this.tenantId = v; return this; }
         public Builder multiplier(BigDecimal v) { this.multiplier = v; return this; }
         public Builder volumeSeriesKey(SeriesKey v) { this.volumeSeriesKey = v; return this; }
         public Builder meteredSeriesKey(SeriesKey v) { this.meteredSeriesKey = v; return this; }
@@ -65,7 +68,7 @@ public record VolumeReference(
         public Builder effectiveTo(ZonedDateTime v) { this.effectiveTo = v; return this; }
 
         public VolumeReference build() {
-            return new VolumeReference(id, tradeLegId, tradeId, assetId,
+            return new VolumeReference(id, tradeLegId, tradeId, assetId, tenantId,
                 multiplier, volumeSeriesKey, meteredSeriesKey, effectiveFrom, effectiveTo);
         }
     }

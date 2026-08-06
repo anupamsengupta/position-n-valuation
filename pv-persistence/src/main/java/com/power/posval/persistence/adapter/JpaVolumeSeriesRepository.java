@@ -191,6 +191,7 @@ public class JpaVolumeSeriesRepository implements VolumeSeriesRepository {
         e.setAssetId(s.assetId());
         e.setTradeLegId(s.tradeLegId());
         e.setVersionId(s.versionId());
+        e.setTimeGranularity(s.granularity().name());
         e.setQualityState(s.qualityState().name());
         e.setMaterializationStatus(s.materializationStatus().name());
         e.setTransactionTime(s.transactionTime());
@@ -251,7 +252,7 @@ public class JpaVolumeSeriesRepository implements VolumeSeriesRepository {
             .tradeLegId(e.getTradeLegId())
             .versionId(e.getVersionId())
             .volumeUnit(VolumeUnit.MW_CAPACITY)
-            .granularity(TimeGranularity.MIN_15)
+            .granularity(TimeGranularity.valueOf(e.getTimeGranularity()))
             .deliveryPeriod(dp)
             .qualityState(QualityState.valueOf(e.getQualityState()))
             .materializationStatus(MaterializationStatus.valueOf(e.getMaterializationStatus()))
@@ -296,7 +297,7 @@ public class JpaVolumeSeriesRepository implements VolumeSeriesRepository {
             .tradeLegId(e.getTradeLegId())
             .versionId(e.getVersionId())
             .volumeUnit(VolumeUnit.MW_CAPACITY)
-            .granularity(TimeGranularity.MIN_15)
+            .granularity(TimeGranularity.valueOf(e.getTimeGranularity()))
             .deliveryPeriod(dp)
             .qualityState(QualityState.valueOf(e.getQualityState()))
             .materializationStatus(MaterializationStatus.valueOf(e.getMaterializationStatus()))
