@@ -52,7 +52,7 @@ public class TradeCapturedKafkaListener {
             tenantContext.setTenant(event.tenantId());
             txExecutor.run(() -> tradeCapturedConsumer.handle(event));
             ack.acknowledge();
-            log.debug("Processed PositionCaptured for trade={} leg={} version={}",
+            log.info("Processed PositionCaptured for trade={} leg={} version={}",
                     event.tradeId(), event.tradeLegId(), event.tradeVersion());
         } finally {
             tenantContext.clear();
