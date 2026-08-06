@@ -79,6 +79,30 @@ public class JpaPositionLedgerRepository implements PositionLedgerRepository {
     }
 
     @Override
+    public List<PositionLedgerEntry> findCurrentByTradeLegAndVersion(String tenantId,
+                                                                       String tradeId,
+                                                                       String tradeLegId,
+                                                                       int tradeVersion) {
+        return emProvider.get()
+            .createQuery("""
+                SELECT e FROM PositionLedgerEntryEntity e
+                WHERE e.tenantId     = :tenantId
+                  AND e.tradeId      = :tradeId
+                  AND e.tradeLegId   = :tradeLegId
+                  AND e.tradeVersion = :tradeVersion
+                  AND e.knownTo IS NULL
+                ORDER BY e.deliveryStart
+                """, PositionLedgerEntryEntity.class)
+            .setParameter("tenantId", tenantId)
+            .setParameter("tradeId", tradeId)
+            .setParameter("tradeLegId", tradeLegId)
+            .setParameter("tradeVersion", tradeVersion)
+            .getResultStream()
+            .map(this::toDomain)
+            .toList();
+    }
+
+    @Override
     public List<PositionLedgerEntry> findAsOf(String tenantId,
                                                String tradeId,
                                                String tradeLegId,

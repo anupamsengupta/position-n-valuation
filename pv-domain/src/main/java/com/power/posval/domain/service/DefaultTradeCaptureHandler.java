@@ -14,6 +14,8 @@ import java.util.UUID;
 
 /**
  * Domain service implementing TradeCapture.
+ * Idempotent: duplicate captures for the same (tradeId, tradeLegId, tradeVersion)
+ * return existing entries without creating duplicates or re-publishing events.
  * Uses port interfaces only — no JPA, no framework.
  * Pattern #16, FR-030, FR-032, S1.
  */
@@ -31,6 +33,13 @@ public class DefaultTradeCaptureHandler implements TradeCaptureHandler {
 
     @Override
     public List<PositionLedgerEntry> handle(TradeCapture cmd) {
+        // Idempotency: check if entries already exist for this (tradeId, tradeLegId, tradeVersion)
+        List<PositionLedgerEntry> existing = ledgerRepo.findCurrentByTradeLegAndVersion(
+            cmd.tenantId(), cmd.tradeId(), cmd.tradeLegId(), cmd.tradeVersion());
+        if (!existing.isEmpty()) {
+            return existing;
+        }
+
         // FR-030: decompose delivery period into monthly blocks
         List<DeliveryRange> monthBlocks = cmd.deliveryPeriod().toMonthBlocks();
 

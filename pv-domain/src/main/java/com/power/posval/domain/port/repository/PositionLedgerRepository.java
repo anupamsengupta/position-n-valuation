@@ -33,6 +33,14 @@ public interface PositionLedgerRepository {
     /** Current-knowledge entries for a trade-leg across all delivery months. */
     List<PositionLedgerEntry> findCurrentByTradeLeg(String tenantId, String tradeId, String tradeLegId);
 
+    /** Current-knowledge entries for a specific trade-leg and version. Used for idempotency checks. */
+    default List<PositionLedgerEntry> findCurrentByTradeLegAndVersion(String tenantId, String tradeId,
+                                                                       String tradeLegId, int tradeVersion) {
+        return findCurrentByTradeLeg(tenantId, tradeId, tradeLegId).stream()
+                .filter(e -> e.tradeVersion() == tradeVersion)
+                .toList();
+    }
+
     /** Bitemporal as-of reconstruction (FR-007). Grain = trade-leg × delivery-month. */
     List<PositionLedgerEntry> findAsOf(String tenantId, String tradeId, String tradeLegId,
                                        Instant businessDate, Instant knowledgeDate);

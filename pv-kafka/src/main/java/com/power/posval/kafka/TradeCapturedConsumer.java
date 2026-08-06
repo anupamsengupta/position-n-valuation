@@ -12,6 +12,9 @@ import java.util.List;
 /**
  * Kafka consumer for PositionCaptured events.
  * Triggers S3/S5/S6 cascade. Pattern #26, FR-106.
+ *
+ * <p>Idempotent: checks if settlement cells already exist for this
+ * (tradeId, tradeLegId, tradeVersion) before processing.
  */
 public class TradeCapturedConsumer extends IdempotentConsumer<PositionCaptured> {
 
@@ -30,24 +33,23 @@ public class TradeCapturedConsumer extends IdempotentConsumer<PositionCaptured> 
 
     @Override
     protected boolean alreadyProcessed(PositionCaptured event) {
-        // Check if settlement cells already exist for this trade's positions.
-        // Find current ledger entries, then check if the first one has cells.
-        List<PositionLedgerEntry> entries = ledgerRepo.findCurrentByTradeLeg(
-            event.tenantId(), event.tradeId(), event.tradeLegId());
+        // Find entries for this specific version (not all versions of the trade)
+        List<PositionLedgerEntry> entries = ledgerRepo.findCurrentByTradeLegAndVersion(
+            event.tenantId(), event.tradeId(), event.tradeLegId(), event.tradeVersion());
 
         if (entries.isEmpty()) {
-            return false; // no entries → not processed yet
+            return false;
         }
 
-        // If the first position already has settlement cells, this event was processed
+        // If the first position of this version has settlement cells, already processed
         return cellRepo.existsByPositionId(event.tenantId(), entries.get(0).id());
     }
 
     @Override
     protected void process(PositionCaptured event) {
-        // Retrieve position ledger entries for the captured trade
-        List<PositionLedgerEntry> entries = ledgerRepo.findCurrentByTradeLeg(
-            event.tenantId(), event.tradeId(), event.tradeLegId());
+        // Retrieve entries for this specific version
+        List<PositionLedgerEntry> entries = ledgerRepo.findCurrentByTradeLegAndVersion(
+            event.tenantId(), event.tradeId(), event.tradeLegId(), event.tradeVersion());
 
         // Trigger settlement materialization (S5a) for each position entry
         for (PositionLedgerEntry entry : entries) {
