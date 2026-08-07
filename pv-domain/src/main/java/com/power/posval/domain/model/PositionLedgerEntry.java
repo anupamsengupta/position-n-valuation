@@ -26,6 +26,7 @@ public final class PositionLedgerEntry {
     private final BigDecimal quantity;          // signed: +long, -short
     private final VolumeUnit volumeUnit;
     private final UUID priceExpressionId;
+    private final UUID marketPriceExpressionId;  // nullable — market-to-market price expression
     private final String portfolioId;
     private final String deliveryPointId;
     private final String originType;
@@ -55,6 +56,7 @@ public final class PositionLedgerEntry {
         this.quantity = b.quantity;
         this.volumeUnit = b.volumeUnit;
         this.priceExpressionId = b.priceExpressionId;
+        this.marketPriceExpressionId = b.marketPriceExpressionId;
         this.portfolioId = b.portfolioId;
         this.deliveryPointId = b.deliveryPointId;
         this.originType = b.originType;
@@ -83,6 +85,7 @@ public final class PositionLedgerEntry {
     public BigDecimal quantity() { return quantity; }
     public VolumeUnit volumeUnit() { return volumeUnit; }
     public UUID priceExpressionId() { return priceExpressionId; }
+    public UUID marketPriceExpressionId() { return marketPriceExpressionId; }
     public String portfolioId() { return portfolioId; }
     public String deliveryPointId() { return deliveryPointId; }
     public String originType() { return originType; }
@@ -111,6 +114,7 @@ public final class PositionLedgerEntry {
         private BigDecimal quantity;
         private VolumeUnit volumeUnit;
         private UUID priceExpressionId;
+        private UUID marketPriceExpressionId;
         private String portfolioId;
         private String deliveryPointId;
         private String originType;
@@ -136,6 +140,7 @@ public final class PositionLedgerEntry {
         public Builder quantity(BigDecimal v) { this.quantity = v; return this; }
         public Builder volumeUnit(VolumeUnit v) { this.volumeUnit = v; return this; }
         public Builder priceExpressionId(UUID v) { this.priceExpressionId = v; return this; }
+        public Builder marketPriceExpressionId(UUID v) { this.marketPriceExpressionId = v; return this; }
         public Builder portfolioId(String v) { this.portfolioId = v; return this; }
         public Builder deliveryPointId(String v) { this.deliveryPointId = v; return this; }
         public Builder originType(String v) { this.originType = v; return this; }

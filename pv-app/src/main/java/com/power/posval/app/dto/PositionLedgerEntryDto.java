@@ -4,6 +4,7 @@ import com.power.posval.domain.model.PositionLedgerEntry;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.UUID;
 
 public record PositionLedgerEntryDto(
         String id,
@@ -16,6 +17,7 @@ public record PositionLedgerEntryDto(
         BigDecimal quantity,
         String volumeUnit,
         String priceExpressionId,
+        UUID marketPriceExpressionId,
         String portfolioId,
         String deliveryPointId,
         String status,
@@ -36,6 +38,7 @@ public record PositionLedgerEntryDto(
                 e.quantity(),
                 e.volumeUnit().name(),
                 e.priceExpressionId().toString(),
+                e.marketPriceExpressionId(),
                 e.portfolioId(),
                 e.deliveryPointId(),
                 e.status(),

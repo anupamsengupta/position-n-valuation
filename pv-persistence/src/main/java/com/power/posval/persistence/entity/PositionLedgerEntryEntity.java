@@ -61,6 +61,9 @@ public class PositionLedgerEntryEntity {
     @Column(name = "price_expression_id", nullable = false)
     private UUID priceExpressionId;
 
+    @Column(name = "market_price_expression_id")
+    private UUID marketPriceExpressionId;
+
     @Column(name = "volume_series_key", length = 128)
     private String volumeSeriesKey;
 
@@ -125,6 +128,9 @@ public class PositionLedgerEntryEntity {
 
     public UUID getPriceExpressionId() { return priceExpressionId; }
     public void setPriceExpressionId(UUID priceExpressionId) { this.priceExpressionId = priceExpressionId; }
+
+    public UUID getMarketPriceExpressionId() { return marketPriceExpressionId; }
+    public void setMarketPriceExpressionId(UUID marketPriceExpressionId) { this.marketPriceExpressionId = marketPriceExpressionId; }
 
     public String getVolumeSeriesKey() { return volumeSeriesKey; }
     public void setVolumeSeriesKey(String volumeSeriesKey) { this.volumeSeriesKey = volumeSeriesKey; }

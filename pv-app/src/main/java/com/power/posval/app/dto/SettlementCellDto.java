@@ -18,6 +18,9 @@ public record SettlementCellDto(
         BigDecimal volumeMw,
         BigDecimal volumeMwh,
         BigDecimal amount,
+        BigDecimal marketPrice,
+        BigDecimal marketAmount,
+        BigDecimal pnl,
         String currency,
         Set<String> activeLeaves,
         Instant computedAt
@@ -35,6 +38,9 @@ public record SettlementCellDto(
                 c.volumeMw(),
                 c.volumeMwh(),
                 c.amount(),
+                c.marketPrice(),
+                c.marketAmount(),
+                c.pnl(),
                 c.currency(),
                 c.activeLeaves(),
                 c.computedAt()

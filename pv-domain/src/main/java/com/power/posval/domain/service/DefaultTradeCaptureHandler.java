@@ -71,6 +71,7 @@ public class DefaultTradeCaptureHandler implements TradeCaptureHandler {
                     .quantity(cmd.quantity())
                     .volumeUnit(cmd.volumeUnit())
                     .priceExpressionId(cmd.priceExpressionId())
+                    .marketPriceExpressionId(cmd.marketPriceExpressionId())
                     .portfolioId(cmd.portfolioId())
                     .deliveryPointId(cmd.deliveryPointId())
                     .originType(cmd.originType())

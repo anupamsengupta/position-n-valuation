@@ -16,10 +16,7 @@ import com.power.posval.domain.port.repository.SettlementCellRepository;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.ZonedDateTime;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
 
 /**
  * Settlement materialization job (S5a).
@@ -70,8 +67,41 @@ public class SettlementMaterializationJob extends AbstractMaterializationJob<Set
     protected SettlementCell buildResult(PositionLedgerEntry position,
                                           VolumeRecord volume,
                                           PriceResolution price) {
-        BigDecimal amount = np.round(
+        BigDecimal tradeAmount = np.round(
             price.value().multiply(volume.energy()), NumericPrecision.Domain.MONETARY);
+
+        BigDecimal marketPrice = null;
+        BigDecimal marketAmount = null;
+        BigDecimal pnl = null;
+        Set<String> activeLeaves = price.activeLeaves();
+        Map<String, Long> inputVersionSet = price.inputVersionSet();
+
+        if (position.marketPriceExpressionId() != null) {
+            DeliveryPeriod interval = new DeliveryPeriod(
+                ZonedDateTime.ofInstant(volume.intervalStart(),
+                    position.deliveryRange().deliveryTimezone()),
+                ZonedDateTime.ofInstant(volume.intervalEnd(),
+                    position.deliveryRange().deliveryTimezone()),
+                position.deliveryRange().deliveryTimezone());
+
+            PriceResolution marketRes = evaluatePrice(
+                position.marketPriceExpressionId(), interval);
+
+            marketPrice = marketRes.value();
+            marketAmount = np.round(
+                marketPrice.multiply(volume.energy()), NumericPrecision.Domain.MONETARY);
+            pnl = np.round(
+                marketAmount.subtract(tradeAmount), NumericPrecision.Domain.MONETARY);
+
+            // Merge active leaves and input version sets from both resolutions
+            var mergedLeaves = new HashSet<>(activeLeaves);
+            mergedLeaves.addAll(marketRes.activeLeaves());
+            activeLeaves = mergedLeaves;
+
+            var mergedVersions = new HashMap<>(inputVersionSet);
+            mergedVersions.putAll(marketRes.inputVersionSet());
+            inputVersionSet = mergedVersions;
+        }
 
         return new SettlementCell(
             UUID.randomUUID(),
@@ -84,10 +114,13 @@ public class SettlementMaterializationJob extends AbstractMaterializationJob<Set
             price.value(),
             volume.volume(),
             volume.energy(),
-            amount,
+            tradeAmount,
+            marketPrice,
+            marketAmount,
+            pnl,
             "EUR",
-            price.activeLeaves(),
-            price.inputVersionSet(),
+            activeLeaves,
+            inputVersionSet,
             Instant.now());
     }
 

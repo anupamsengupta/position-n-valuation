@@ -26,7 +26,7 @@ class CommandSmokeTest {
         var cmd = new TradeCapture(
             "T-100", 1, "LEG-1", "TENANT-1", dp,
             new BigDecimal("50"), VolumeUnit.MW_CAPACITY, UUID.randomUUID(),
-            "PF-A", "DP-1", "BILATERAL_TRADE", NOW,
+            null, "PF-A", "DP-1", "BILATERAL_TRADE", NOW,
             null, BigDecimal.ONE, new SeriesKey("VS-1"), null);
         assertEquals("T-100", cmd.tradeId());
         assertEquals(1, cmd.tradeVersion());
@@ -39,7 +39,7 @@ class CommandSmokeTest {
         var cmd = new TradeAmend(
             "T-100", 2, "LEG-1", "TENANT-1",
             "BACKDATED_CORRECTION", NOW,
-            new BigDecimal("60"), null, null, null, null);
+            new BigDecimal("60"), null, null, null, null, null);
         assertEquals(2, cmd.tradeVersion());
         assertEquals("BACKDATED_CORRECTION", cmd.amendmentReason());
         assertNull(cmd.priceExpressionId());

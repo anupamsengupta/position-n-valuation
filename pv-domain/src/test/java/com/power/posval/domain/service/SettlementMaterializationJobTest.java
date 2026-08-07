@@ -192,6 +192,77 @@ class SettlementMaterializationJobTest {
         assertTrue(cell.activeLeaves().contains("PREMIUM_3_20"));
     }
 
+    @Test
+    void dualPriceExpressions_producesMarketPriceAndPnl() {
+        var marketData = new JsonMarketDataPort();
+        var exprRepo = new JsonPriceExpressionRepository();
+        var priceEvaluator = new PriceExpressionBasedEvaluator(new DefaultNumericPrecision());
+
+        var savedCells = new ArrayList<SettlementCell>();
+        DomainEventPublisher eventPublisher = e -> {};
+
+        // Trade price: EXPR-1 (fixed 85.00), Market price: EXPR-2 (EPEX+spread ~28.06)
+        UUID tradePriceExprId = UUID.fromString("00000000-0000-0000-0000-000000000001");
+        UUID marketPriceExprId = UUID.fromString("00000000-0000-0000-0000-000000000002");
+        SeriesKey seriesKey = new SeriesKey("VS-TEST-DUAL");
+        DeliveryRange range = DeliveryRange.ofMonth(YearMonth.of(2025, 3), CET);
+
+        List<VolumeInterval> intervals = List.of(
+            new DefaultVolumeInterval(
+                UUID.randomUUID(),
+                Instant.parse("2025-03-01T00:00:00Z"),
+                Instant.parse("2025-03-01T00:15:00Z"),
+                new BigDecimal("50.0"),
+                new BigDecimal("12.5"),
+                1, null));
+
+        var seriesRepo = stubSeriesRepo(seriesKey, range, intervals);
+        var resolver = new ProfileResolver(seriesRepo, new DefaultNumericPrecision());
+
+        var job = new SettlementMaterializationJob(
+            resolver, priceEvaluator, marketData, exprRepo,
+            capturingCellRepo(savedCells), eventPublisher, new DefaultNumericPrecision());
+
+        var position = PositionLedgerEntry.builder()
+            .id(UUID.randomUUID())
+            .tenantId("TN_0042")
+            .tradeId("T-DUAL")
+            .tradeLegId("LEG-1")
+            .tradeVersion(1)
+            .deliveryRange(range)
+            .quantity(BigDecimal.TEN)
+            .volumeUnit(VolumeUnit.MW_CAPACITY)
+            .priceExpressionId(tradePriceExprId)
+            .marketPriceExpressionId(marketPriceExprId)
+            .volumeSeriesKey(seriesKey)
+            .validFrom(Instant.parse("2025-02-15T00:00:00Z"))
+            .knownFrom(Instant.parse("2025-02-15T00:00:00Z"))
+            .build();
+
+        job.execute(position, range);
+
+        assertEquals(1, savedCells.size());
+        SettlementCell cell = savedCells.get(0);
+
+        // Trade price = 85.00
+        assertEquals(0, new BigDecimal("85.00").compareTo(cell.price()));
+        // Market price ≈ 28.06
+        assertNotNull(cell.marketPrice());
+        assertTrue(cell.marketPrice().subtract(new BigDecimal("28.06")).abs()
+            .compareTo(new BigDecimal("0.01")) < 0,
+            "Market price should be ~28.06, got " + cell.marketPrice());
+        // Market amount should be positive
+        assertNotNull(cell.marketAmount());
+        assertTrue(cell.marketAmount().compareTo(BigDecimal.ZERO) > 0);
+        // PnL = marketAmount - tradeAmount (negative since 28 < 85)
+        assertNotNull(cell.pnl());
+        assertTrue(cell.pnl().compareTo(BigDecimal.ZERO) < 0,
+            "PnL should be negative, got " + cell.pnl());
+        // Active leaves should contain leaves from both expressions
+        assertTrue(cell.activeLeaves().contains("FIXED_85"));
+        assertTrue(cell.activeLeaves().contains("EPEX_DA15"));
+    }
+
     /**
      * EXPR-4: Three-level CPI-escalated collar PPA with negative-price protection.
      * Formula: if(EPEX < 0) then 0 else clamp(38, 110, 72 * (HICP_current / HICP_base))

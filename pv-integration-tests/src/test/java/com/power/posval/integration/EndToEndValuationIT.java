@@ -116,6 +116,7 @@ class EndToEndValuationIT {
                     tradeId, 1, "LEG-1", IntegrationTestWiring.TENANT_ID,
                     deliveryPeriod,
                     new BigDecimal("80.0"), VolumeUnit.MW_CAPACITY, EXPR_4_ID,
+                    null,
                     "PORTFOLIO-RENEW", "DE_LU", "PPA_ONSHORE",
                     Instant.parse("2026-06-01T00:00:00Z"),
                     asset.assetId(), mult, asset.seriesKey(), null);
@@ -269,6 +270,7 @@ class EndToEndValuationIT {
         TradeCapture cmd = new TradeCapture(
             "T-COLLAR-TEST", 1, "LEG-1", IntegrationTestWiring.TENANT_ID,
             dp, new BigDecimal("80.0"), VolumeUnit.MW_CAPACITY, EXPR_4_ID,
+            null,
             "PORTFOLIO-TEST", "DE_LU", "PPA_ONSHORE",
             Instant.parse("2026-06-01T00:00:00Z"),
             VolumeSeriesGenerator.ASSET1_ID, BigDecimal.ONE,
@@ -317,6 +319,7 @@ class EndToEndValuationIT {
         TradeCapture cmd = new TradeCapture(
             "T-JPQL-TEST", 1, "LEG-1", IntegrationTestWiring.TENANT_ID,
             dp, new BigDecimal("80.0"), VolumeUnit.MW_CAPACITY, EXPR_4_ID,
+            null,
             "PORTFOLIO-TEST", "DE_LU", "PPA_ONSHORE",
             Instant.parse("2026-06-01T00:00:00Z"),
             VolumeSeriesGenerator.ASSET1_ID, BigDecimal.ONE,

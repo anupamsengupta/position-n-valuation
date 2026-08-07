@@ -88,6 +88,9 @@ public class JpaSettlementCellRepository implements SettlementCellRepository {
         e.setVolumeMw(c.volumeMw());
         e.setVolumeMwh(c.volumeMwh());
         e.setAmount(c.amount());
+        e.setMarketPrice(c.marketPrice());
+        e.setMarketAmount(c.marketAmount());
+        e.setPnl(c.pnl());
         e.setCurrency(c.currency());
         e.setActiveLeaves(SimpleJsonCodec.setToJson(c.activeLeaves()));
         e.setInputVersionSet(SimpleJsonCodec.mapToJson(c.inputVersionSet()));
@@ -101,7 +104,9 @@ public class JpaSettlementCellRepository implements SettlementCellRepository {
             e.getIntervalStart(), e.getIntervalEnd(),
             e.getValuationType(), e.getCellStatus(),
             e.getPrice(), e.getVolumeMw(), e.getVolumeMwh(),
-            e.getAmount(), e.getCurrency(),
+            e.getAmount(),
+            e.getMarketPrice(), e.getMarketAmount(), e.getPnl(),
+            e.getCurrency(),
             SimpleJsonCodec.jsonToStringSet(e.getActiveLeaves()),
             SimpleJsonCodec.jsonToStringLongMap(e.getInputVersionSet()),
             e.getComputedAt());

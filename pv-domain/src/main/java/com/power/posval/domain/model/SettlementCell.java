@@ -24,6 +24,9 @@ public record SettlementCell(
     BigDecimal volumeMw,
     BigDecimal volumeMwh,
     BigDecimal amount,
+    BigDecimal marketPrice,      // nullable — mark-to-market price
+    BigDecimal marketAmount,     // nullable — marketPrice × energy
+    BigDecimal pnl,              // nullable — marketAmount - amount
     String currency,
     Set<String> activeLeaves,
     Map<String, Long> inputVersionSet,

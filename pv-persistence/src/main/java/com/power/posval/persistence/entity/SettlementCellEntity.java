@@ -62,6 +62,15 @@ public class SettlementCellEntity {
     @Column(name = "amount", nullable = false, precision = 18, scale = 4)
     private BigDecimal amount;
 
+    @Column(name = "market_price", precision = 15, scale = 8)
+    private BigDecimal marketPrice;
+
+    @Column(name = "market_amount", precision = 18, scale = 4)
+    private BigDecimal marketAmount;
+
+    @Column(name = "pnl", precision = 18, scale = 4)
+    private BigDecimal pnl;
+
     @Column(name = "currency", length = 3, nullable = false)
     private String currency;
 
@@ -113,6 +122,15 @@ public class SettlementCellEntity {
 
     public BigDecimal getAmount() { return amount; }
     public void setAmount(BigDecimal amount) { this.amount = amount; }
+
+    public BigDecimal getMarketPrice() { return marketPrice; }
+    public void setMarketPrice(BigDecimal marketPrice) { this.marketPrice = marketPrice; }
+
+    public BigDecimal getMarketAmount() { return marketAmount; }
+    public void setMarketAmount(BigDecimal marketAmount) { this.marketAmount = marketAmount; }
+
+    public BigDecimal getPnl() { return pnl; }
+    public void setPnl(BigDecimal pnl) { this.pnl = pnl; }
 
     public String getCurrency() { return currency; }
     public void setCurrency(String currency) { this.currency = currency; }

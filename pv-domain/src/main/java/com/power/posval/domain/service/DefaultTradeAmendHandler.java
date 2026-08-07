@@ -51,6 +51,8 @@ public class DefaultTradeAmendHandler implements TradeAmendHandler {
                 .volumeUnit(existing.volumeUnit())
                 .priceExpressionId(cmd.priceExpressionId() != null
                     ? cmd.priceExpressionId() : existing.priceExpressionId())
+                .marketPriceExpressionId(cmd.marketPriceExpressionId() != null
+                    ? cmd.marketPriceExpressionId() : existing.marketPriceExpressionId())
                 .portfolioId(cmd.portfolioId() != null ? cmd.portfolioId() : existing.portfolioId())
                 .deliveryPointId(existing.deliveryPointId())
                 .originType(existing.originType())

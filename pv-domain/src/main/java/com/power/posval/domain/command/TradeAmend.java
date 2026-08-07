@@ -21,6 +21,7 @@ public record TradeAmend(
     // Fields that changed — nullable means "unchanged"
     BigDecimal quantity,
     UUID priceExpressionId,
+    UUID marketPriceExpressionId,  // nullable = unchanged
     String portfolioId,
     BigDecimal multiplier,
     DeliveryPeriod deliveryPeriod

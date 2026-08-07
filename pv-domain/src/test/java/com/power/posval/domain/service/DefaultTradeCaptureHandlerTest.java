@@ -79,12 +79,32 @@ class DefaultTradeCaptureHandlerTest {
         assertEquals(0, new BigDecimal("10.0").compareTo(entry.quantity()));
     }
 
+    @Test
+    void marketPriceExpressionId_flowsThrough() {
+        UUID marketExprId = UUID.randomUUID();
+        var cmd = new TradeCapture(
+            "T-7788", 1, "LEG-1", "TN_0042",
+            new DeliveryPeriod(
+                ZonedDateTime.of(2025, 3, 1, 0, 0, 0, 0, CET),
+                ZonedDateTime.of(2025, 4, 1, 0, 0, 0, 0, CET), CET),
+            new BigDecimal("10.0"), VolumeUnit.MW_CAPACITY,
+            UUID.randomUUID(), marketExprId, "PORTFOLIO-1", "DE_LU",
+            "BILATERAL_TRADE", Instant.now(),
+            null, BigDecimal.ONE,
+            new SeriesKey("VS-T7788-1"), null);
+
+        List<PositionLedgerEntry> entries = handler.handle(cmd);
+
+        assertEquals(1, entries.size());
+        assertEquals(marketExprId, entries.get(0).marketPriceExpressionId());
+    }
+
     private TradeCapture tradeCapture(ZonedDateTime start, ZonedDateTime end) {
         return new TradeCapture(
             "T-7788", 1, "LEG-1", "TN_0042",
             new DeliveryPeriod(start, end, CET),
             new BigDecimal("10.0"), VolumeUnit.MW_CAPACITY,
-            UUID.randomUUID(), "PORTFOLIO-1", "DE_LU",
+            UUID.randomUUID(), null, "PORTFOLIO-1", "DE_LU",
             "BILATERAL_TRADE", Instant.now(),
             null, BigDecimal.ONE,
             new SeriesKey("VS-T7788-1"), null);

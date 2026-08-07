@@ -234,6 +234,7 @@ class TradeToSettlementIntegrationTest {
                 ZonedDateTime.of(2025, 3, 1, 0, 0, 0, 0, CET),
                 ZonedDateTime.of(2025, 6, 1, 0, 0, 0, 0, CET), CET),
             new BigDecimal("50.0"), VolumeUnit.MW_CAPACITY, exprId,
+            null,
             "PORTFOLIO-1", "DE_LU", "BILATERAL_TRADE",
             Instant.parse("2025-02-15T00:00:00Z"),
             null, BigDecimal.ONE, new SeriesKey("VS-T9999-1"), null);
@@ -252,15 +253,62 @@ class TradeToSettlementIntegrationTest {
     }
 
 
+    // =====================================================================
+    //  Test 5: Dual expressions — trade price + market price → PnL
+    // =====================================================================
+
+    @Test
+    void fullPipeline_dualExpressions_producesPnl() {
+        // EXPR-1: ConstantLeaf(85.00) — trade price
+        UUID tradePriceExprId = UUID.fromString("00000000-0000-0000-0000-000000000001");
+        // EXPR-2: Add(EPEX_DA15_SETTLE + 3.20) — market price (~28.06)
+        UUID marketPriceExprId = UUID.fromString("00000000-0000-0000-0000-000000000002");
+
+        TradeCapture command = tradeCapture("T-5555", tradePriceExprId, marketPriceExprId);
+        List<PositionLedgerEntry> entries = tradeCaptureHandler.handle(command);
+        assertEquals(1, entries.size());
+        assertEquals(marketPriceExprId, entries.get(0).marketPriceExpressionId());
+
+        PositionEntryCaptured event = (PositionEntryCaptured) publishedEvents.get(0);
+        publishedEvents.clear();
+        tradeCapturedConsumer.handle(event);
+
+        assertEquals(1, settlementStore.size());
+        SettlementCell cell = settlementStore.get(0);
+
+        // Trade price = 85.00
+        assertEquals(0, new BigDecimal("85.00").compareTo(cell.price()),
+            "Trade price should be 85.00");
+
+        // Market price ≈ 28.06 (EPEX 24.86 + premium 3.20)
+        assertNotNull(cell.marketPrice(), "Market price should be set");
+        assertTrue(cell.marketPrice().subtract(new BigDecimal("28.06")).abs()
+            .compareTo(new BigDecimal("0.01")) < 0,
+            "Market price ≈ 28.06, got " + cell.marketPrice());
+
+        // Market amount and PnL
+        assertNotNull(cell.marketAmount(), "Market amount should be set");
+        assertNotNull(cell.pnl(), "PnL should be set");
+        // PnL = marketAmount - tradeAmount (should be negative since market < trade)
+        assertTrue(cell.pnl().compareTo(BigDecimal.ZERO) < 0,
+            "PnL should be negative (market < trade), got " + cell.pnl());
+    }
+
     // ===== Helpers =====
 
     private TradeCapture tradeCapture(String tradeId, UUID priceExpressionId) {
+        return tradeCapture(tradeId, priceExpressionId, null);
+    }
+
+    private TradeCapture tradeCapture(String tradeId, UUID priceExpressionId,
+                                       UUID marketPriceExpressionId) {
         return new TradeCapture(
             tradeId, 1, "LEG-1", "TN_0042",
             new DeliveryPeriod(
                 ZonedDateTime.of(2025, 3, 1, 0, 0, 0, 0, CET),
                 ZonedDateTime.of(2025, 4, 1, 0, 0, 0, 0, CET), CET),
             new BigDecimal("50.0"), VolumeUnit.MW_CAPACITY, priceExpressionId,
+            marketPriceExpressionId,
             "PORTFOLIO-1", "DE_LU", "BILATERAL_TRADE",
             Instant.parse("2025-02-15T00:00:00Z"),
             null, BigDecimal.ONE, new SeriesKey("VS-T9999-1"), null);
