@@ -18,6 +18,11 @@ import java.util.UUID;
  * Template method for materialization jobs.
  * Concrete subclasses: SettlementMaterializationJob, ForwardMarkJob, EodStrikeJob.
  * Pattern #15, FR-056, FR-105, S5.
+ *
+ * Market data lookups are instrumented via {@link InstrumentedMarketDataPort}
+ * to separate lookup time (cache + DB) from computation time (expression eval).
+ * Timing stats are thread-local so concurrent Kafka consumer threads don't
+ * contaminate each other's measurements.
  */
 public abstract class AbstractMaterializationJob<R> {
 
@@ -28,14 +33,19 @@ public abstract class AbstractMaterializationJob<R> {
     protected final MarketDataPort marketData;
     protected final PriceExpressionRepository priceExpressionRepo;
 
+    private final InstrumentedMarketDataPort instrumentedMarketData;
+
     protected AbstractMaterializationJob(VolumeResolver volumeResolver,
                                           PriceEvaluator priceEvaluator,
                                           MarketDataPort marketData,
                                           PriceExpressionRepository priceExpressionRepo) {
         this.volumeResolver = volumeResolver;
         this.priceEvaluator = priceEvaluator;
-        this.marketData = marketData;
         this.priceExpressionRepo = priceExpressionRepo;
+
+        // Wrap market data port with timing instrumentation (thread-local stats)
+        this.instrumentedMarketData = new InstrumentedMarketDataPort(marketData);
+        this.marketData = this.instrumentedMarketData;
     }
 
     /**
@@ -50,28 +60,37 @@ public abstract class AbstractMaterializationJob<R> {
         long resolveMs = System.currentTimeMillis() - start;
         log.info("resolveVolume(): {} ms, intervals={}", resolveMs, volumes.size());
 
-        start = System.currentTimeMillis();
-        List<R> results = new ArrayList<>(volumes.size());
-        for (VolumeRecord vol : volumes) {
-            DeliveryPeriod interval = new DeliveryPeriod(
-                ZonedDateTime.ofInstant(vol.intervalStart(),
-                    intervalRange.deliveryTimezone()),
-                ZonedDateTime.ofInstant(vol.intervalEnd(),
-                    intervalRange.deliveryTimezone()),
-                intervalRange.deliveryTimezone());
+        instrumentedMarketData.resetStats();
+        try {
+            start = System.currentTimeMillis();
+            List<R> results = new ArrayList<>(volumes.size());
+            for (VolumeRecord vol : volumes) {
+                DeliveryPeriod interval = new DeliveryPeriod(
+                    ZonedDateTime.ofInstant(vol.intervalStart(),
+                        intervalRange.deliveryTimezone()),
+                    ZonedDateTime.ofInstant(vol.intervalEnd(),
+                        intervalRange.deliveryTimezone()),
+                    intervalRange.deliveryTimezone());
 
-            PriceResolution priceRes = evaluatePrice(
-                position.priceExpressionId(), interval);
+                PriceResolution priceRes = evaluatePrice(
+                    position.priceExpressionId(), interval);
 
-            results.add(buildResult(position, vol, priceRes));
+                results.add(buildResult(position, vol, priceRes));
+            }
+            long priceMs = System.currentTimeMillis() - start;
+            PriceCalcTimingStats stats = instrumentedMarketData.stats();
+            long lookupMs = stats.lookupTotalMs();
+            long computeMs = priceMs - lookupMs;
+            log.info("priceCalc(): {} ms (lookup={} ms, compute={} ms, lookups={}), results={}",
+                priceMs, lookupMs, computeMs, stats.lookupCount(), results.size());
+
+            start = System.currentTimeMillis();
+            flushResults(position, results);
+            long flushMs = System.currentTimeMillis() - start;
+            log.info("flushResults(): {} ms", flushMs);
+        } finally {
+            instrumentedMarketData.clearStats();
         }
-        long priceMs = System.currentTimeMillis() - start;
-        log.info("priceCalc(): {} ms, results={}", priceMs, results.size());
-
-        start = System.currentTimeMillis();
-        flushResults(position, results);
-        long flushMs = System.currentTimeMillis() - start;
-        log.info("flushResults(): {} ms", flushMs);
     }
 
     /** Hook: resolve volume from the appropriate source. */
