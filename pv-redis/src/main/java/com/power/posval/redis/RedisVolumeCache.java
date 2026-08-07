@@ -7,7 +7,6 @@ import io.lettuce.core.api.sync.RedisCommands;
 import jakarta.inject.Inject;
 
 import java.math.BigDecimal;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
 
@@ -18,14 +17,19 @@ import java.util.*;
  */
 public class RedisVolumeCache implements VolumeCache {
 
-    private static final long TTL_SECONDS = Duration.ofHours(24).toSeconds();
     private static final String KEY_PREFIX = "vol:";
 
     private final RedisCommands<String, String> commands;
+    private final RedisCacheTtl ttl;
 
     @Inject
     public RedisVolumeCache(RedisCommands<String, String> commands) {
+        this(commands, RedisCacheTtl.DEFAULTS);
+    }
+
+    public RedisVolumeCache(RedisCommands<String, String> commands, RedisCacheTtl ttl) {
         this.commands = commands;
+        this.ttl = ttl;
     }
 
     @Override
@@ -62,7 +66,7 @@ public class RedisVolumeCache implements VolumeCache {
     public void put(String tenantId, String seriesKey,
                      Instant intervalStart, CachedInterval value) {
         String key = key(tenantId, seriesKey, intervalStart);
-        commands.setex(key, TTL_SECONDS, serialize(value));
+        commands.setex(key, ttl.volumeSeconds(), serialize(value));
     }
 
     @Override
@@ -71,7 +75,7 @@ public class RedisVolumeCache implements VolumeCache {
         // Pipeline batch writes
         values.forEach((start, interval) -> {
             String key = key(tenantId, seriesKey, start);
-            commands.setex(key, TTL_SECONDS, serialize(interval));
+            commands.setex(key, ttl.volumeSeconds(), serialize(interval));
         });
     }
 
@@ -80,7 +84,7 @@ public class RedisVolumeCache implements VolumeCache {
                             DeliveryRange affectedRange) {
         // SCAN + DEL for keys matching pattern
         String pattern = KEY_PREFIX + tenantId + ":" + seriesKey + ":*";
-        io.lettuce.core.ScanArgs scanArgs = io.lettuce.core.ScanArgs.Builder.matches(pattern).limit(1000);
+        io.lettuce.core.ScanArgs scanArgs = io.lettuce.core.ScanArgs.Builder.matches(pattern).limit(ttl.scanBatchSize());
         var cursor = io.lettuce.core.ScanCursor.INITIAL;
 
         Instant rangeStart = affectedRange.startInstant().toInstant();
@@ -101,7 +105,7 @@ public class RedisVolumeCache implements VolumeCache {
     @Override
     public void invalidateAll(String tenantId, String seriesKey) {
         String pattern = KEY_PREFIX + tenantId + ":" + seriesKey + ":*";
-        io.lettuce.core.ScanArgs scanArgs = io.lettuce.core.ScanArgs.Builder.matches(pattern).limit(1000);
+        io.lettuce.core.ScanArgs scanArgs = io.lettuce.core.ScanArgs.Builder.matches(pattern).limit(ttl.scanBatchSize());
         var cursor = io.lettuce.core.ScanCursor.INITIAL;
 
         do {

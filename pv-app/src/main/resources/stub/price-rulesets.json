@@ -1,0 +1,21 @@
+[
+  {
+    "ruleSetId": "price-evaluation-rs",
+    "tenantId": "default",
+    "name": "price-evaluation",
+    "entityType": "PriceEvaluation",
+    "outputKey": "price",
+    "status": "ACTIVE",
+    "boundTo": ["SETTLEMENT"],
+    "evaluationMode": "INDEPENDENT",
+    "conflictPolicy": "FIRST_MATCH",
+    "criticality": "MANDATORY",
+    "ruleIds": [
+      "price-expr-1@1",
+      "price-expr-2@1",
+      "price-expr-3@1",
+      "price-expr-4@1",
+      "price-expr-5@1"
+    ]
+  }
+]

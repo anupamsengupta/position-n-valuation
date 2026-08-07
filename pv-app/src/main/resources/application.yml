@@ -2,6 +2,8 @@ server:
   port: 8080
 
 pv:
+  pricing:
+    strategy: rule-engine  # "expression" or "rule-engine"
   datasource:
     url: jdbc:postgresql://localhost:9432/posval
     username: posval
@@ -15,11 +17,19 @@ pv:
   redis:
     host: localhost
     port: 6379
+    password: ""              # set for production (must match Redis requirepass)
+    timeout-seconds: 5
   outbox:
     relay-interval-ms: 500
   seed:
     enabled: true
   cache:
+    ttl:
+      market-data-stable-hours: 24    # fixings, FX rates, indexes, spreads
+      market-data-volatile-hours: 1   # forward curves, vol surfaces
+      volume-hours: 24                # volume interval cache
+      forward-mark-minutes: 120         # ephemeral forward marks
+    scan-batch-size: 1000             # SCAN COUNT per invalidation iteration
     warmup:
       enabled: true
       lookback-days: 120

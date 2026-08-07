@@ -48,7 +48,7 @@ import static org.junit.jupiter.api.Assertions.*;
  *   Step 4: SettlementMaterializationJob.execute()
  *           → ProfileResolver resolves volume
  *           → PriceExpressionRepository loads formula
- *           → DefaultPriceEvaluator walks expression tree
+ *           → PriceExpressionBasedEvaluator walks expression tree
  *           → writeResult() computes amount = price × energy
  *
  *   Step 5: SettlementCell persisted + SettlementComputed event published
@@ -96,7 +96,7 @@ class TradeToSettlementIntegrationTest {
         // --- Domain services ---
         var marketData = new JsonMarketDataPort();
         var exprRepo = new JsonPriceExpressionRepository();
-        var priceEvaluator = new DefaultPriceEvaluator(new DefaultNumericPrecision());
+        var priceEvaluator = new PriceExpressionBasedEvaluator(new DefaultNumericPrecision());
         var volumeResolver = new ProfileResolver(seriesRepo, new DefaultNumericPrecision());
 
         var settlementJob = new SettlementMaterializationJob(

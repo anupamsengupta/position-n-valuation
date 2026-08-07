@@ -8,7 +8,8 @@ import java.util.UUID;
 
 /**
  * Domain model for a settlement cell (S5a).
- * Bitemporal, append-only.
+ * Append-only; versioning is derived from the parent position entry's
+ * bitemporal state — settlement cells do not carry their own bitemporal axes.
  * FR-070, FR-071, Pattern #1.
  */
 public record SettlementCell(
@@ -26,10 +27,7 @@ public record SettlementCell(
     String currency,
     Set<String> activeLeaves,
     Map<String, Long> inputVersionSet,
-    Instant validFrom,
-    Instant validTo,
-    Instant knownFrom,
-    Instant knownTo
+    Instant computedAt
 ) {
     public SettlementCell {
         java.util.Objects.requireNonNull(cellId, "cellId");
@@ -40,7 +38,6 @@ public record SettlementCell(
         java.util.Objects.requireNonNull(price, "price");
         java.util.Objects.requireNonNull(amount, "amount");
         java.util.Objects.requireNonNull(currency, "currency");
+        java.util.Objects.requireNonNull(computedAt, "computedAt");
     }
-
-    public boolean isCurrentKnowledge() { return knownTo == null; }
 }

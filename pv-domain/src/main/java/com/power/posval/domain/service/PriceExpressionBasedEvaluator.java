@@ -10,15 +10,15 @@ import java.math.BigDecimal;
 import java.util.*;
 
 /**
- * Default tree-walker implementation using exhaustive pattern-matching switch.
+ * Expression-tree walker implementation using exhaustive pattern-matching switch.
  * Pattern #5, #10, #12, FR-048h.
  */
-public class DefaultPriceEvaluator implements PriceEvaluator {
+public class PriceExpressionBasedEvaluator implements PriceEvaluator {
 
     private final NumericPrecision np;
 
     @Inject
-    public DefaultPriceEvaluator(NumericPrecision np) {
+    public PriceExpressionBasedEvaluator(NumericPrecision np) {
         this.np = Objects.requireNonNull(np, "np");
     }
 

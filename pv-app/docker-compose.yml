@@ -24,7 +24,16 @@ services:
     container_name: redis-local
     ports:
       - "6379:6379"
-    command: redis-server --bind 0.0.0.0
+    command: >
+      redis-server
+      --bind 0.0.0.0
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --tcp-keepalive 60
+      --timeout 300
+      --databases 1
+      --save ""
+      --appendonly no
     volumes:
       - redis-data:/data
     networks:

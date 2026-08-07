@@ -72,7 +72,6 @@ public class SettlementMaterializationJob extends AbstractMaterializationJob<Set
                                           PriceResolution price) {
         BigDecimal amount = np.round(
             price.value().multiply(volume.energy()), NumericPrecision.Domain.MONETARY);
-        Instant now = Instant.now();
 
         return new SettlementCell(
             UUID.randomUUID(),
@@ -89,13 +88,14 @@ public class SettlementMaterializationJob extends AbstractMaterializationJob<Set
             "EUR",
             price.activeLeaves(),
             price.inputVersionSet(),
-            now, null, now, null);
+            Instant.now());
     }
 
     @Override
     protected void flushResults(PositionLedgerEntry position, List<SettlementCell> cells) {
         cellRepo.saveAll(cells);
 
+        Instant eventTime = Instant.now();
         List<Object> events = cells.stream()
             .<Object>map(cell -> new SettlementComputed(
                 position.id(),
@@ -107,7 +107,7 @@ public class SettlementMaterializationJob extends AbstractMaterializationJob<Set
                 "PROVISIONAL",
                 cell.activeLeaves(),
                 cell.inputVersionSet(),
-                cell.knownFrom()))
+                eventTime))
             .toList();
 
         eventPublisher.publishAll(events);

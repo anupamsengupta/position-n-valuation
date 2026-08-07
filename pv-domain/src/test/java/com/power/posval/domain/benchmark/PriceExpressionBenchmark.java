@@ -5,7 +5,7 @@ import com.power.posval.domain.model.value.DeliveryPeriod;
 import com.power.posval.domain.port.DefaultNumericPrecision;
 import com.power.posval.domain.port.marketdata.MarketDataLookup;
 import com.power.posval.domain.port.marketdata.MarketDataPort;
-import com.power.posval.domain.service.DefaultPriceEvaluator;
+import com.power.posval.domain.service.PriceExpressionBasedEvaluator;
 import com.power.posval.domain.service.PriceEvaluator;
 import com.power.posval.domain.service.PriceResolution;
 import com.power.posval.domain.service.ResolutionPurpose;
@@ -37,7 +37,7 @@ public class PriceExpressionBenchmark {
 
     @Setup
     public void setup() {
-        evaluator = new DefaultPriceEvaluator(new DefaultNumericPrecision());
+        evaluator = new PriceExpressionBasedEvaluator(new DefaultNumericPrecision());
 
         var basePrice = new MarketDataLeaf("base-leaf", "EPEX-DE-LU-DA15",
             null, 0, "SINGLE_INTERVAL");

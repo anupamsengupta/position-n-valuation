@@ -9,7 +9,7 @@ import com.power.posval.domain.model.value.SeriesKey;
 import com.power.posval.domain.port.DefaultNumericPrecision;
 import com.power.posval.domain.port.event.DomainEventPublisher;
 import com.power.posval.domain.port.repository.*;
-import com.power.posval.domain.service.DefaultPriceEvaluator;
+import com.power.posval.domain.service.PriceExpressionBasedEvaluator;
 import com.power.posval.domain.service.DefaultTradeCaptureHandler;
 import com.power.posval.domain.service.ProfileResolver;
 import com.power.posval.domain.service.SettlementMaterializationJob;
@@ -138,7 +138,7 @@ class FiveYearTradeIntegrationTest {
         DomainEventPublisher eventPublisher = publishedEvents::add;
 
         // --- Wire domain services ---
-        var priceEvaluator = new DefaultPriceEvaluator(new DefaultNumericPrecision());
+        var priceEvaluator = new PriceExpressionBasedEvaluator(new DefaultNumericPrecision());
         var volumeResolver = new ProfileResolver(seriesRepo, new DefaultNumericPrecision());
         var settlementJob = new SettlementMaterializationJob(
             volumeResolver, priceEvaluator, marketData, exprRepo,

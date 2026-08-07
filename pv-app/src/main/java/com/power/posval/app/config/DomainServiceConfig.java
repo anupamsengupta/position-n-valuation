@@ -12,6 +12,7 @@ import com.power.posval.domain.port.repository.VolumeSeriesRepository;
 import com.power.posval.domain.port.repository.VolumeSeriesSpec;
 import com.power.posval.domain.service.*;
 import com.power.posval.domain.service.stub.JsonPriceExpressionRepository;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import com.power.posval.domain.port.repository.PriceExpressionRepository;
 import com.power.posval.persistence.adapter.JpaVolumeSeriesRepository;
 import org.springframework.context.annotation.Bean;
@@ -52,8 +53,9 @@ public class DomainServiceConfig {
     }
 
     @Bean
+    @ConditionalOnProperty(name = "pv.pricing.strategy", havingValue = "expression", matchIfMissing = true)
     public PriceEvaluator priceEvaluator(NumericPrecision np) {
-        return new DefaultPriceEvaluator(np);
+        return new PriceExpressionBasedEvaluator(np);
     }
 
     @Bean

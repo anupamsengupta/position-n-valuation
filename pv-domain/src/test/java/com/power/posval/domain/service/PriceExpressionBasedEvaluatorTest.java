@@ -18,17 +18,17 @@ import java.time.ZonedDateTime;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class DefaultPriceEvaluatorTest {
+class PriceExpressionBasedEvaluatorTest {
 
     private static final ZoneId CET = ZoneId.of("Europe/Berlin");
     private static final NumericPrecision NP = new DefaultNumericPrecision();
 
-    private DefaultPriceEvaluator evaluator;
+    private PriceExpressionBasedEvaluator evaluator;
     private DeliveryPeriod interval;
 
     @BeforeEach
     void setUp() {
-        evaluator = new DefaultPriceEvaluator(NP);
+        evaluator = new PriceExpressionBasedEvaluator(NP);
         interval = new DeliveryPeriod(
             ZonedDateTime.of(2025, 3, 1, 0, 0, 0, 0, CET),
             ZonedDateTime.of(2025, 3, 1, 1, 0, 0, 0, CET),

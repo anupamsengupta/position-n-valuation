@@ -20,10 +20,7 @@ public record SettlementCellDto(
         BigDecimal amount,
         String currency,
         Set<String> activeLeaves,
-        Instant validFrom,
-        Instant validTo,
-        Instant knownFrom,
-        Instant knownTo
+        Instant computedAt
 ) {
     public static SettlementCellDto from(SettlementCell c) {
         return new SettlementCellDto(
@@ -40,10 +37,7 @@ public record SettlementCellDto(
                 c.amount(),
                 c.currency(),
                 c.activeLeaves(),
-                c.validFrom(),
-                c.validTo(),
-                c.knownFrom(),
-                c.knownTo()
+                c.computedAt()
         );
     }
 }

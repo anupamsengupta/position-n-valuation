@@ -13,7 +13,7 @@ import com.power.posval.domain.port.repository.PriceExpressionRepository;
 import com.power.posval.domain.port.repository.SettlementCellRepository;
 import com.power.posval.domain.port.repository.VolumeSeriesRepository;
 import com.power.posval.domain.port.repository.VolumeSeriesSpec;
-import com.power.posval.domain.service.DefaultPriceEvaluator;
+import com.power.posval.domain.service.PriceExpressionBasedEvaluator;
 import com.power.posval.domain.service.ProfileResolver;
 import com.power.posval.domain.service.SettlementMaterializationJob;
 import com.power.posval.domain.service.stub.JsonFixingArrayBasedMarketDataPort;
@@ -175,7 +175,7 @@ public class FiveYearSettlementFABasedBenchmark {
             id.equals(priceExprId) ? Optional.of(expr4) : Optional.empty();
 
         // --- Wire the job ---
-        var priceEvaluator = new DefaultPriceEvaluator(new DefaultNumericPrecision());
+        var priceEvaluator = new PriceExpressionBasedEvaluator(new DefaultNumericPrecision());
         var volumeResolver = new ProfileResolver(seriesRepo, new DefaultNumericPrecision());
 
         cellCount = 0;

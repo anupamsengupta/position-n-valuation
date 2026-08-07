@@ -30,7 +30,7 @@ public class DomainModule extends AbstractModule {
             .in(Singleton.class);
 
         bind(PriceEvaluator.class)
-            .to(DefaultPriceEvaluator.class)
+            .to(PriceExpressionBasedEvaluator.class)
             .in(Singleton.class);
 
         bind(ProfileResolver.class).in(Singleton.class);

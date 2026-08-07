@@ -13,7 +13,7 @@ import com.power.posval.domain.port.repository.VolumeSeriesRepository;
 import com.power.posval.domain.port.repository.VolumeSeriesSpec;
 import com.power.posval.domain.port.tenant.TenantContext;
 import com.power.posval.domain.service.CachingMarketDataPort;
-import com.power.posval.domain.service.DefaultPriceEvaluator;
+import com.power.posval.domain.service.PriceExpressionBasedEvaluator;
 import com.power.posval.domain.service.DefaultTradeCaptureHandler;
 import com.power.posval.domain.service.ProfileResolver;
 import com.power.posval.domain.service.SettlementMaterializationJob;
@@ -108,7 +108,7 @@ public class IntegrationTestWiring {
         NumericPrecision np = new DefaultNumericPrecision();
         cachingMarketData = new CachingMarketDataPort(cache, marketDataRepo, tenantContext);
         var exprRepo = new JsonPriceExpressionRepository();
-        var priceEvaluator = new DefaultPriceEvaluator(np);
+        var priceEvaluator = new PriceExpressionBasedEvaluator(np);
 
         // ProfileResolver passes ref.tradeId() as tenantId to findCurrentBySeriesKey,
         // but JpaVolumeSeriesRepository.toEntity() hardcodes tenantId to "default".

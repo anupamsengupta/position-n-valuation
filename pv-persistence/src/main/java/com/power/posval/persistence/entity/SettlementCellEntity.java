@@ -8,18 +8,18 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 
-/** §11.1 — bitemporal settlement cell. */
+/**
+ * §11.1 — settlement cell entity.
+ * Versioning is derived from the parent position entry's bitemporal state.
+ */
 @Entity
 @Table(name = "settlement_cell", schema = "valuation",
     indexes = {
         @Index(name = "idx_sc_position_interval",
                columnList = "tenant_id, position_id, interval_start"),
-        @Index(name = "idx_sc_current_knowledge",
-               columnList = "tenant_id, position_id, known_to"),
-        @Index(name = "idx_sc_bitemporal",
-               columnList = "tenant_id, valid_from, valid_to, known_from, known_to")
+        @Index(name = "idx_sc_position",
+               columnList = "tenant_id, position_id")
     })
-@EntityListeners(BitemporalAuditListener.class)
 public class SettlementCellEntity {
 
     @Id
@@ -73,17 +73,8 @@ public class SettlementCellEntity {
     @Column(name = "input_version_set", columnDefinition = "jsonb", nullable = false)
     private String inputVersionSet;
 
-    @Column(name = "valid_from", nullable = false)
-    private Instant validFrom;
-
-    @Column(name = "valid_to")
-    private Instant validTo;
-
-    @Column(name = "known_from", nullable = false)
-    private Instant knownFrom;
-
-    @Column(name = "known_to")
-    private Instant knownTo;
+    @Column(name = "computed_at", nullable = false)
+    private Instant computedAt;
 
     // --- accessors ---
 
@@ -132,15 +123,6 @@ public class SettlementCellEntity {
     public String getInputVersionSet() { return inputVersionSet; }
     public void setInputVersionSet(String inputVersionSet) { this.inputVersionSet = inputVersionSet; }
 
-    public Instant getValidFrom() { return validFrom; }
-    public void setValidFrom(Instant validFrom) { this.validFrom = validFrom; }
-
-    public Instant getValidTo() { return validTo; }
-    public void setValidTo(Instant validTo) { this.validTo = validTo; }
-
-    public Instant getKnownFrom() { return knownFrom; }
-    public void setKnownFrom(Instant knownFrom) { this.knownFrom = knownFrom; }
-
-    public Instant getKnownTo() { return knownTo; }
-    public void setKnownTo(Instant knownTo) { this.knownTo = knownTo; }
+    public Instant getComputedAt() { return computedAt; }
+    public void setComputedAt(Instant computedAt) { this.computedAt = computedAt; }
 }

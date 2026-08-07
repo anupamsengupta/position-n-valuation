@@ -14,7 +14,8 @@ import java.util.*;
 
 /**
  * JPA adapter for SettlementCellRepository. §11.1, Pattern #18.
- * Bitemporal cell persistence.
+ * Settlement cells are append-only; versioning is derived from the parent
+ * position entry's bitemporal state.
  */
 public class JpaSettlementCellRepository implements SettlementCellRepository {
 
@@ -45,7 +46,6 @@ public class JpaSettlementCellRepository implements SettlementCellRepository {
                 SELECT COUNT(e) FROM SettlementCellEntity e
                 WHERE e.tenantId   = :tenantId
                   AND e.positionId = :positionId
-                  AND e.knownTo IS NULL
                 """, Long.class)
             .setParameter("tenantId", tenantId)
             .setParameter("positionId", positionId)
@@ -64,7 +64,6 @@ public class JpaSettlementCellRepository implements SettlementCellRepository {
                   AND e.positionId = :positionId
                   AND e.intervalStart < :rangeEnd
                   AND e.intervalEnd > :rangeStart
-                  AND e.knownTo IS NULL
                 ORDER BY e.intervalStart
                 """, SettlementCellEntity.class)
             .setParameter("tenantId", tenantId)
@@ -92,10 +91,7 @@ public class JpaSettlementCellRepository implements SettlementCellRepository {
         e.setCurrency(c.currency());
         e.setActiveLeaves(SimpleJsonCodec.setToJson(c.activeLeaves()));
         e.setInputVersionSet(SimpleJsonCodec.mapToJson(c.inputVersionSet()));
-        e.setValidFrom(c.validFrom());
-        e.setValidTo(c.validTo());
-        e.setKnownFrom(c.knownFrom());
-        e.setKnownTo(c.knownTo());
+        e.setComputedAt(c.computedAt());
         return e;
     }
 
@@ -108,7 +104,6 @@ public class JpaSettlementCellRepository implements SettlementCellRepository {
             e.getAmount(), e.getCurrency(),
             SimpleJsonCodec.jsonToStringSet(e.getActiveLeaves()),
             SimpleJsonCodec.jsonToStringLongMap(e.getInputVersionSet()),
-            e.getValidFrom(), e.getValidTo(),
-            e.getKnownFrom(), e.getKnownTo());
+            e.getComputedAt());
     }
 }

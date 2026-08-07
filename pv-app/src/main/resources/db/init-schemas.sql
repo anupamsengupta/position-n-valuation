@@ -159,6 +159,7 @@ CREATE TABLE IF NOT EXISTS position.position_ledger_entry (
 );
 
 -- valuation.settlement_cell
+-- Versioning is derived from the parent position entry's bitemporal state.
 CREATE TABLE IF NOT EXISTS valuation.settlement_cell (
     id                  BIGINT          NOT NULL DEFAULT nextval('valuation.settlement_cell_seq'),
     cell_uuid           UUID            NOT NULL,
@@ -175,10 +176,7 @@ CREATE TABLE IF NOT EXISTS valuation.settlement_cell (
     currency            VARCHAR(3)      NOT NULL,
     active_leaves       JSONB,
     input_version_set   JSONB           NOT NULL,
-    valid_from          TIMESTAMPTZ     NOT NULL,
-    valid_to            TIMESTAMPTZ,
-    known_from          TIMESTAMPTZ     NOT NULL,
-    known_to            TIMESTAMPTZ,
+    computed_at         TIMESTAMPTZ     NOT NULL,
     CONSTRAINT pk_settlement_cell   PRIMARY KEY (id),
     CONSTRAINT uq_sc_cell_uuid      UNIQUE (cell_uuid)
 );
@@ -295,10 +293,8 @@ CREATE INDEX IF NOT EXISTS idx_ple_bitemporal
 
 CREATE INDEX IF NOT EXISTS idx_sc_position_interval
     ON valuation.settlement_cell (tenant_id, position_id, interval_start);
-CREATE INDEX IF NOT EXISTS idx_sc_current_knowledge
-    ON valuation.settlement_cell (tenant_id, position_id, known_to);
-CREATE INDEX IF NOT EXISTS idx_sc_bitemporal
-    ON valuation.settlement_cell (tenant_id, valid_from, valid_to, known_from, known_to);
+CREATE INDEX IF NOT EXISTS idx_sc_position
+    ON valuation.settlement_cell (tenant_id, position_id);
 
 CREATE INDEX IF NOT EXISTS idx_sm_position_month
     ON valuation.struck_mark (tenant_id, position_id, delivery_month, strike_date);
@@ -334,10 +330,9 @@ CREATE INDEX IF NOT EXISTS idx_fix_tenant_series_start_ver
 CREATE INDEX IF NOT EXISTS idx_outbox_unpublished_relay
     ON trade.outbox (created_at ASC) WHERE published_at IS NULL;
 
--- Settlement cells: partial index for current knowledge queries
-CREATE INDEX IF NOT EXISTS idx_sc_position_interval_current
-    ON valuation.settlement_cell (tenant_id, position_id, interval_start, interval_end)
-    WHERE known_to IS NULL;
+-- Settlement cells: covering index for range queries
+CREATE INDEX IF NOT EXISTS idx_sc_position_interval_range
+    ON valuation.settlement_cell (tenant_id, position_id, interval_start, interval_end);
 
 -- Position ledger: partial indexes for current knowledge queries
 CREATE INDEX IF NOT EXISTS idx_ple_trade_leg_current

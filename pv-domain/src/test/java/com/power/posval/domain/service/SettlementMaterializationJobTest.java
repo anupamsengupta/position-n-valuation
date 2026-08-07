@@ -82,7 +82,7 @@ class SettlementMaterializationJobTest {
     void endToEndWithStubsProducesNonZeroCells() {
         var marketData = new JsonMarketDataPort();
         var exprRepo = new JsonPriceExpressionRepository();
-        var priceEvaluator = new DefaultPriceEvaluator(new DefaultNumericPrecision());
+        var priceEvaluator = new PriceExpressionBasedEvaluator(new DefaultNumericPrecision());
 
         var savedCells = new ArrayList<SettlementCell>();
         var publishedEvents = new ArrayList<>();
@@ -141,7 +141,7 @@ class SettlementMaterializationJobTest {
     void indexPlusSpreadExpressionProducesCorrectPrice() {
         var marketData = new JsonMarketDataPort();
         var exprRepo = new JsonPriceExpressionRepository();
-        var priceEvaluator = new DefaultPriceEvaluator(new DefaultNumericPrecision());
+        var priceEvaluator = new PriceExpressionBasedEvaluator(new DefaultNumericPrecision());
 
         var savedCells = new ArrayList<SettlementCell>();
         DomainEventPublisher eventPublisher = e -> {};
@@ -207,7 +207,7 @@ class SettlementMaterializationJobTest {
     void cpiEscalatedCollarWithNegativePriceProtection() {
         var marketData = new JsonMarketDataPort();
         var exprRepo = new JsonPriceExpressionRepository();
-        var priceEvaluator = new DefaultPriceEvaluator(new DefaultNumericPrecision());
+        var priceEvaluator = new PriceExpressionBasedEvaluator(new DefaultNumericPrecision());
 
         var savedCells = new ArrayList<SettlementCell>();
         DomainEventPublisher eventPublisher = e -> {};
