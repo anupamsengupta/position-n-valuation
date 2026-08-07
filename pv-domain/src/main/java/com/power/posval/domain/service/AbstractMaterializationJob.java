@@ -6,6 +6,9 @@ import com.power.posval.domain.model.value.DeliveryRange;
 import com.power.posval.domain.port.marketdata.MarketDataPort;
 import com.power.posval.domain.port.repository.PriceExpressionRepository;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -17,6 +20,8 @@ import java.util.UUID;
  * Pattern #15, FR-056, FR-105, S5.
  */
 public abstract class AbstractMaterializationJob<R> {
+
+    private static final Logger log = LoggerFactory.getLogger(AbstractMaterializationJob.class);
 
     protected final VolumeResolver volumeResolver;
     protected final PriceEvaluator priceEvaluator;
@@ -42,8 +47,8 @@ public abstract class AbstractMaterializationJob<R> {
                                DeliveryRange intervalRange) {
         long start = System.currentTimeMillis();
         List<VolumeRecord> volumes = resolveVolume(position, intervalRange);
-        long end = System.currentTimeMillis();
-        System.out.println("AbstractMaterializationJob.execute.resolveVolume() : " + (end-start) + " milli secs");
+        long resolveMs = System.currentTimeMillis() - start;
+        log.info("resolveVolume(): {} ms, intervals={}", resolveMs, volumes.size());
 
         start = System.currentTimeMillis();
         List<R> results = new ArrayList<>(volumes.size());
@@ -60,13 +65,13 @@ public abstract class AbstractMaterializationJob<R> {
 
             results.add(buildResult(position, vol, priceRes));
         }
-        end = System.currentTimeMillis();
-        System.out.println("AbstractMaterializationJob.execute.priceCalc() : " + (end-start) + " milli secs");
+        long priceMs = System.currentTimeMillis() - start;
+        log.info("priceCalc(): {} ms, results={}", priceMs, results.size());
 
         start = System.currentTimeMillis();
         flushResults(position, results);
-        end = System.currentTimeMillis();
-        System.out.println("AbstractMaterializationJob.execute.flushResults() : " + (end-start) + " milli secs");
+        long flushMs = System.currentTimeMillis() - start;
+        log.info("flushResults(): {} ms", flushMs);
     }
 
     /** Hook: resolve volume from the appropriate source. */

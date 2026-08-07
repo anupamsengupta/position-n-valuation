@@ -1,7 +1,7 @@
 package com.power.posval.app.kafka;
 
 import com.power.posval.app.provider.TransactionalExecutor;
-import com.power.posval.domain.event.PositionCaptured;
+import com.power.posval.domain.event.PositionEntryCaptured;
 import com.power.posval.kafka.TradeCapturedConsumer;
 import com.power.posval.persistence.tenant.ThreadLocalTenantContext;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -12,7 +12,11 @@ import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Component;
 
 /**
- * Kafka listener for {@code posval.PositionCaptured} events.
+ * Kafka listener for {@code posval.PositionEntryCaptured} events.
+ *
+ * <p>Each event carries a single {@code positionId}. With multiple partitions
+ * and {@code concurrency > 1}, entries from the same trade are settled in
+ * parallel across consumer threads.
  *
  * <p>Uses Spring {@code @KafkaListener} with:
  * <ul>
@@ -42,18 +46,17 @@ public class TradeCapturedKafkaListener {
     }
 
     @KafkaListener(
-            topics = "posval.PositionCaptured",
-            containerFactory = "positionCapturedListenerFactory"
+            topics = "posval.PositionEntryCaptured",
+            containerFactory = "positionEntryCapturedListenerFactory"
     )
-    public void onPositionCaptured(ConsumerRecord<String, PositionCaptured> record,
-                                    Acknowledgment ack) {
-        PositionCaptured event = record.value();
+    public void onPositionEntryCaptured(ConsumerRecord<String, PositionEntryCaptured> record,
+                                         Acknowledgment ack) {
+        PositionEntryCaptured event = record.value();
         try {
             tenantContext.setTenant(event.tenantId());
             txExecutor.run(() -> tradeCapturedConsumer.handle(event));
             ack.acknowledge();
-            log.info("Processed PositionCaptured for trade={} leg={} version={}",
-                    event.tradeId(), event.tradeLegId(), event.tradeVersion());
+            log.info("Processed PositionEntryCaptured positionId={}", event.positionId());
         } finally {
             tenantContext.clear();
         }

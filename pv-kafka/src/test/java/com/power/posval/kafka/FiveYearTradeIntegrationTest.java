@@ -1,7 +1,7 @@
 package com.power.posval.kafka;
 
 import com.power.posval.domain.command.TradeCapture;
-import com.power.posval.domain.event.PositionCaptured;
+import com.power.posval.domain.event.PositionEntryCaptured;
 import com.power.posval.domain.event.SettlementComputed;
 import com.power.posval.domain.model.*;
 import com.power.posval.domain.model.value.DeliveryPeriod;
@@ -173,12 +173,17 @@ class FiveYearTradeIntegrationTest {
         assertEquals(YearMonth.of(2025, 1), entries.get(0).deliveryRange().startMonth());
         assertEquals(YearMonth.of(2029, 12), entries.get(59).deliveryRange().startMonth());
 
-        // --- STEP 2+3: Consumer processes all 60 months ---
-        PositionCaptured capturedEvent = (PositionCaptured) publishedEvents.get(0);
-        assertEquals(60, capturedEvent.entryCount());
+        // --- STEP 2+3: Consumer processes all 60 entries ---
+        // 60 entries → 60 PositionEntryCaptured events
+        assertEquals(60, publishedEvents.size());
+        List<PositionEntryCaptured> capturedEvents = publishedEvents.stream()
+            .map(e -> (PositionEntryCaptured) e)
+            .toList();
 
         publishedEvents.clear();
-        tradeCapturedConsumer.handle(capturedEvent);
+        for (PositionEntryCaptured event : capturedEvents) {
+            tradeCapturedConsumer.handle(event);
+        }
 
         // --- STEP 4+5: Verify settlement cells ---
         assertEquals(totalIntervalCount, settlementStore.size(),

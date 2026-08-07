@@ -1,7 +1,7 @@
 package com.power.posval.kafka;
 
 import com.power.posval.domain.command.TradeCapture;
-import com.power.posval.domain.event.PositionCaptured;
+import com.power.posval.domain.event.PositionEntryCaptured;
 import com.power.posval.domain.event.SettlementComputed;
 import com.power.posval.domain.model.*;
 import com.power.posval.domain.model.value.DeliveryPeriod;
@@ -36,13 +36,13 @@ import static org.junit.jupiter.api.Assertions.*;
  *
  *   Step 1: TradeCapture command
  *           → DefaultTradeCaptureHandler
- *           → PositionLedgerEntry saved + PositionCaptured event published
+ *           → PositionLedgerEntry saved + PositionEntryCaptured events published (one per entry)
  *
- *   Step 2: Outbox relay (simulated — event passed directly to consumer)
+ *   Step 2: Outbox relay (simulated — events passed directly to consumer)
  *
  *   Step 3: TradeCapturedConsumer.handle()
- *           → idempotency check
- *           → loads position entries from ledger
+ *           → idempotency check (existsByPositionId)
+ *           → loads single entry by positionId
  *           → calls SettlementMaterializationJob
  *
  *   Step 4: SettlementMaterializationJob.execute()
@@ -126,11 +126,11 @@ class TradeToSettlementIntegrationTest {
         assertEquals(1, ledgerStore.size(), "Entry persisted to ledger");
         assertEquals("ACTIVE", entries.get(0).status());
 
-        // PositionCaptured event was published
+        // One PositionEntryCaptured event per entry
         assertEquals(1, publishedEvents.size());
-        assertInstanceOf(PositionCaptured.class, publishedEvents.get(0));
-        PositionCaptured capturedEvent = (PositionCaptured) publishedEvents.get(0);
-        assertEquals("T-9999", capturedEvent.tradeId());
+        assertInstanceOf(PositionEntryCaptured.class, publishedEvents.get(0));
+        PositionEntryCaptured capturedEvent = (PositionEntryCaptured) publishedEvents.get(0);
+        assertEquals(entries.get(0).id(), capturedEvent.positionId());
 
         // --- STEP 2: Outbox relay (simulated) ---
         // In production: outbox row → OutboxRelayProducer → Kafka topic
@@ -178,7 +178,7 @@ class TradeToSettlementIntegrationTest {
 
         TradeCapture command = tradeCapture("T-8888", indexSpreadExprId);
         tradeCaptureHandler.handle(command);
-        PositionCaptured event = (PositionCaptured) publishedEvents.get(0);
+        PositionEntryCaptured event = (PositionEntryCaptured) publishedEvents.get(0);
 
         publishedEvents.clear();
         tradeCapturedConsumer.handle(event);
@@ -207,7 +207,7 @@ class TradeToSettlementIntegrationTest {
         TradeCapture command = tradeCapture("T-7777", exprId);
 
         tradeCaptureHandler.handle(command);
-        PositionCaptured event = (PositionCaptured) publishedEvents.get(0);
+        PositionEntryCaptured event = (PositionEntryCaptured) publishedEvents.get(0);
         publishedEvents.clear();
 
         // First time
@@ -241,6 +241,14 @@ class TradeToSettlementIntegrationTest {
         List<PositionLedgerEntry> entries = tradeCaptureHandler.handle(command);
         assertEquals(3, entries.size(), "Mar + Apr + May = 3 monthly blocks");
         assertEquals(3, ledgerStore.size());
+
+        // 3 entries → 3 PositionEntryCaptured events
+        assertEquals(3, publishedEvents.size());
+        for (int i = 0; i < 3; i++) {
+            assertInstanceOf(PositionEntryCaptured.class, publishedEvents.get(i));
+            assertEquals(entries.get(i).id(),
+                ((PositionEntryCaptured) publishedEvents.get(i)).positionId());
+        }
     }
 
 
@@ -322,15 +330,8 @@ class TradeToSettlementIntegrationTest {
             .intervals(intervals)
             .build();
 
-        // Track processed trade IDs for idempotency checking
-        Set<String> processedTrades = new HashSet<>();
-
         return new VolumeSeriesRepository() {
-            @Override public void save(VolumeSeries s) {
-                // When settlement job runs, it writes through the consumer which
-                // first creates volume series. Mark the trade as processed.
-                processedTrades.add(s.tradeLegId() + ":" + s.versionId());
-            }
+            @Override public void save(VolumeSeries s) {}
             @Override public Optional<VolumeSeries> findById(UUID id) { return Optional.empty(); }
             @Override public Optional<VolumeSeries> findCurrentBySeriesKey(String tenantId, String sk) {
                 return sk.equals(key.value()) ? Optional.of(series) : Optional.empty();
@@ -338,8 +339,7 @@ class TradeToSettlementIntegrationTest {
             @Override public List<VolumeSeries> findByTenantId(String t) { return List.of(); }
             @Override public List<VolumeSeries> findAll(String t, VolumeSeriesSpec s) { return List.of(); }
             @Override public boolean existsByTradeIdAndTradeVersion(String tradeId, int tradeVersion) {
-                // After first processing, mark as seen so second call returns true
-                return !processedTrades.add(tradeId + ":" + tradeVersion);
+                return false;
             }
             @Override public void supersede(VolumeSeries o, VolumeSeries n) {}
         };

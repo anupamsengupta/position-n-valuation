@@ -1,7 +1,7 @@
 package com.power.posval.app.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.power.posval.domain.event.PositionCaptured;
+import com.power.posval.domain.event.PositionEntryCaptured;
 import com.power.posval.domain.port.repository.PositionLedgerRepository;
 import com.power.posval.domain.port.repository.SettlementCellRepository;
 import com.power.posval.domain.service.SettlementMaterializationJob;
@@ -71,10 +71,10 @@ public class KafkaConfig {
         return new KafkaTemplate<>(new DefaultKafkaProducerFactory<>(props));
     }
 
-    // ── PositionCaptured consumer factory (typed deserializer) ─────────
+    // ── PositionEntryCaptured consumer factory (typed deserializer) ────
 
     @Bean
-    public ConsumerFactory<String, PositionCaptured> positionCapturedConsumerFactory(ObjectMapper objectMapper) {
+    public ConsumerFactory<String, PositionEntryCaptured> positionEntryCapturedConsumerFactory(ObjectMapper objectMapper) {
         Map<String, Object> props = new HashMap<>();
         props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
         props.put(ConsumerConfig.GROUP_ID_CONFIG, "pv-settlement-consumer");
@@ -92,7 +92,7 @@ public class KafkaConfig {
 
         // JsonDeserializer config — trust our event package
         props.put(JsonDeserializer.TRUSTED_PACKAGES, "com.power.posval.domain.event");
-        props.put(JsonDeserializer.VALUE_DEFAULT_TYPE, PositionCaptured.class.getName());
+        props.put(JsonDeserializer.VALUE_DEFAULT_TYPE, PositionEntryCaptured.class.getName());
         props.put(JsonDeserializer.USE_TYPE_INFO_HEADERS, false);
 
         return new DefaultKafkaConsumerFactory<>(props);
@@ -101,13 +101,13 @@ public class KafkaConfig {
     // ── Container factory with error handler + DLQ ────────────────────
 
     @Bean
-    public ConcurrentKafkaListenerContainerFactory<String, PositionCaptured>
-            positionCapturedListenerFactory(
-                    ConsumerFactory<String, PositionCaptured> positionCapturedConsumerFactory,
+    public ConcurrentKafkaListenerContainerFactory<String, PositionEntryCaptured>
+            positionEntryCapturedListenerFactory(
+                    ConsumerFactory<String, PositionEntryCaptured> positionEntryCapturedConsumerFactory,
                     KafkaTemplate<String, String> kafkaTemplate) {
 
-        var factory = new ConcurrentKafkaListenerContainerFactory<String, PositionCaptured>();
-        factory.setConsumerFactory(positionCapturedConsumerFactory);
+        var factory = new ConcurrentKafkaListenerContainerFactory<String, PositionEntryCaptured>();
+        factory.setConsumerFactory(positionEntryCapturedConsumerFactory);
         factory.setConcurrency(concurrency);
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
 

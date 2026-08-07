@@ -1,7 +1,7 @@
 package com.power.posval.domain.service;
 
 import com.power.posval.domain.command.TradeCapture;
-import com.power.posval.domain.event.PositionCaptured;
+import com.power.posval.domain.event.PositionEntryCaptured;
 import com.power.posval.domain.model.PositionLedgerEntry;
 import com.power.posval.domain.model.value.DeliveryRange;
 import com.power.posval.domain.port.event.DomainEventPublisher;
@@ -39,6 +39,10 @@ public class DefaultTradeCaptureHandler implements TradeCaptureHandler {
         if (!existing.isEmpty()) {
             return existing;
         }
+
+        // FR-037: supersede previous version's entries (set known_to = now)
+        List<PositionLedgerEntry> previousVersionEntries = ledgerRepo.findCurrentByTradeLeg(
+            cmd.tenantId(), cmd.tradeId(), cmd.tradeLegId());
 
         // FR-030: decompose delivery period into monthly blocks
         List<DeliveryRange> monthBlocks = cmd.deliveryPeriod().toMonthBlocks();
@@ -79,12 +83,19 @@ public class DefaultTradeCaptureHandler implements TradeCaptureHandler {
             })
             .toList();
 
-        entries.forEach(ledgerRepo::save);
+        if (!previousVersionEntries.isEmpty()) {
+            // Bitemporal supersession: close old entries + persist new ones atomically
+            ledgerRepo.supersede(previousVersionEntries, entries);
+        } else {
+            // First version: just persist
+            entries.forEach(ledgerRepo::save);
+        }
 
-        // Pattern #24: outbox write in same transaction
-        eventPublisher.publish(new PositionCaptured(
-            cmd.tenantId(), cmd.tradeId(), cmd.tradeLegId(),
-            cmd.tradeVersion(), entries.size(), Instant.now()));
+        // Pattern #24: one outbox row per entry — enables partition-level parallelism
+        Instant now = Instant.now();
+        entries.forEach(entry ->
+            eventPublisher.publish(new PositionEntryCaptured(
+                cmd.tenantId(), entry.id(), now)));
 
         return entries;
     }
