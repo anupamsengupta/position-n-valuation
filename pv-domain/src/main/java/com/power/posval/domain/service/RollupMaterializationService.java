@@ -37,6 +37,7 @@ public class RollupMaterializationService {
     private final RollupRepository rollupRepo;
     private final NumericPrecision np;
 
+    @jakarta.inject.Inject
     public RollupMaterializationService(SettlementCellRepository cellRepo,
                                          PositionLedgerRepository ledgerRepo,
                                          RollupRepository rollupRepo,

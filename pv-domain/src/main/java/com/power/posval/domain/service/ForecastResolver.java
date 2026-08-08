@@ -4,6 +4,7 @@ import com.power.posval.domain.model.value.VolumeReference;
 import com.power.posval.domain.port.NumericPrecision;
 import com.power.posval.domain.port.repository.MeteredActualRepository;
 import com.power.posval.domain.port.repository.VolumeSeriesRepository;
+import jakarta.inject.Inject;
 
 import java.time.Instant;
 import java.util.List;
@@ -22,6 +23,9 @@ public record ForecastResolver(
     MeteredActualRepository meteredRepo,
     NumericPrecision np
 ) implements VolumeResolver {
+
+    @Inject
+    public ForecastResolver {}
 
     @Override
     public List<VolumeRecord> resolve(VolumeReference ref,

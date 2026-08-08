@@ -19,6 +19,7 @@ public class DefaultPositionQueryService implements PositionQueryService {
     private final PositionLedgerRepository ledgerRepo;
     private final SettlementCellRepository cellRepo;
 
+    @jakarta.inject.Inject
     public DefaultPositionQueryService(PositionLedgerRepository ledgerRepo,
                                         SettlementCellRepository cellRepo) {
         this.ledgerRepo = ledgerRepo;

@@ -41,6 +41,7 @@ public class SettlementRevaluationService {
     private final DomainEventPublisher eventPublisher;
     private final NumericPrecision np;
 
+    @jakarta.inject.Inject
     public SettlementRevaluationService(VolumeResolver volumeResolver,
                                          PriceEvaluator priceEvaluator,
                                          MarketDataPort marketData,

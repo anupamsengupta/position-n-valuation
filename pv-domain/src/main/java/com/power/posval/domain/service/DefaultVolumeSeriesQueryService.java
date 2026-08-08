@@ -16,6 +16,7 @@ public class DefaultVolumeSeriesQueryService implements VolumeSeriesQueryService
 
     private final VolumeSeriesRepository repo;
 
+    @jakarta.inject.Inject
     public DefaultVolumeSeriesQueryService(VolumeSeriesRepository repo) {
         this.repo = repo;
     }

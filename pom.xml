@@ -64,6 +64,11 @@
                 <artifactId>pv-kafka</artifactId>
                 <version>${project.version}</version>
             </dependency>
+            <dependency>
+                <groupId>com.power</groupId>
+                <artifactId>pv-guice</artifactId>
+                <version>${project.version}</version>
+            </dependency>
 
             <!-- Jakarta -->
             <dependency>

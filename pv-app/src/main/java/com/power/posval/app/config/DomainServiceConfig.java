@@ -1,163 +1,104 @@
 package com.power.posval.app.config;
 
-import com.power.posval.domain.model.VolumeSeries;
-import com.power.posval.domain.port.DefaultNumericPrecision;
+import com.google.inject.Injector;
 import com.power.posval.domain.port.NumericPrecision;
-import com.power.posval.domain.port.cache.VolumeCache;
-import com.power.posval.domain.port.event.DomainEventPublisher;
-import com.power.posval.domain.port.marketdata.MarketDataPort;
-import com.power.posval.domain.port.repository.PositionLedgerRepository;
-import com.power.posval.domain.port.repository.MarketDataRepository;
-import com.power.posval.domain.port.repository.RollupRepository;
-import com.power.posval.domain.port.repository.SettlementCellRepository;
+import com.power.posval.domain.port.repository.PriceExpressionRepository;
 import com.power.posval.domain.port.repository.VolumeSeriesRepository;
 import com.power.posval.domain.port.service.*;
-import com.power.posval.domain.port.repository.VolumeSeriesSpec;
-import com.power.posval.domain.service.SettlementRevaluationService;
 import com.power.posval.domain.service.*;
-import com.power.posval.domain.service.stub.JsonPriceExpressionRepository;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import com.power.posval.domain.port.repository.PriceExpressionRepository;
-import com.power.posval.persistence.adapter.JpaVolumeSeriesRepository;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 
-import java.time.Instant;
-import java.util.List;
-import java.util.Optional;
-import java.util.UUID;
-
+/**
+ * Bridges Guice-created domain services into the Spring ApplicationContext.
+ * D-13: Spring @Bean methods delegate to {@code injector.getInstance()} and
+ * do NOT construct domain classes with {@code new}.
+ *
+ * <p>The Guice {@link Injector} is created by {@link GuiceConfig} and wired
+ * via {@link ConfigModule} + {@link com.power.posval.guice.DomainModule}.
+ */
 @Configuration
 public class DomainServiceConfig {
 
-    private static final String DEFAULT_TENANT = "default";
-
     @Bean
-    public NumericPrecision numericPrecision() {
-        return new DefaultNumericPrecision();
+    public NumericPrecision numericPrecision(Injector injector) {
+        return injector.getInstance(NumericPrecision.class);
     }
 
     @Bean
-    public TradeCaptureHandler tradeCaptureHandler(PositionLedgerRepository ledgerRepo,
-                                                    DomainEventPublisher eventPublisher) {
-        return new DefaultTradeCaptureHandler(ledgerRepo, eventPublisher);
+    public TradeCaptureHandler tradeCaptureHandler(Injector injector) {
+        return injector.getInstance(TradeCaptureHandler.class);
     }
 
     @Bean
-    public TradeAmendHandler tradeAmendHandler(PositionLedgerRepository ledgerRepo,
-                                                DomainEventPublisher eventPublisher) {
-        return new DefaultTradeAmendHandler(ledgerRepo, eventPublisher);
+    public TradeAmendHandler tradeAmendHandler(Injector injector) {
+        return injector.getInstance(TradeAmendHandler.class);
     }
 
     @Bean
-    public TradeCancelHandler tradeCancelHandler(PositionLedgerRepository ledgerRepo,
-                                                  DomainEventPublisher eventPublisher) {
-        return new DefaultTradeCancelHandler(ledgerRepo, eventPublisher);
+    public TradeCancelHandler tradeCancelHandler(Injector injector) {
+        return injector.getInstance(TradeCancelHandler.class);
     }
 
     @Bean
-    @ConditionalOnProperty(name = "pv.pricing.strategy", havingValue = "expression", matchIfMissing = true)
-    public PriceEvaluator priceEvaluator(NumericPrecision np) {
-        return new PriceExpressionBasedEvaluator(np);
+    public PriceEvaluator priceEvaluator(Injector injector) {
+        return injector.getInstance(PriceEvaluator.class);
     }
 
     @Bean
-    public PriceExpressionRepository priceExpressionRepository() {
-        return new JsonPriceExpressionRepository();
+    public PriceExpressionRepository priceExpressionRepository(Injector injector) {
+        return injector.getInstance(PriceExpressionRepository.class);
     }
 
     @Bean
     @Primary
-    public VolumeSeriesRepository volumeSeriesRepository(JpaVolumeSeriesRepository jpaRepo) {
-        return new VolumeSeriesRepository() {
-            @Override public void save(VolumeSeries s) { jpaRepo.save(s); }
-            @Override public Optional<VolumeSeries> findById(UUID id) { return jpaRepo.findById(id); }
-            @Override public Optional<VolumeSeries> findCurrentBySeriesKey(String tenantId, String sk) {
-                return jpaRepo.findCurrentBySeriesKey(DEFAULT_TENANT, sk);
-            }
-            @Override public Optional<VolumeSeries> findCurrentBySeriesKeyAndRange(String tenantId, String sk,
-                                                                                     Instant rangeStart, Instant rangeEnd) {
-                return jpaRepo.findCurrentBySeriesKeyAndRange(DEFAULT_TENANT, sk, rangeStart, rangeEnd);
-            }
-            @Override public List<VolumeSeries> findByTenantId(String t) { return jpaRepo.findByTenantId(DEFAULT_TENANT); }
-            @Override public List<VolumeSeries> findAll(String t, VolumeSeriesSpec s) { return jpaRepo.findAll(DEFAULT_TENANT, s); }
-            @Override public boolean existsByTradeIdAndTradeVersion(String tid, int tv) {
-                return jpaRepo.existsByTradeIdAndTradeVersion(tid, tv);
-            }
-            @Override public void supersede(VolumeSeries o, VolumeSeries n) { jpaRepo.supersede(o, n); }
-        };
+    public VolumeSeriesRepository volumeSeriesRepository(Injector injector) {
+        return injector.getInstance(VolumeSeriesRepository.class);
     }
 
     @Bean
-    public VolumeResolver volumeResolver(VolumeSeriesRepository volumeSeriesRepo,
-                                          VolumeCache volumeCache,
-                                          NumericPrecision np) {
-        var profileResolver = new ProfileResolver(volumeSeriesRepo, np);
-        return new CachingVolumeResolver(profileResolver, volumeCache, volumeSeriesRepo, np);
+    public VolumeResolver volumeResolver(Injector injector) {
+        return injector.getInstance(VolumeResolver.class);
     }
 
     @Bean
-    public SettlementRevaluationService settlementRevaluationService(
-            VolumeResolver volumeResolver,
-            PriceEvaluator priceEvaluator,
-            MarketDataPort marketDataPort,
-            PriceExpressionRepository priceExpressionRepo,
-            SettlementCellRepository cellRepo,
-            DomainEventPublisher eventPublisher,
-            NumericPrecision np) {
-        return new SettlementRevaluationService(
-                volumeResolver, priceEvaluator, marketDataPort,
-                priceExpressionRepo, cellRepo, eventPublisher, np);
+    public SettlementRevaluationService settlementRevaluationService(Injector injector) {
+        return injector.getInstance(SettlementRevaluationService.class);
     }
 
     @Bean
-    public RollupMaterializationService rollupMaterializationService(
-            SettlementCellRepository cellRepo,
-            PositionLedgerRepository ledgerRepo,
-            RollupRepository rollupRepo,
-            NumericPrecision np) {
-        return new RollupMaterializationService(cellRepo, ledgerRepo, rollupRepo, np);
+    public RollupMaterializationService rollupMaterializationService(Injector injector) {
+        return injector.getInstance(RollupMaterializationService.class);
     }
 
     @Bean
-    public PositionQueryService positionQueryService(PositionLedgerRepository ledgerRepo,
-                                                       SettlementCellRepository cellRepo) {
-        return new DefaultPositionQueryService(ledgerRepo, cellRepo);
+    public PositionQueryService positionQueryService(Injector injector) {
+        return injector.getInstance(PositionQueryService.class);
     }
 
     @Bean
-    public SettlementQueryService settlementQueryService(SettlementCellRepository cellRepo) {
-        return new DefaultSettlementQueryService(cellRepo);
+    public SettlementQueryService settlementQueryService(Injector injector) {
+        return injector.getInstance(SettlementQueryService.class);
     }
 
     @Bean
-    public MarketDataService marketDataService(MarketDataRepository marketDataRepo) {
-        return new DefaultMarketDataService(marketDataRepo);
+    public MarketDataService marketDataService(Injector injector) {
+        return injector.getInstance(MarketDataService.class);
     }
 
     @Bean
-    public VolumeSeriesQueryService volumeSeriesQueryService(VolumeSeriesRepository seriesRepo) {
-        return new DefaultVolumeSeriesQueryService(seriesRepo);
+    public VolumeSeriesQueryService volumeSeriesQueryService(Injector injector) {
+        return injector.getInstance(VolumeSeriesQueryService.class);
     }
 
     @Bean
-    public RollupQueryService rollupQueryService(RollupRepository rollupRepo,
-                                                   RollupMaterializationService rollupService) {
-        return new DefaultRollupQueryService(rollupRepo, rollupService);
+    public RollupQueryService rollupQueryService(Injector injector) {
+        return injector.getInstance(RollupQueryService.class);
     }
 
     @Bean
-    public SettlementMaterializationJob settlementMaterializationJob(
-            VolumeResolver volumeResolver,
-            PriceEvaluator priceEvaluator,
-            MarketDataPort marketDataPort,
-            PriceExpressionRepository priceExpressionRepo,
-            SettlementCellRepository cellRepo,
-            DomainEventPublisher eventPublisher,
-            NumericPrecision np) {
-        return new SettlementMaterializationJob(
-                volumeResolver, priceEvaluator, marketDataPort,
-                priceExpressionRepo, cellRepo, eventPublisher, np);
+    public SettlementMaterializationJob settlementMaterializationJob(Injector injector) {
+        return injector.getInstance(SettlementMaterializationJob.class);
     }
 }

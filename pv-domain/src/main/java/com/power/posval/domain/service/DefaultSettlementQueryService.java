@@ -16,6 +16,7 @@ public class DefaultSettlementQueryService implements SettlementQueryService {
 
     private final SettlementCellRepository cellRepo;
 
+    @jakarta.inject.Inject
     public DefaultSettlementQueryService(SettlementCellRepository cellRepo) {
         this.cellRepo = cellRepo;
     }

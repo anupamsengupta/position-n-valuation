@@ -69,6 +69,10 @@
             <groupId>com.power</groupId>
             <artifactId>pv-kafka</artifactId>
         </dependency>
+        <dependency>
+            <groupId>com.power</groupId>
+            <artifactId>pv-guice</artifactId>
+        </dependency>
 
         <!-- Jakarta -->
         <dependency>

@@ -16,6 +16,7 @@ public class DefaultMarketDataService implements MarketDataService {
 
     private final MarketDataRepository repo;
 
+    @jakarta.inject.Inject
     public DefaultMarketDataService(MarketDataRepository repo) {
         this.repo = repo;
     }

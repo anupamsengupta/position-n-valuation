@@ -18,6 +18,7 @@ public class DefaultRollupQueryService implements RollupQueryService {
     private final RollupRepository rollupRepo;
     private final RollupMaterializationService materializationService;
 
+    @jakarta.inject.Inject
     public DefaultRollupQueryService(RollupRepository rollupRepo,
                                       RollupMaterializationService materializationService) {
         this.rollupRepo = rollupRepo;
