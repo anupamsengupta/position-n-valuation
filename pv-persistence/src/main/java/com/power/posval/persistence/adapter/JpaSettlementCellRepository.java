@@ -1,5 +1,6 @@
 package com.power.posval.persistence.adapter;
 
+import com.power.posval.domain.model.PositionMonthSummary;
 import com.power.posval.domain.model.SettlementCell;
 import com.power.posval.domain.port.repository.SettlementCellRepository;
 import com.power.posval.persistence.batch.BatchWriter;
@@ -9,7 +10,11 @@ import jakarta.inject.Inject;
 import jakarta.inject.Provider;
 import jakarta.persistence.EntityManager;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
+import java.time.YearMonth;
+import java.time.ZoneOffset;
 import java.util.*;
 
 /**
@@ -91,6 +96,105 @@ public class JpaSettlementCellRepository implements SettlementCellRepository {
             .setParameter("intervalStart", intervalStart)
             .setParameter("intervalEnd", intervalEnd)
             .executeUpdate();
+    }
+
+    @Override
+    public List<PositionMonthSummary> findMonthlySummary(String tenantId,
+                                                          Instant rangeStart,
+                                                          Instant rangeEnd) {
+        return executeSummaryQuery(tenantId, null, rangeStart, rangeEnd);
+    }
+
+    @Override
+    public List<PositionMonthSummary> findMonthlySummaryByPosition(String tenantId,
+                                                                     UUID positionId,
+                                                                     Instant rangeStart,
+                                                                     Instant rangeEnd) {
+        return executeSummaryQuery(tenantId, positionId, rangeStart, rangeEnd);
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<PositionMonthSummary> executeSummaryQuery(String tenantId,
+                                                            UUID positionId,
+                                                            Instant rangeStart,
+                                                            Instant rangeEnd) {
+        // FR-035: MW = time-weighted average; MWh = sum; amounts = sum.
+        // Avg price = totalAmount / totalMwh (volume-weighted).
+        String positionFilter = positionId != null
+            ? "AND sc.position_id = :positionId" : "";
+
+        var query = emProvider.get()
+            .createNativeQuery("""
+                SELECT sc.position_id,
+                       sc.tenant_id,
+                       ple.trade_id,
+                       ple.trade_leg_id,
+                       date_trunc('month', sc.interval_start AT TIME ZONE 'UTC') AS delivery_month,
+                       SUM(sc.volume_mwh)                                        AS total_mwh,
+                       SUM(sc.volume_mw * EXTRACT(EPOCH FROM (sc.interval_end - sc.interval_start)) / 60.0)
+                           / NULLIF(SUM(EXTRACT(EPOCH FROM (sc.interval_end - sc.interval_start)) / 60.0), 0)
+                                                                                  AS avg_mw,
+                       SUM(sc.amount)                                            AS total_amount,
+                       SUM(sc.market_amount)                                     AS total_market_amount,
+                       SUM(sc.pnl)                                               AS total_pnl,
+                       sc.currency,
+                       COUNT(*)                                                  AS cell_count
+                FROM valuation.settlement_cell sc
+                JOIN position.position_ledger_entry ple
+                  ON ple.entry_uuid = sc.position_id AND ple.tenant_id = sc.tenant_id
+                WHERE sc.tenant_id = :tenantId
+                  AND sc.interval_start < :rangeEnd
+                  AND sc.interval_end > :rangeStart
+                  """ + positionFilter + """
+
+                GROUP BY sc.position_id, sc.tenant_id, ple.trade_id, ple.trade_leg_id,
+                         date_trunc('month', sc.interval_start AT TIME ZONE 'UTC'), sc.currency
+                ORDER BY delivery_month, ple.trade_id, ple.trade_leg_id
+                """)
+            .setParameter("tenantId", tenantId)
+            .setParameter("rangeStart", rangeStart)
+            .setParameter("rangeEnd", rangeEnd);
+
+        if (positionId != null) {
+            query.setParameter("positionId", positionId);
+        }
+
+        return ((List<Object[]>) query.getResultList()).stream()
+            .map(this::mapToSummary)
+            .toList();
+    }
+
+    private PositionMonthSummary mapToSummary(Object[] row) {
+        UUID posId = (UUID) row[0];
+        String tenant = (String) row[1];
+        String tradeId = (String) row[2];
+        String tradeLegId = (String) row[3];
+        java.sql.Timestamp monthTs = (java.sql.Timestamp) row[4];
+        YearMonth month = YearMonth.from(monthTs.toInstant().atOffset(ZoneOffset.UTC));
+        BigDecimal totalMwh = toBigDecimal(row[5]);
+        BigDecimal avgMw = toBigDecimal(row[6]);
+        BigDecimal totalAmount = toBigDecimal(row[7]);
+        BigDecimal totalMarketAmount = toBigDecimal(row[8]);
+        BigDecimal totalPnl = toBigDecimal(row[9]);
+        String currency = (String) row[10];
+        int cellCount = ((Number) row[11]).intValue();
+
+        // Volume-weighted average prices
+        BigDecimal avgPrice = totalMwh != null && totalMwh.signum() != 0
+            ? totalAmount.divide(totalMwh, 8, RoundingMode.HALF_UP) : null;
+        BigDecimal avgMarketPrice = totalMarketAmount != null && totalMwh != null && totalMwh.signum() != 0
+            ? totalMarketAmount.divide(totalMwh, 8, RoundingMode.HALF_UP) : null;
+
+        return new PositionMonthSummary(
+            posId, tenant, tradeId, tradeLegId, month,
+            totalMwh, avgMw, totalAmount, totalMarketAmount, totalPnl,
+            avgPrice, avgMarketPrice, currency, cellCount);
+    }
+
+    private static BigDecimal toBigDecimal(Object v) {
+        if (v == null) return null;
+        if (v instanceof BigDecimal bd) return bd;
+        return new BigDecimal(v.toString());
     }
 
     private SettlementCellEntity toEntity(SettlementCell c) {

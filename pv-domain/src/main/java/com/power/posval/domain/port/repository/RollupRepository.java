@@ -28,4 +28,12 @@ public interface RollupRepository {
                   Instant rangeStart,
                   Instant rangeEnd,
                   TimeGranularity granularity);
+
+    /**
+     * Persist or upsert rollup cells computed by RollupMaterializationService.
+     * FR-090: per (delivery_point, portfolio) × period.
+     */
+    default void saveAll(String tenantId, List<RollupCell> cells) {
+        throw new UnsupportedOperationException("saveAll not implemented");
+    }
 }

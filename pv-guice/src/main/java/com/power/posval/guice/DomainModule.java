@@ -4,6 +4,7 @@ import com.google.inject.AbstractModule;
 import com.google.inject.Singleton;
 import com.power.posval.domain.port.DefaultNumericPrecision;
 import com.power.posval.domain.port.NumericPrecision;
+import com.power.posval.domain.port.service.*;
 import com.power.posval.domain.service.*;
 
 /**
@@ -40,5 +41,12 @@ public class DomainModule extends AbstractModule {
         bind(CacheInvalidationHandler.class).in(Singleton.class);
         bind(TradeIntervalCacheRebuilder.class).in(Singleton.class);
         bind(SettlementRevaluationService.class).in(Singleton.class);
+        bind(RollupMaterializationService.class).in(Singleton.class);
+
+        bind(PositionQueryService.class).to(DefaultPositionQueryService.class).in(Singleton.class);
+        bind(SettlementQueryService.class).to(DefaultSettlementQueryService.class).in(Singleton.class);
+        bind(MarketDataService.class).to(DefaultMarketDataService.class).in(Singleton.class);
+        bind(VolumeSeriesQueryService.class).to(DefaultVolumeSeriesQueryService.class).in(Singleton.class);
+        bind(RollupQueryService.class).to(DefaultRollupQueryService.class).in(Singleton.class);
     }
 }

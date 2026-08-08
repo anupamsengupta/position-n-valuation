@@ -4,7 +4,7 @@ import com.power.posval.app.dto.ApiResponse;
 import com.power.posval.app.dto.MarketDataRequest;
 import com.power.posval.app.provider.TransactionalExecutor;
 import com.power.posval.domain.port.marketdata.MarketDataLookup;
-import com.power.posval.domain.port.repository.MarketDataRepository;
+import com.power.posval.domain.port.service.MarketDataService;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.Instant;
@@ -15,12 +15,12 @@ import java.util.Optional;
 @RequestMapping("/api/market-data")
 public class MarketDataController {
 
-    private final MarketDataRepository marketDataRepo;
+    private final MarketDataService marketDataService;
     private final TransactionalExecutor txExecutor;
 
-    public MarketDataController(MarketDataRepository marketDataRepo,
+    public MarketDataController(MarketDataService marketDataService,
                                  TransactionalExecutor txExecutor) {
-        this.marketDataRepo = marketDataRepo;
+        this.marketDataService = marketDataService;
         this.txExecutor = txExecutor;
     }
 
@@ -30,14 +30,14 @@ public class MarketDataController {
             @RequestParam String series,
             @RequestParam String intervalStart) {
         Optional<MarketDataLookup> result = txExecutor.execute(
-                () -> marketDataRepo.findFixing(tenantId, series, Instant.parse(intervalStart)));
+                () -> marketDataService.findFixing(tenantId, series, Instant.parse(intervalStart)));
         return result.map(ApiResponse::ok)
                 .orElse(ApiResponse.error("Fixing not found"));
     }
 
     @PostMapping("/fixings")
     public ApiResponse<String> saveFixing(@RequestBody MarketDataRequest request) {
-        txExecutor.run(() -> marketDataRepo.saveFixing(
+        txExecutor.run(() -> marketDataService.saveFixing(
                 request.tenantId(), request.series(),
                 Instant.parse(request.intervalStart()), request.toLookup()));
         return ApiResponse.ok("saved");
@@ -50,7 +50,7 @@ public class MarketDataController {
             @RequestParam String pillar,
             @RequestParam String asOfDate) {
         Optional<MarketDataLookup> result = txExecutor.execute(
-                () -> marketDataRepo.findForwardCurve(tenantId, series,
+                () -> marketDataService.findForwardCurve(tenantId, series,
                         YearMonth.parse(pillar), Instant.parse(asOfDate)));
         return result.map(ApiResponse::ok)
                 .orElse(ApiResponse.error("Forward curve not found"));
@@ -58,7 +58,7 @@ public class MarketDataController {
 
     @PostMapping("/forward-curves")
     public ApiResponse<String> saveForwardCurve(@RequestBody MarketDataRequest request) {
-        txExecutor.run(() -> marketDataRepo.saveForwardCurve(
+        txExecutor.run(() -> marketDataService.saveForwardCurve(
                 request.tenantId(), request.series(),
                 YearMonth.parse(request.pillar()),
                 Instant.parse(request.asOfDate()), request.toLookup()));
@@ -71,14 +71,14 @@ public class MarketDataController {
             @RequestParam String series,
             @RequestParam String refMonth) {
         Optional<MarketDataLookup> result = txExecutor.execute(
-                () -> marketDataRepo.findIndex(tenantId, series, refMonth));
+                () -> marketDataService.findIndex(tenantId, series, refMonth));
         return result.map(ApiResponse::ok)
                 .orElse(ApiResponse.error("Index not found"));
     }
 
     @PostMapping("/indices")
     public ApiResponse<String> saveIndex(@RequestBody MarketDataRequest request) {
-        txExecutor.run(() -> marketDataRepo.saveIndex(
+        txExecutor.run(() -> marketDataService.saveIndex(
                 request.tenantId(), request.series(),
                 request.refMonth(), request.toLookup()));
         return ApiResponse.ok("saved");
@@ -90,14 +90,14 @@ public class MarketDataController {
             @RequestParam String pair,
             @RequestParam String referenceDate) {
         Optional<MarketDataLookup> result = txExecutor.execute(
-                () -> marketDataRepo.findFxRate(tenantId, pair, Instant.parse(referenceDate)));
+                () -> marketDataService.findFxRate(tenantId, pair, Instant.parse(referenceDate)));
         return result.map(ApiResponse::ok)
                 .orElse(ApiResponse.error("FX rate not found"));
     }
 
     @PostMapping("/fx-rates")
     public ApiResponse<String> saveFxRate(@RequestBody MarketDataRequest request) {
-        txExecutor.run(() -> marketDataRepo.saveFxRate(
+        txExecutor.run(() -> marketDataService.saveFxRate(
                 request.tenantId(), request.currencyPair(),
                 Instant.parse(request.referenceDate()), request.toLookup()));
         return ApiResponse.ok("saved");

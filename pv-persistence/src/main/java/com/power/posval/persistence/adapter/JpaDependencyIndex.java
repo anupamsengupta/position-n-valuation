@@ -13,6 +13,7 @@ import jakarta.persistence.EntityManager;
 import java.time.Instant;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * JPA adapter for DependencyIndex. §13.2, Pattern #18.
@@ -89,6 +90,32 @@ public class JpaDependencyIndex implements DependencyIndex {
 
         return query.getResultList().stream()
             .map(row -> mapToEdge((Object[]) row, affectedRange))
+            .toList();
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public List<UUID> findAffectedPositionIds(String tenantId,
+                                               String inputSeriesKey,
+                                               Instant rangeStart,
+                                               Instant rangeEnd) {
+        return emProvider.get().createNativeQuery("""
+                SELECT DISTINCT sc.position_id
+                FROM valuation.dependency_edge de
+                JOIN valuation.settlement_cell sc ON sc.cell_id = de.cell_id
+                WHERE de.tenant_id = :tenantId
+                  AND de.input_series_key = :inputSeriesKey
+                  AND de.affected_range_start < :rangeEnd
+                  AND de.affected_range_end > :rangeStart
+                  AND de.pruned_at IS NULL
+                """)
+            .setParameter("tenantId", tenantId)
+            .setParameter("inputSeriesKey", inputSeriesKey)
+            .setParameter("rangeStart", rangeStart)
+            .setParameter("rangeEnd", rangeEnd)
+            .getResultList()
+            .stream()
+            .map(row -> UUID.fromString(row.toString()))
             .toList();
     }
 

@@ -7,8 +7,11 @@ import com.power.posval.domain.port.cache.VolumeCache;
 import com.power.posval.domain.port.event.DomainEventPublisher;
 import com.power.posval.domain.port.marketdata.MarketDataPort;
 import com.power.posval.domain.port.repository.PositionLedgerRepository;
+import com.power.posval.domain.port.repository.MarketDataRepository;
+import com.power.posval.domain.port.repository.RollupRepository;
 import com.power.posval.domain.port.repository.SettlementCellRepository;
 import com.power.posval.domain.port.repository.VolumeSeriesRepository;
+import com.power.posval.domain.port.service.*;
 import com.power.posval.domain.port.repository.VolumeSeriesSpec;
 import com.power.posval.domain.service.SettlementRevaluationService;
 import com.power.posval.domain.service.*;
@@ -106,6 +109,42 @@ public class DomainServiceConfig {
         return new SettlementRevaluationService(
                 volumeResolver, priceEvaluator, marketDataPort,
                 priceExpressionRepo, cellRepo, eventPublisher, np);
+    }
+
+    @Bean
+    public RollupMaterializationService rollupMaterializationService(
+            SettlementCellRepository cellRepo,
+            PositionLedgerRepository ledgerRepo,
+            RollupRepository rollupRepo,
+            NumericPrecision np) {
+        return new RollupMaterializationService(cellRepo, ledgerRepo, rollupRepo, np);
+    }
+
+    @Bean
+    public PositionQueryService positionQueryService(PositionLedgerRepository ledgerRepo,
+                                                       SettlementCellRepository cellRepo) {
+        return new DefaultPositionQueryService(ledgerRepo, cellRepo);
+    }
+
+    @Bean
+    public SettlementQueryService settlementQueryService(SettlementCellRepository cellRepo) {
+        return new DefaultSettlementQueryService(cellRepo);
+    }
+
+    @Bean
+    public MarketDataService marketDataService(MarketDataRepository marketDataRepo) {
+        return new DefaultMarketDataService(marketDataRepo);
+    }
+
+    @Bean
+    public VolumeSeriesQueryService volumeSeriesQueryService(VolumeSeriesRepository seriesRepo) {
+        return new DefaultVolumeSeriesQueryService(seriesRepo);
+    }
+
+    @Bean
+    public RollupQueryService rollupQueryService(RollupRepository rollupRepo,
+                                                   RollupMaterializationService rollupService) {
+        return new DefaultRollupQueryService(rollupRepo, rollupService);
     }
 
     @Bean

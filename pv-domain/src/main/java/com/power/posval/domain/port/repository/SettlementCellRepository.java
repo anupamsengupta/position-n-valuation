@@ -1,5 +1,6 @@
 package com.power.posval.domain.port.repository;
 
+import com.power.posval.domain.model.PositionMonthSummary;
 import com.power.posval.domain.model.SettlementCell;
 
 import java.time.Instant;
@@ -36,6 +37,30 @@ public interface SettlementCellRepository {
     default int deleteByPositionAndInterval(String tenantId, UUID positionId,
                                              Instant intervalStart, Instant intervalEnd) {
         throw new UnsupportedOperationException("deleteByPositionAndInterval not implemented");
+    }
+
+    /**
+     * Aggregate settlement cells per position × delivery-month for a tenant
+     * within a delivery range. Computes: totalMwh (sum), avgMw (TWA),
+     * totalAmount (sum), totalMarketAmount (sum), totalPnl (sum),
+     * avgPrice (volume-weighted), avgMarketPrice (volume-weighted).
+     * FR-035, FR-090.
+     */
+    default List<PositionMonthSummary> findMonthlySummary(String tenantId,
+                                                            Instant rangeStart,
+                                                            Instant rangeEnd) {
+        throw new UnsupportedOperationException("findMonthlySummary not implemented");
+    }
+
+    /**
+     * Aggregate settlement cells for a single position within a delivery range.
+     * Returns one PositionMonthSummary per delivery month.
+     */
+    default List<PositionMonthSummary> findMonthlySummaryByPosition(String tenantId,
+                                                                      UUID positionId,
+                                                                      Instant rangeStart,
+                                                                      Instant rangeEnd) {
+        throw new UnsupportedOperationException("findMonthlySummaryByPosition not implemented");
     }
 
     /** Check if any settlement cells exist for a given position (idempotency check). */

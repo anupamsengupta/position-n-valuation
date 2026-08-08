@@ -2,38 +2,33 @@ package com.power.posval.kafka;
 
 import com.power.posval.domain.event.MarketDataUpdated;
 import com.power.posval.domain.event.SettlementRevaluationRequested;
-import com.power.posval.domain.model.PositionLedgerEntry;
-import com.power.posval.domain.model.VolumeUnit;
 import com.power.posval.domain.model.value.DeliveryRange;
 import com.power.posval.domain.port.cache.MarketDataCache;
 import com.power.posval.domain.port.event.DomainEventPublisher;
 import com.power.posval.domain.port.marketdata.MarketDataLookup;
 import com.power.posval.domain.port.marketdata.MarketDataType;
 import com.power.posval.domain.port.marketdata.VolSurfaceLookup;
-import com.power.posval.domain.port.repository.PositionLedgerRepository;
+import com.power.posval.domain.port.repository.DependencyEdge;
+import com.power.posval.domain.port.repository.DependencyIndex;
+import com.power.posval.domain.service.PrunePolicy;
 import org.junit.jupiter.api.Test;
 
-import java.math.BigDecimal;
 import java.time.Instant;
-import java.time.YearMonth;
-import java.time.ZoneId;
 import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class MarketDataUpdatedConsumerTest {
 
-    private static final ZoneId CET = ZoneId.of("Europe/Berlin");
-
     private MarketDataUpdatedConsumer consumer(MarketDataCache cache) {
-        return consumer(cache, new StubLedgerRepo(List.of()), new ArrayList<>());
+        return consumer(cache, new StubDependencyIndex(List.of()), new ArrayList<>());
     }
 
     private MarketDataUpdatedConsumer consumer(MarketDataCache cache,
-                                                PositionLedgerRepository ledgerRepo,
+                                                DependencyIndex depIndex,
                                                 List<Object> publishedEvents) {
         DomainEventPublisher pub = publishedEvents::add;
-        return new MarketDataUpdatedConsumer(cache, ledgerRepo, pub);
+        return new MarketDataUpdatedConsumer(cache, depIndex, pub);
     }
 
     @Test
@@ -100,70 +95,88 @@ class MarketDataUpdatedConsumerTest {
     }
 
     @Test
-    void rangeUpdate_publishesRevaluationRequestsForAffectedPositions() {
+    void rangeUpdate_usesS8DependencyIndex_publishesRevalRequests() {
         Instant start = Instant.parse("2025-03-01T00:00:00Z");
         Instant end = Instant.parse("2025-04-01T00:00:00Z");
-
-        var position = PositionLedgerEntry.builder()
-            .id(UUID.randomUUID())
-            .tenantId("t1")
-            .tradeId("T-1")
-            .tradeLegId("LEG-1")
-            .tradeVersion(1)
-            .deliveryRange(DeliveryRange.ofMonth(YearMonth.of(2025, 3), CET))
-            .quantity(BigDecimal.TEN)
-            .volumeUnit(VolumeUnit.MW_CAPACITY)
-            .priceExpressionId(UUID.randomUUID())
-            .validFrom(Instant.now())
-            .knownFrom(Instant.now())
-            .status("ACTIVE")
-            .build();
+        UUID posId1 = UUID.randomUUID();
+        UUID posId2 = UUID.randomUUID();
 
         var publishedEvents = new ArrayList<Object>();
-        var c = consumer(new StubMarketDataCache(),
-            new StubLedgerRepo(List.of(position)), publishedEvents);
+        var depIndex = new StubDependencyIndex(List.of(posId1, posId2));
+
+        var c = consumer(new StubMarketDataCache(), depIndex, publishedEvents);
 
         c.handle(new MarketDataUpdated(
             "t1", MarketDataType.FIXING, "EPEX_DA15",
             start, end, 5L, Instant.now()));
 
-        assertEquals(1, publishedEvents.size());
-        assertInstanceOf(SettlementRevaluationRequested.class, publishedEvents.get(0));
-        var reval = (SettlementRevaluationRequested) publishedEvents.get(0);
-        assertEquals(position.id(), reval.positionId());
-        assertEquals("MARKET_DATA", reval.triggerType());
-        assertEquals(start, reval.intervalStart());
-        assertEquals(end, reval.intervalEnd());
+        assertEquals(2, publishedEvents.size());
+        var reval1 = (SettlementRevaluationRequested) publishedEvents.get(0);
+        var reval2 = (SettlementRevaluationRequested) publishedEvents.get(1);
+        assertEquals(posId1, reval1.positionId());
+        assertEquals(posId2, reval2.positionId());
+        assertEquals("MARKET_DATA", reval1.triggerType());
+        assertEquals(start, reval1.intervalStart());
+        assertEquals(end, reval1.intervalEnd());
+    }
+
+    @Test
+    void rangeUpdate_noAffectedPositions_publishesNothing() {
+        Instant start = Instant.parse("2025-03-01T00:00:00Z");
+        Instant end = Instant.parse("2025-04-01T00:00:00Z");
+
+        var publishedEvents = new ArrayList<Object>();
+        var depIndex = new StubDependencyIndex(List.of()); // no affected positions
+
+        var c = consumer(new StubMarketDataCache(), depIndex, publishedEvents);
+
+        c.handle(new MarketDataUpdated(
+            "t1", MarketDataType.FIXING, "NORDPOOL_SYS",
+            start, end, 5L, Instant.now()));
+
+        assertEquals(0, publishedEvents.size());
     }
 
     @Test
     void fullSeriesUpdate_doesNotPublishRevaluationRequests() {
         var publishedEvents = new ArrayList<Object>();
-        var position = PositionLedgerEntry.builder()
-            .id(UUID.randomUUID())
-            .tenantId("t1")
-            .tradeId("T-1")
-            .tradeLegId("LEG-1")
-            .tradeVersion(1)
-            .deliveryRange(DeliveryRange.ofMonth(YearMonth.of(2025, 3), CET))
-            .quantity(BigDecimal.TEN)
-            .volumeUnit(VolumeUnit.MW_CAPACITY)
-            .priceExpressionId(UUID.randomUUID())
-            .validFrom(Instant.now())
-            .knownFrom(Instant.now())
-            .status("ACTIVE")
-            .build();
+        // Even with affected positions in the index, full-series (null range) should not trigger
+        var depIndex = new StubDependencyIndex(List.of(UUID.randomUUID()));
 
-        var c = consumer(new StubMarketDataCache(),
-            new StubLedgerRepo(List.of(position)), publishedEvents);
+        var c = consumer(new StubMarketDataCache(), depIndex, publishedEvents);
 
-        // null range → full series invalidation, no reval requests
         c.handle(new MarketDataUpdated(
             "t1", MarketDataType.FIXING, "EPEX_DA15",
             null, null, 5L, Instant.now()));
 
         assertEquals(0, publishedEvents.size());
     }
+
+    @Test
+    void dependencyIndex_receivesCorrectSeriesKey() {
+        Instant start = Instant.parse("2025-03-01T00:00:00Z");
+        Instant end = Instant.parse("2025-04-01T00:00:00Z");
+
+        var queriedSeries = new ArrayList<String>();
+        var depIndex = new StubDependencyIndex(List.of()) {
+            @Override
+            public List<UUID> findAffectedPositionIds(String tenantId, String inputSeriesKey,
+                                                       Instant rangeStart, Instant rangeEnd) {
+                queriedSeries.add(inputSeriesKey);
+                return super.findAffectedPositionIds(tenantId, inputSeriesKey, rangeStart, rangeEnd);
+            }
+        };
+
+        var c = consumer(new StubMarketDataCache(), depIndex, new ArrayList<>());
+        c.handle(new MarketDataUpdated(
+            "t1", MarketDataType.FIXING, "EPEX_DA15",
+            start, end, 5L, Instant.now()));
+
+        assertEquals(1, queriedSeries.size());
+        assertEquals("EPEX_DA15", queriedSeries.get(0));
+    }
+
+    // ── Stubs ──────────────────────────────────────────────────────────
 
     private static class StubMarketDataCache implements MarketDataCache {
         @Override public Optional<MarketDataLookup> get(String t, MarketDataType type, String s, String k) { return Optional.empty(); }
@@ -174,15 +187,14 @@ class MarketDataUpdatedConsumerTest {
         @Override public void invalidate(String t, MarketDataType type, String s, Instant rs, Instant re) {}
     }
 
-    private static class StubLedgerRepo implements PositionLedgerRepository {
-        private final List<PositionLedgerEntry> store;
-        StubLedgerRepo(List<PositionLedgerEntry> store) { this.store = store; }
-        @Override public void save(PositionLedgerEntry e) {}
-        @Override public Optional<PositionLedgerEntry> findById(UUID id) { return Optional.empty(); }
-        @Override public List<PositionLedgerEntry> findCurrentByTradeLeg(String t, String tr, String tl) { return List.of(); }
-        @Override public List<PositionLedgerEntry> findAsOf(String t, String tr, String tl, Instant b, Instant k) { return List.of(); }
-        @Override public List<PositionLedgerEntry> findAllByDeliveryRange(String t, Instant s, Instant e) { return new ArrayList<>(store); }
-        @Override public List<PositionLedgerEntry> findByDeliveryRangeForTradeLeg(String t, String tr, String tl, Instant s, Instant e) { return List.of(); }
-        @Override public void supersede(List<PositionLedgerEntry> old, List<PositionLedgerEntry> nw) {}
+    private static class StubDependencyIndex implements DependencyIndex {
+        private final List<UUID> positionIds;
+        StubDependencyIndex(List<UUID> positionIds) { this.positionIds = positionIds; }
+        @Override public void upsert(DependencyEdge edge) {}
+        @Override public List<DependencyEdge> findAffectedCells(String t, String s, DeliveryRange r, String f) { return List.of(); }
+        @Override public void prune(String t, PrunePolicy p) {}
+        @Override public List<UUID> findAffectedPositionIds(String t, String s, Instant rs, Instant re) {
+            return new ArrayList<>(positionIds);
+        }
     }
 }

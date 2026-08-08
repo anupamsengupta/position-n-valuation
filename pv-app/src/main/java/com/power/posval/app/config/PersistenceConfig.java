@@ -5,8 +5,10 @@ import com.power.posval.app.provider.TransactionalExecutor;
 import com.power.posval.domain.port.event.DomainEventPublisher;
 import com.power.posval.domain.port.repository.PositionLedgerRepository;
 import com.power.posval.domain.port.repository.SettlementCellRepository;
+import com.power.posval.persistence.adapter.JpaDependencyIndex;
 import com.power.posval.persistence.adapter.JpaMarketDataRepository;
 import com.power.posval.persistence.adapter.JpaPositionLedgerRepository;
+import com.power.posval.persistence.adapter.JpaRollupRepository;
 import com.power.posval.persistence.adapter.JpaSettlementCellRepository;
 import com.power.posval.persistence.adapter.JpaVolumeSeriesRepository;
 import com.power.posval.persistence.batch.BatchWriter;
@@ -100,6 +102,16 @@ public class PersistenceConfig {
     public SettlementCellRepository settlementCellRepository(SpringEntityManagerProvider emProvider,
                                                               BatchWriter batchWriter) {
         return new JpaSettlementCellRepository(emProvider, batchWriter);
+    }
+
+    @Bean
+    public JpaRollupRepository rollupRepository(SpringEntityManagerProvider emProvider) {
+        return new JpaRollupRepository(emProvider);
+    }
+
+    @Bean
+    public JpaDependencyIndex dependencyIndex(SpringEntityManagerProvider emProvider) {
+        return new JpaDependencyIndex(emProvider);
     }
 
     @Bean

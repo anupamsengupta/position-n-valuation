@@ -8,6 +8,7 @@ import java.time.Instant;
 /**
  * Materialized rollup cell.
  * FR-090: per (delivery_point, portfolio, position_type) × period × peak/off-peak.
+ * FR-035: netMw = time-weighted average; netMwh = sum; amounts = sum.
  */
 public record RollupCell(
     Instant periodStart,
@@ -19,6 +20,8 @@ public record RollupCell(
     BigDecimal netMw,
     BigDecimal netMwh,
     BigDecimal settledValue,
+    BigDecimal marketValue,
+    BigDecimal pnl,
     BigDecimal forwardMarkValue,
     String currency,
     String calendarVersion,

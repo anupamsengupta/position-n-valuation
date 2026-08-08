@@ -3,7 +3,7 @@ package com.power.posval.app.controller;
 import com.power.posval.app.dto.ApiResponse;
 import com.power.posval.app.dto.SettlementCellDto;
 import com.power.posval.app.provider.TransactionalExecutor;
-import com.power.posval.domain.port.repository.SettlementCellRepository;
+import com.power.posval.domain.port.service.SettlementQueryService;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.Instant;
@@ -14,12 +14,12 @@ import java.util.UUID;
 @RequestMapping("/api/settlements")
 public class SettlementController {
 
-    private final SettlementCellRepository cellRepo;
+    private final SettlementQueryService settlementService;
     private final TransactionalExecutor txExecutor;
 
-    public SettlementController(SettlementCellRepository cellRepo,
+    public SettlementController(SettlementQueryService settlementService,
                                  TransactionalExecutor txExecutor) {
-        this.cellRepo = cellRepo;
+        this.settlementService = settlementService;
         this.txExecutor = txExecutor;
     }
 
@@ -30,7 +30,7 @@ public class SettlementController {
             @RequestParam String rangeStart,
             @RequestParam String rangeEnd) {
         var cells = txExecutor.execute(
-                () -> cellRepo.findByPosition(tenantId, UUID.fromString(positionId),
+                () -> settlementService.findByPosition(tenantId, UUID.fromString(positionId),
                         Instant.parse(rangeStart), Instant.parse(rangeEnd)));
         return ApiResponse.ok(cells.stream().map(SettlementCellDto::from).toList());
     }

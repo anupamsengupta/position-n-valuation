@@ -21,7 +21,8 @@
       "Bash(curl:*)",
       "Bash(xargs -I{} taskkill //PID {} //F)",
       "WebFetch(domain:hub.docker.com)",
-      "WebFetch(domain:docs.conduktor.io)"
+      "WebFetch(domain:docs.conduktor.io)",
+      "Bash(xargs:*)"
     ]
   }
 }
