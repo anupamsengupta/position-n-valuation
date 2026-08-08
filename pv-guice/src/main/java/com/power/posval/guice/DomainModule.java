@@ -39,5 +39,6 @@ public class DomainModule extends AbstractModule {
 
         bind(CacheInvalidationHandler.class).in(Singleton.class);
         bind(TradeIntervalCacheRebuilder.class).in(Singleton.class);
+        bind(SettlementRevaluationService.class).in(Singleton.class);
     }
 }

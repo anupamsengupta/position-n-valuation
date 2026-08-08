@@ -58,6 +58,17 @@ public interface PositionLedgerRepository {
                                                               Instant deliveryEnd);
 
     /**
+     * Current-knowledge entries that reference a specific volume series key
+     * and whose delivery range overlaps the given interval.
+     * Used by VolumeSuperseded revaluation to find affected positions.
+     */
+    default List<PositionLedgerEntry> findCurrentByVolumeSeriesKeyAndDeliveryRange(
+            String volumeSeriesKey, Instant deliveryStart, Instant deliveryEnd) {
+        throw new UnsupportedOperationException(
+            "findCurrentByVolumeSeriesKeyAndDeliveryRange not implemented");
+    }
+
+    /**
      * Supersede existing entries by closing known_to, then saving new versions.
      * FR-037: knowledge-time supersession.
      * @param entriesToClose entries whose known_to will be set to now()

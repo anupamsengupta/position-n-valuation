@@ -28,6 +28,16 @@ public interface SettlementCellRepository {
     List<SettlementCell> findByPosition(String tenantId, UUID positionId,
                                          Instant rangeStart, Instant rangeEnd);
 
+    /**
+     * Delete settlement cells for a position whose intervalStart falls within [start, end).
+     * Used by revaluation to replace stale cells with fresh computations.
+     * @return number of cells deleted
+     */
+    default int deleteByPositionAndInterval(String tenantId, UUID positionId,
+                                             Instant intervalStart, Instant intervalEnd) {
+        throw new UnsupportedOperationException("deleteByPositionAndInterval not implemented");
+    }
+
     /** Check if any settlement cells exist for a given position (idempotency check). */
     default boolean existsByPositionId(String tenantId, UUID positionId) {
         return !findByPosition(tenantId, positionId,

@@ -179,6 +179,28 @@ public class JpaPositionLedgerRepository implements PositionLedgerRepository {
     }
 
     @Override
+    public List<PositionLedgerEntry> findCurrentByVolumeSeriesKeyAndDeliveryRange(
+            String volumeSeriesKey,
+            Instant deliveryStart,
+            Instant deliveryEnd) {
+        return emProvider.get()
+            .createQuery("""
+                SELECT e FROM PositionLedgerEntryEntity e
+                WHERE e.volumeSeriesKey = :seriesKey
+                  AND e.deliveryStart < :deliveryEnd
+                  AND e.deliveryEnd > :deliveryStart
+                  AND e.knownTo IS NULL
+                ORDER BY e.tradeLegId, e.deliveryStart
+                """, PositionLedgerEntryEntity.class)
+            .setParameter("seriesKey", volumeSeriesKey)
+            .setParameter("deliveryStart", deliveryStart)
+            .setParameter("deliveryEnd", deliveryEnd)
+            .getResultStream()
+            .map(this::toDomain)
+            .toList();
+    }
+
+    @Override
     public void supersede(List<PositionLedgerEntry> entriesToClose,
                           List<PositionLedgerEntry> newEntries) {
         EntityManager em = emProvider.get();

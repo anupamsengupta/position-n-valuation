@@ -75,6 +75,24 @@ public class JpaSettlementCellRepository implements SettlementCellRepository {
             .toList();
     }
 
+    @Override
+    public int deleteByPositionAndInterval(String tenantId, UUID positionId,
+                                            Instant intervalStart, Instant intervalEnd) {
+        return emProvider.get()
+            .createQuery("""
+                DELETE FROM SettlementCellEntity e
+                WHERE e.tenantId   = :tenantId
+                  AND e.positionId = :positionId
+                  AND e.intervalStart >= :intervalStart
+                  AND e.intervalStart < :intervalEnd
+                """)
+            .setParameter("tenantId", tenantId)
+            .setParameter("positionId", positionId)
+            .setParameter("intervalStart", intervalStart)
+            .setParameter("intervalEnd", intervalEnd)
+            .executeUpdate();
+    }
+
     private SettlementCellEntity toEntity(SettlementCell c) {
         var e = new SettlementCellEntity();
         e.setCellUuid(c.cellId());

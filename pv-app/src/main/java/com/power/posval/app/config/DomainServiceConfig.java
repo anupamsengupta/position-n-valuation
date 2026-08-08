@@ -10,6 +10,7 @@ import com.power.posval.domain.port.repository.PositionLedgerRepository;
 import com.power.posval.domain.port.repository.SettlementCellRepository;
 import com.power.posval.domain.port.repository.VolumeSeriesRepository;
 import com.power.posval.domain.port.repository.VolumeSeriesSpec;
+import com.power.posval.domain.service.SettlementRevaluationService;
 import com.power.posval.domain.service.*;
 import com.power.posval.domain.service.stub.JsonPriceExpressionRepository;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -91,6 +92,20 @@ public class DomainServiceConfig {
                                           NumericPrecision np) {
         var profileResolver = new ProfileResolver(volumeSeriesRepo, np);
         return new CachingVolumeResolver(profileResolver, volumeCache, volumeSeriesRepo, np);
+    }
+
+    @Bean
+    public SettlementRevaluationService settlementRevaluationService(
+            VolumeResolver volumeResolver,
+            PriceEvaluator priceEvaluator,
+            MarketDataPort marketDataPort,
+            PriceExpressionRepository priceExpressionRepo,
+            SettlementCellRepository cellRepo,
+            DomainEventPublisher eventPublisher,
+            NumericPrecision np) {
+        return new SettlementRevaluationService(
+                volumeResolver, priceEvaluator, marketDataPort,
+                priceExpressionRepo, cellRepo, eventPublisher, np);
     }
 
     @Bean
