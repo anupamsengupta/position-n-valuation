@@ -1,20 +1,12 @@
 package com.power.posval.app.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.inject.Injector;
 import com.power.posval.domain.event.MarketDataUpdated;
 import com.power.posval.domain.event.PositionEntryCaptured;
 import com.power.posval.domain.event.SettlementRevaluationRequested;
 import com.power.posval.domain.event.VolumePublished;
 import com.power.posval.domain.event.VolumeSuperseded;
-import com.power.posval.domain.port.cache.MarketDataCache;
-import com.power.posval.domain.port.event.DomainEventPublisher;
-import com.power.posval.domain.port.repository.DependencyIndex;
-import com.power.posval.domain.port.repository.PositionLedgerRepository;
-import com.power.posval.domain.port.repository.SettlementCellRepository;
-import com.power.posval.domain.service.CacheInvalidationHandler;
-import com.power.posval.domain.service.SettlementMaterializationJob;
-import com.power.posval.domain.service.SettlementRevaluationService;
-import com.power.posval.domain.service.TradeIntervalCacheRebuilder;
 import com.power.posval.app.provider.SpringEntityManagerProvider;
 import com.power.posval.kafka.MarketDataUpdatedConsumer;
 import com.power.posval.kafka.OutboxRelayProducer;
@@ -206,17 +198,13 @@ public class KafkaConfig {
     }
 
     @Bean
-    public TradeCapturedConsumer tradeCapturedConsumer(PositionLedgerRepository ledgerRepo,
-                                                       SettlementCellRepository cellRepo,
-                                                       SettlementMaterializationJob settlementJob) {
-        return new TradeCapturedConsumer(ledgerRepo, cellRepo, settlementJob);
+    public TradeCapturedConsumer tradeCapturedConsumer(Injector injector) {
+        return injector.getInstance(TradeCapturedConsumer.class);
     }
 
     @Bean
-    public SettlementRevaluationConsumer settlementRevaluationConsumer(
-            PositionLedgerRepository ledgerRepo,
-            SettlementRevaluationService revaluationService) {
-        return new SettlementRevaluationConsumer(ledgerRepo, revaluationService);
+    public SettlementRevaluationConsumer settlementRevaluationConsumer(Injector injector) {
+        return injector.getInstance(SettlementRevaluationConsumer.class);
     }
 
     // ── MarketDataUpdated consumer factory (typed deserializer) ────────
@@ -271,11 +259,8 @@ public class KafkaConfig {
     }
 
     @Bean
-    public MarketDataUpdatedConsumer marketDataUpdatedConsumer(
-            MarketDataCache cache,
-            DependencyIndex dependencyIndex,
-            DomainEventPublisher eventPublisher) {
-        return new MarketDataUpdatedConsumer(cache, dependencyIndex, eventPublisher);
+    public MarketDataUpdatedConsumer marketDataUpdatedConsumer(Injector injector) {
+        return injector.getInstance(MarketDataUpdatedConsumer.class);
     }
 
     // ── VolumeSuperseded consumer factory (typed deserializer) ────────
@@ -330,12 +315,8 @@ public class KafkaConfig {
     }
 
     @Bean
-    public VolumeSupersededConsumer volumeSupersededConsumer(
-            CacheInvalidationHandler cacheInvalidator,
-            TradeIntervalCacheRebuilder cacheRebuilder,
-            PositionLedgerRepository ledgerRepo,
-            DomainEventPublisher eventPublisher) {
-        return new VolumeSupersededConsumer(cacheInvalidator, cacheRebuilder, ledgerRepo, eventPublisher);
+    public VolumeSupersededConsumer volumeSupersededConsumer(Injector injector) {
+        return injector.getInstance(VolumeSupersededConsumer.class);
     }
 
     // ── VolumePublished consumer factory (typed deserializer) ─────────
@@ -390,9 +371,7 @@ public class KafkaConfig {
     }
 
     @Bean
-    public VolumePublishedConsumer volumePublishedConsumer(
-            PositionLedgerRepository ledgerRepo,
-            TradeIntervalCacheRebuilder cacheRebuilder) {
-        return new VolumePublishedConsumer(ledgerRepo, cacheRebuilder);
+    public VolumePublishedConsumer volumePublishedConsumer(Injector injector) {
+        return injector.getInstance(VolumePublishedConsumer.class);
     }
 }
