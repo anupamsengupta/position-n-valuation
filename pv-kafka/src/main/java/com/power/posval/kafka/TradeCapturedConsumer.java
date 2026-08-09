@@ -45,17 +45,42 @@ public class TradeCapturedConsumer extends IdempotentConsumer<PositionEntryCaptu
 
     @Override
     protected void process(PositionEntryCaptured event) {
-        Optional<PositionLedgerEntry> entryOpt = ledgerRepo.findById(event.positionId());
-        if (entryOpt.isEmpty()) {
-            throw new IllegalStateException(
-                "PositionLedgerEntry not found for positionId=" + event.positionId());
+        // handle() already called alreadyProcessed(), so skip straight to load
+        PositionLedgerEntry entry = ledgerRepo.findById(event.positionId())
+            .orElseThrow(() -> new IllegalStateException(
+                "PositionLedgerEntry not found for positionId=" + event.positionId()));
+        materializeSettlement(entry);
+        populateCache(entry);
+    }
+
+    /**
+     * Check idempotency and load the position ledger entry.
+     * Returns empty if already processed or entry not found.
+     *
+     * <p>This is separated so that a host can run the check + load in a
+     * read-only transaction before forking S5a and S6b into parallel
+     * write transactions.
+     */
+    public Optional<PositionLedgerEntry> prepareIfNeeded(PositionEntryCaptured event) {
+        if (alreadyProcessed(event)) {
+            return Optional.empty();
         }
-        PositionLedgerEntry entry = entryOpt.get();
+        return ledgerRepo.findById(event.positionId());
+    }
 
-        // S5a: settlement materialization
+    /**
+     * S5a: settlement materialization + S8 dependency upsert + SettlementComputed events.
+     * Must run inside a transaction.
+     */
+    public void materializeSettlement(PositionLedgerEntry entry) {
         settlementJob.execute(entry, entry.deliveryRange());
+    }
 
-        // S6b: populate trade interval cache so revaluation has warm volume data
+    /**
+     * S6b: populate trade interval cache for this position's delivery range.
+     * Must run inside a transaction. Cache is rebuildable (D-12).
+     */
+    public void populateCache(PositionLedgerEntry entry) {
         VolumeReference ref = VolumeReference.builder()
             .id(UUID.randomUUID())
             .tradeLegId(entry.tradeLegId())

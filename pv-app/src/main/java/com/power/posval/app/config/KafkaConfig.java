@@ -4,12 +4,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.inject.Injector;
 import com.power.posval.domain.event.MarketDataUpdated;
 import com.power.posval.domain.event.PositionEntryCaptured;
+import com.power.posval.domain.event.SettlementComputed;
 import com.power.posval.domain.event.SettlementRevaluationRequested;
 import com.power.posval.domain.event.VolumePublished;
 import com.power.posval.domain.event.VolumeSuperseded;
 import com.power.posval.app.provider.SpringEntityManagerProvider;
 import com.power.posval.kafka.MarketDataUpdatedConsumer;
 import com.power.posval.kafka.OutboxRelayProducer;
+import com.power.posval.kafka.SettlementPublishedConsumer;
 import com.power.posval.kafka.SettlementRevaluationConsumer;
 import com.power.posval.kafka.TradeCapturedConsumer;
 import com.power.posval.kafka.VolumePublishedConsumer;
@@ -189,6 +191,57 @@ public class KafkaConfig {
         return factory;
     }
 
+    // ── SettlementComputed consumer factory (typed deserializer) ──────
+
+    @Bean
+    public ConsumerFactory<String, SettlementComputed> settlementComputedConsumerFactory(ObjectMapper objectMapper) {
+        Map<String, Object> props = new HashMap<>();
+        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        props.put(ConsumerConfig.GROUP_ID_CONFIG, "pv-rollup-consumer");
+        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
+        props.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, maxPollRecords);
+
+        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ErrorHandlingDeserializer.class);
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ErrorHandlingDeserializer.class);
+        props.put(ErrorHandlingDeserializer.KEY_DESERIALIZER_CLASS, StringDeserializer.class);
+        props.put(ErrorHandlingDeserializer.VALUE_DESERIALIZER_CLASS, JsonDeserializer.class);
+
+        props.put(JsonDeserializer.TRUSTED_PACKAGES, "com.power.posval.domain.event");
+        props.put(JsonDeserializer.VALUE_DEFAULT_TYPE, SettlementComputed.class.getName());
+        props.put(JsonDeserializer.USE_TYPE_INFO_HEADERS, false);
+
+        return new DefaultKafkaConsumerFactory<>(props);
+    }
+
+    @Bean
+    public ConcurrentKafkaListenerContainerFactory<String, SettlementComputed>
+            settlementComputedListenerFactory(
+                    ConsumerFactory<String, SettlementComputed> settlementComputedConsumerFactory,
+                    KafkaTemplate<String, String> kafkaTemplate) {
+
+        var factory = new ConcurrentKafkaListenerContainerFactory<String, SettlementComputed>();
+        factory.setConsumerFactory(settlementComputedConsumerFactory);
+        factory.setConcurrency(concurrency);
+        factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
+
+        ExponentialBackOff backOff = new ExponentialBackOff(1000L, 2.0);
+        backOff.setMaxAttempts(3);
+
+        DeadLetterPublishingRecoverer recoverer =
+                new DeadLetterPublishingRecoverer(kafkaTemplate,
+                        (record, ex) -> new org.apache.kafka.common.TopicPartition(
+                                record.topic() + ".DLQ", record.partition()));
+
+        DefaultErrorHandler errorHandler = new DefaultErrorHandler(recoverer, backOff);
+        errorHandler.addNotRetryableExceptions(
+                org.springframework.kafka.support.serializer.DeserializationException.class);
+
+        factory.setCommonErrorHandler(errorHandler);
+
+        return factory;
+    }
+
     // ── Domain beans ──────────────────────────────────────────────────
 
     @Bean
@@ -205,6 +258,11 @@ public class KafkaConfig {
     @Bean
     public SettlementRevaluationConsumer settlementRevaluationConsumer(Injector injector) {
         return injector.getInstance(SettlementRevaluationConsumer.class);
+    }
+
+    @Bean
+    public SettlementPublishedConsumer settlementPublishedConsumer(Injector injector) {
+        return injector.getInstance(SettlementPublishedConsumer.class);
     }
 
     // ── MarketDataUpdated consumer factory (typed deserializer) ────────

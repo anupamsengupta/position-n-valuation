@@ -151,13 +151,13 @@ class FiveYearTradeIntegrationTest {
             volumeResolver, priceEvaluator, marketData, exprRepo,
             cellRepo, eventPublisher, new DefaultNumericPrecision(), noOpIndex);
 
-        tradeCaptureHandler = new DefaultTradeCaptureHandler(ledgerRepo, eventPublisher);
         var noOpCache = new com.power.posval.domain.port.cache.TradeIntervalCache() {
             @Override public java.util.List<com.power.posval.domain.port.cache.TradeIntervalRecord> getForTradeLeg(
                 String t, String id, java.time.Instant s, java.time.Instant e) { return java.util.List.of(); }
             @Override public void rebuild(String t, String id, java.time.Instant s, java.time.Instant e) {}
             @Override public void writeAll(String t, java.util.List<com.power.posval.domain.port.cache.TradeIntervalRecord> r) {}
         };
+        tradeCaptureHandler = new DefaultTradeCaptureHandler(ledgerRepo, eventPublisher, cellRepo, noOpIndex, noOpCache);
         var cacheRebuilder = new com.power.posval.domain.service.TradeIntervalCacheRebuilder(
             noOpCache, volumeResolver, seriesRepo);
         tradeCapturedConsumer = new TradeCapturedConsumer(

@@ -120,6 +120,21 @@ public class JpaDependencyIndex implements DependencyIndex {
     }
 
     @Override
+    public int deleteByCellPosition(String tenantId, UUID positionId) {
+        return emProvider.get()
+            .createNativeQuery("""
+                DELETE FROM valuation.dependency_edge de
+                USING valuation.settlement_cell sc
+                WHERE de.cell_id = sc.cell_uuid
+                  AND sc.tenant_id = :tenantId
+                  AND sc.position_id = :positionId
+                """)
+            .setParameter("tenantId", tenantId)
+            .setParameter("positionId", positionId)
+            .executeUpdate();
+    }
+
+    @Override
     public void prune(String tenantId, PrunePolicy policy) {
         Instant now = Instant.now();
 

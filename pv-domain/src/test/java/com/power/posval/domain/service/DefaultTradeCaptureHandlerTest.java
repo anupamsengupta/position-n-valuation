@@ -6,7 +6,9 @@ import com.power.posval.domain.model.VolumeUnit;
 import com.power.posval.domain.model.value.DeliveryPeriod;
 import com.power.posval.domain.model.value.SeriesKey;
 import com.power.posval.domain.port.event.DomainEventPublisher;
+import com.power.posval.domain.port.repository.DependencyIndex;
 import com.power.posval.domain.port.repository.PositionLedgerRepository;
+import com.power.posval.domain.port.repository.SettlementCellRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -34,8 +36,27 @@ class DefaultTradeCaptureHandlerTest {
 
         PositionLedgerRepository stubRepo = new StubPositionLedgerRepository(savedEntries);
         DomainEventPublisher stubPublisher = publishedEvents::add;
+        SettlementCellRepository noOpCellRepo = new SettlementCellRepository() {
+            @Override public void save(com.power.posval.domain.model.SettlementCell cell) {}
+            @Override public List<com.power.posval.domain.model.SettlementCell> findByPosition(
+                String t, UUID p, Instant s, Instant e) { return List.of(); }
+        };
+        DependencyIndex noOpDepIndex = new DependencyIndex() {
+            @Override public void upsert(com.power.posval.domain.port.repository.DependencyEdge edge) {}
+            @Override public List<com.power.posval.domain.port.repository.DependencyEdge> findAffectedCells(
+                String t, String k, Instant rs, Instant re, String f) { return List.of(); }
+            @Override public void prune(String t, com.power.posval.domain.service.PrunePolicy p) {}
+        };
 
-        handler = new DefaultTradeCaptureHandler(stubRepo, stubPublisher);
+        com.power.posval.domain.port.cache.TradeIntervalCache noOpCache =
+            new com.power.posval.domain.port.cache.TradeIntervalCache() {
+                @Override public java.util.List<com.power.posval.domain.port.cache.TradeIntervalRecord> getForTradeLeg(
+                    String t, String id, Instant s, Instant e) { return List.of(); }
+                @Override public void rebuild(String t, String id, Instant s, Instant e) {}
+                @Override public void writeAll(String t, java.util.List<com.power.posval.domain.port.cache.TradeIntervalRecord> r) {}
+            };
+
+        handler = new DefaultTradeCaptureHandler(stubRepo, stubPublisher, noOpCellRepo, noOpDepIndex, noOpCache);
     }
 
     @Test

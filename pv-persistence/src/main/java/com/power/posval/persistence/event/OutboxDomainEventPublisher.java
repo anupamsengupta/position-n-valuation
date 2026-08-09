@@ -8,6 +8,8 @@ import jakarta.persistence.EntityManager;
 
 import java.lang.reflect.Method;
 import java.time.Instant;
+import java.util.Collection;
+import java.util.Map;
 import java.util.StringJoiner;
 
 /**
@@ -68,34 +70,63 @@ public class OutboxDomainEventPublisher implements DomainEventPublisher {
 
     /**
      * Serialize event record to JSON using reflection over record components.
-     * Records expose their components via getters matching component names.
+     * Handles nested records, collections, maps, and standard value types.
      */
     private String serializeToJson(Object event) {
-        if (!event.getClass().isRecord()) {
-            return "{\"type\":\"" + event.getClass().getSimpleName() + "\"}";
+        return toJsonValue(event);
+    }
+
+    private String toJsonValue(Object value) {
+        if (value == null) {
+            return "null";
         }
+        if (value instanceof Number n) {
+            return n.toString();
+        }
+        if (value instanceof Boolean b) {
+            return b.toString();
+        }
+        if (value.getClass().isRecord()) {
+            return recordToJson(value);
+        }
+        if (value instanceof Map<?, ?> map) {
+            return mapToJson(map);
+        }
+        if (value instanceof Collection<?> coll) {
+            return collectionToJson(coll);
+        }
+        // String, UUID, Instant, ZonedDateTime, Currency, enums — all quote-wrapped
+        return "\"" + escapeJson(value.toString()) + "\"";
+    }
 
-        var components = event.getClass().getRecordComponents();
+    private String recordToJson(Object record) {
+        var components = record.getClass().getRecordComponents();
         var json = new StringJoiner(",", "{", "}");
-
         for (var component : components) {
             try {
-                Object value = component.getAccessor().invoke(event);
-                String key = "\"" + component.getName() + "\"";
-                if (value == null) {
-                    json.add(key + ":null");
-                } else if (value instanceof Number n) {
-                    json.add(key + ":" + n);
-                } else if (value instanceof Boolean b) {
-                    json.add(key + ":" + b);
-                } else {
-                    json.add(key + ":\"" + escapeJson(value.toString()) + "\"");
-                }
+                Object fieldValue = component.getAccessor().invoke(record);
+                json.add("\"" + component.getName() + "\":" + toJsonValue(fieldValue));
             } catch (Exception ignored) {
                 // Skip inaccessible components
             }
         }
+        return json.toString();
+    }
 
+    private String mapToJson(Map<?, ?> map) {
+        var json = new StringJoiner(",", "{", "}");
+        for (var entry : map.entrySet()) {
+            String key = "\"" + escapeJson(entry.getKey().toString()) + "\"";
+            json.add(key + ":" + toJsonValue(entry.getValue()));
+        }
+        return json.toString();
+    }
+
+    private String collectionToJson(Collection<?> coll) {
+        var json = new StringJoiner(",", "[", "]");
+        for (Object item : coll) {
+            json.add(toJsonValue(item));
+        }
         return json.toString();
     }
 

@@ -158,7 +158,7 @@ public class IntegrationTestWiring {
         var cacheRebuilder = new com.power.posval.domain.service.TradeIntervalCacheRebuilder(
             noOpCache, volumeResolver, tenantNormalizedRepo);
 
-        tradeCaptureHandler = new DefaultTradeCaptureHandler(ledgerRepo, eventPublisher);
+        tradeCaptureHandler = new DefaultTradeCaptureHandler(ledgerRepo, eventPublisher, cellRepo, dependencyIndex, noOpCache);
         tradeCapturedConsumer = new TradeCapturedConsumer(
             ledgerRepo, cellRepo, settlementJob, cacheRebuilder);
     }

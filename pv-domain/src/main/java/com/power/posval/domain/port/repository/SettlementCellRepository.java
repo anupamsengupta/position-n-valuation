@@ -63,6 +63,15 @@ public interface SettlementCellRepository {
         throw new UnsupportedOperationException("findMonthlySummaryByPosition not implemented");
     }
 
+    /**
+     * Delete all settlement cells for a position.
+     * Used during trade supersession to clean up old position's cells.
+     * @return number of cells deleted
+     */
+    default int deleteByPositionId(String tenantId, UUID positionId) {
+        throw new UnsupportedOperationException("deleteByPositionId not implemented");
+    }
+
     /** Check if any settlement cells exist for a given position (idempotency check). */
     default boolean existsByPositionId(String tenantId, UUID positionId) {
         return !findByPosition(tenantId, positionId,

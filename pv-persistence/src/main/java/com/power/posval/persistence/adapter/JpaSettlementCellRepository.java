@@ -45,6 +45,19 @@ public class JpaSettlementCellRepository implements SettlementCellRepository {
     }
 
     @Override
+    public int deleteByPositionId(String tenantId, UUID positionId) {
+        return emProvider.get()
+            .createQuery("""
+                DELETE FROM SettlementCellEntity e
+                WHERE e.tenantId   = :tenantId
+                  AND e.positionId = :positionId
+                """)
+            .setParameter("tenantId", tenantId)
+            .setParameter("positionId", positionId)
+            .executeUpdate();
+    }
+
+    @Override
     public boolean existsByPositionId(String tenantId, UUID positionId) {
         Long count = emProvider.get()
             .createQuery("""

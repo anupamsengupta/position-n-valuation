@@ -4,8 +4,11 @@ import com.power.posval.domain.command.TradeCapture;
 import com.power.posval.domain.event.PositionEntryCaptured;
 import com.power.posval.domain.model.PositionLedgerEntry;
 import com.power.posval.domain.model.value.DeliveryRange;
+import com.power.posval.domain.port.cache.TradeIntervalCache;
 import com.power.posval.domain.port.event.DomainEventPublisher;
+import com.power.posval.domain.port.repository.DependencyIndex;
 import com.power.posval.domain.port.repository.PositionLedgerRepository;
+import com.power.posval.domain.port.repository.SettlementCellRepository;
 
 import jakarta.inject.Inject;
 import java.time.Instant;
@@ -16,19 +19,30 @@ import java.util.UUID;
  * Domain service implementing TradeCapture.
  * Idempotent: duplicate captures for the same (tradeId, tradeLegId, tradeVersion)
  * return existing entries without creating duplicates or re-publishing events.
+ * On supersession (new version), deletes old positions' settlement cells and
+ * dependency edges so the downstream cascade starts clean.
  * Uses port interfaces only — no JPA, no framework.
- * Pattern #16, FR-030, FR-032, S1.
+ * Pattern #16, FR-030, FR-032, FR-037, S1.
  */
 public class DefaultTradeCaptureHandler implements TradeCaptureHandler {
 
     private final PositionLedgerRepository ledgerRepo;
     private final DomainEventPublisher eventPublisher;
+    private final SettlementCellRepository cellRepo;
+    private final DependencyIndex dependencyIndex;
+    private final TradeIntervalCache tradeIntervalCache;
 
     @Inject
     public DefaultTradeCaptureHandler(PositionLedgerRepository ledgerRepo,
-                                       DomainEventPublisher eventPublisher) {
+                                       DomainEventPublisher eventPublisher,
+                                       SettlementCellRepository cellRepo,
+                                       DependencyIndex dependencyIndex,
+                                       TradeIntervalCache tradeIntervalCache) {
         this.ledgerRepo = ledgerRepo;
         this.eventPublisher = eventPublisher;
+        this.cellRepo = cellRepo;
+        this.dependencyIndex = dependencyIndex;
+        this.tradeIntervalCache = tradeIntervalCache;
     }
 
     @Override
@@ -85,6 +99,14 @@ public class DefaultTradeCaptureHandler implements TradeCaptureHandler {
             .toList();
 
         if (!previousVersionEntries.isEmpty()) {
+            // Clean up downstream artifacts from superseded positions
+            for (PositionLedgerEntry old : previousVersionEntries) {
+                dependencyIndex.deleteByCellPosition(cmd.tenantId(), old.id());
+                cellRepo.deleteByPositionId(cmd.tenantId(), old.id());
+                // S6b: purge old entry's cache using its delivery boundaries
+                tradeIntervalCache.rebuild(cmd.tenantId(), old.tradeLegId(),
+                    old.deliveryStart(), old.deliveryEnd());
+            }
             // Bitemporal supersession: close old entries + persist new ones atomically
             ledgerRepo.supersede(previousVersionEntries, entries);
         } else {

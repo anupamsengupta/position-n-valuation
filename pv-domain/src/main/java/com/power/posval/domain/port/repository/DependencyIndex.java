@@ -47,6 +47,16 @@ public interface DependencyIndex {
     }
 
     /**
+     * Delete all dependency edges whose cell_id references a settlement cell
+     * belonging to the given position. Used during trade supersession to clean
+     * up edges from the old position before re-materialization.
+     * @return number of edges deleted
+     */
+    default int deleteByCellPosition(String tenantId, UUID positionId) {
+        throw new UnsupportedOperationException("deleteByCellPosition not implemented");
+    }
+
+    /**
      * Prune edges that are no longer relevant.
      * FR-104: forward-curve edges drop on settlement handover;
      *         settlement-input edges persist until delivery month leaves hot store.
