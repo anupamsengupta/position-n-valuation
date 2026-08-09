@@ -43,6 +43,9 @@ public class TradeIntervalCacheRebuilder {
                                     DeliveryRange fullRange) {
         List<YearMonth> months = toMonths(fullRange);
 
+        // Purge stale entries before rebuilding to prevent duplicate accumulation
+        cache.rebuild(tenantId, ref.tradeLegId(), fullRange);
+
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             var futures = months.stream()
                 .map(month -> executor.submit(() -> {

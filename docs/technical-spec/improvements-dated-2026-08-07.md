@@ -1527,3 +1527,175 @@ The `PositionLedgerRepository` dependency is removed entirely — position IDs c
 | 8 | `MarketDataUpdatedRequest.java` | DTO for market data update trigger |
 | 8 | `VolumeSupersededRequest.java` | DTO for volume superseded trigger |
 | 9 | `MarketDataUpdatedKafkaListener.java` | Spring Kafka listener for market data events |
+| 10 | `VolumePublishedConsumer.java` | S6b initial population consumer (FR-052c) |
+| 10 | `VolumeSupersededKafkaListener.java` | Spring Kafka listener for volume superseded events |
+| 10 | `VolumePublishedKafkaListener.java` | Spring Kafka listener for volume published events |
+
+---
+
+## Enhancement 10: S8 input_series_key Bug Fix, Volume Kafka Listeners & S6b Cache Purge
+
+### 10.1 Problem
+
+Four related issues in the volume event pipeline and S8 dependency index:
+
+1. **S8 dependency index stores `leafId` instead of `series` as `input_series_key`.** `SettlementMaterializationJob.flushResults()` and `SettlementRevaluationService.revalue()` iterated `cell.activeLeaves()` (leaf IDs like `EPEX_DA15_COLLAR`) when upserting `dependency_edge` rows. But `MarketDataUpdatedConsumer.findAffectedPositionIds()` queries by resolved series name (e.g. `EPEX_DA15`). The mismatch meant `findAffectedPositionIds` always returned zero results — market data revaluation was silently broken.
+
+2. **No `VolumeSupersededKafkaListener`.** The `VolumeSupersededConsumer` existed in `pv-kafka` but had no corresponding Spring `@KafkaListener` in `pv-app`. `VolumeSuperseded` events published to Kafka were never consumed — volume-triggered revaluation was dead.
+
+3. **No `VolumePublishedConsumer` (FR-052c).** The functional spec requires S6b initial population when a volume series is first published. Neither the consumer class nor its Spring listener existed.
+
+4. **`TradeIntervalCacheRebuilder.rebuildForTradeLeg()` duplicates on re-run.** The method called `cache.writeAll()` without first calling `cache.rebuild()` (purge). On repeated VolumeSuperseded events, stale interval records accumulated instead of being replaced.
+
+### 10.2 Fix 1: S8 input_series_key — use series name, not leafId
+
+**Root cause:** `cell.activeLeaves()` returns leaf IDs (the price expression tree leaf node identifiers), not the resolved market data series names. `cell.inputVersionSet()` is a `Map<String, Long>` keyed by the resolved series name (e.g. `EPEX_DA15`, `HICP-DE`) — exactly what `MarketDataUpdatedConsumer` queries with.
+
+**Change:** In both `SettlementMaterializationJob.flushResults()` and `SettlementRevaluationService.revalue()`, the S8 upsert loop now iterates `cell.inputVersionSet().keySet()` instead of `cell.activeLeaves()`:
+
+```java
+// BEFORE (broken):
+for (String leaf : cell.activeLeaves()) {
+    dependencyIndex.upsert(new DependencyEdge(
+        ..., leaf, "PRICE_LEAF", ...));
+}
+
+// AFTER (correct):
+for (String seriesKey : cell.inputVersionSet().keySet()) {
+    dependencyIndex.upsert(new DependencyEdge(
+        ..., seriesKey, "PRICE_LEAF", ...));
+}
+```
+
+This ensures `dependency_edge.input_series_key` contains `EPEX_DA15` (matching the `MarketDataUpdated.series()` field) rather than `EPEX_DA15_COLLAR` (a leaf ID that nothing queries by).
+
+### 10.3 Fix 2: VolumeSupersededKafkaListener (simulator-scope, pv-app)
+
+**New file:** `pv-app/.../kafka/VolumeSupersededKafkaListener.java`
+
+Follows the established `MarketDataUpdatedKafkaListener` pattern:
+
+```java
+@KafkaListener(
+    topics = "posval.VolumeSuperseded",
+    containerFactory = "volumeSupersededListenerFactory"
+)
+public void onVolumeSuperseded(ConsumerRecord<String, VolumeSuperseded> record,
+                                Acknowledgment ack) {
+    VolumeSuperseded event = record.value();
+    try {
+        tenantContext.setTenant("default"); // D-14: simulator-scope
+        txExecutor.run(() -> volumeSupersededConsumer.handle(event));
+        ack.acknowledge();
+    } finally {
+        tenantContext.clear();
+    }
+}
+```
+
+**Tenant handling:** `VolumeSuperseded` has no `tenantId` field. The simulator uses `"default"` (D-14). The consumer derives real tenant IDs from position entries found via `findCurrentByVolumeSeriesKeyAndDeliveryRange`.
+
+**Spring Kafka wiring in `KafkaConfig.java`:**
+
+| Bean | Purpose |
+|------|---------|
+| `ConsumerFactory<String, VolumeSuperseded> volumeSupersededConsumerFactory` | Consumer group `pv-volume-superseded-consumer`, typed `JsonDeserializer` |
+| `ConcurrentKafkaListenerContainerFactory volumeSupersededListenerFactory` | `MANUAL_IMMEDIATE` ack, exponential backoff (1s → 2s → 4s, max 3), DLQ |
+| `VolumeSupersededConsumer volumeSupersededConsumer` | Bean with 4 constructor args: `CacheInvalidationHandler`, `TradeIntervalCacheRebuilder`, `PositionLedgerRepository`, `DomainEventPublisher` |
+
+### 10.4 Fix 3: VolumePublishedConsumer + Listener (FR-052c)
+
+**New consumer:** `pv-kafka/.../VolumePublishedConsumer.java`
+
+Extends `IdempotentConsumer<VolumePublished>`. FR-052c initial population logic:
+
+1. Find positions by `seriesKey` + delivery range overlap via `ledgerRepo.findCurrentByVolumeSeriesKeyAndDeliveryRange()`
+2. For each affected position, build `VolumeReference` and call `cacheRebuilder.rebuildForTradeLeg()`
+3. No revaluation events published — this is initial population, not a data change
+
+```java
+@Override
+protected void process(VolumePublished event) {
+    var deliveryRange = event.deliveryRange();
+    List<PositionLedgerEntry> affected =
+        ledgerRepo.findCurrentByVolumeSeriesKeyAndDeliveryRange(
+            event.seriesKey().value(),
+            deliveryRange.start().toInstant(),
+            deliveryRange.end().toInstant());
+
+    for (PositionLedgerEntry pos : affected) {
+        VolumeReference ref = VolumeReference.builder()
+            .tradeLegId(pos.tradeLegId())
+            .tenantId(pos.tenantId())
+            .multiplier(pos.multiplier())
+            .volumeSeriesKey(pos.volumeSeriesKey())
+            // ... other fields
+            .build();
+        cacheRebuilder.rebuildForTradeLeg(pos.tenantId(), ref, pos.deliveryRange());
+    }
+}
+```
+
+**New listener:** `pv-app/.../kafka/VolumePublishedKafkaListener.java` — same pattern as `VolumeSupersededKafkaListener`.
+
+**Guice binding:** `KafkaModule` — `bind(VolumePublishedConsumer.class).in(Singleton.class)`
+
+**Spring Kafka wiring in `KafkaConfig.java`:**
+
+| Bean | Purpose |
+|------|---------|
+| `ConsumerFactory<String, VolumePublished> volumePublishedConsumerFactory` | Consumer group `pv-volume-published-consumer`, typed `JsonDeserializer` |
+| `ConcurrentKafkaListenerContainerFactory volumePublishedListenerFactory` | `MANUAL_IMMEDIATE` ack, exponential backoff, DLQ |
+| `VolumePublishedConsumer volumePublishedConsumer` | Bean with 2 constructor args: `PositionLedgerRepository`, `TradeIntervalCacheRebuilder` |
+
+### 10.5 Fix 4: Purge Before Write in TradeIntervalCacheRebuilder
+
+**Root cause:** `rebuildForTradeLeg()` wrote new interval records via `cache.writeAll()` but never purged existing entries first. On repeated `VolumeSuperseded` events for the same trade-leg, duplicate rows accumulated.
+
+**Change:** Added `cache.rebuild(tenantId, ref.tradeLegId(), fullRange)` at the start of `rebuildForTradeLeg()`, before the parallel `writeAll()` loop:
+
+```java
+public void rebuildForTradeLeg(String tenantId,
+                                VolumeReference ref,
+                                DeliveryRange fullRange) {
+    List<YearMonth> months = toMonths(fullRange);
+
+    // Purge stale entries before rebuilding to prevent duplicate accumulation
+    cache.rebuild(tenantId, ref.tradeLegId(), fullRange);
+
+    try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+        // ... parallel writeAll per month (unchanged)
+    }
+}
+```
+
+This ensures the S6b cache is always a clean re-derive from source, consistent with D-7 (re-derive-from-source idempotency).
+
+### 10.6 Kafka Topic Reference Update
+
+| Topic | Event Type | Producer | Consumer | Partition Key |
+|-------|-----------|----------|----------|---------------|
+| `posval.VolumeSuperseded` | Volume series updated | `OutboxRelayProducer` | `VolumeSupersededKafkaListener` | `tenantId` |
+| `posval.VolumePublished` | Volume series first published | `OutboxRelayProducer` | `VolumePublishedKafkaListener` | `tenantId` |
+
+### 10.7 Files
+
+| Module | File | Action |
+|--------|------|--------|
+| pv-domain | `service/SettlementMaterializationJob.java` | Fix: `activeLeaves()` → `inputVersionSet().keySet()` in S8 upsert |
+| pv-domain | `service/SettlementRevaluationService.java` | Fix: same |
+| pv-domain | `service/TradeIntervalCacheRebuilder.java` | Fix: call `cache.rebuild()` before `writeAll()` |
+| pv-kafka | `VolumePublishedConsumer.java` | **New** — S6b initial population consumer (FR-052c) |
+| pv-guice | `KafkaModule.java` | Modified — added `VolumePublishedConsumer` binding |
+| pv-app | `kafka/VolumeSupersededKafkaListener.java` | **New** — Spring listener for VolumeSuperseded |
+| pv-app | `kafka/VolumePublishedKafkaListener.java` | **New** — Spring listener for VolumePublished |
+| pv-app | `config/KafkaConfig.java` | Modified — 2 consumer factories, 2 listener factories, 3 beans |
+
+### 10.8 Constraints Referenced
+
+- **D-7:** Re-derive-from-source idempotency — S6b rebuild is idempotent via purge-then-write
+- **D-13:** No Spring imports in library modules — `VolumePublishedConsumer` uses only `@jakarta.inject`
+- **D-14:** Simulator-scope patterns (`"default"` tenant) only in `pv-app` listeners
+- **FR-052c:** S6b initial population on VolumePublished
+- **FR-086b:** S6b rebuild triggered by VolumeSuperseded
+- **FR-103:** S8 blast-radius optimization — `input_series_key` must match `MarketDataUpdated.series()`

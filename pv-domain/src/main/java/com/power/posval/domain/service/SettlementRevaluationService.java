@@ -126,10 +126,10 @@ public class SettlementRevaluationService {
                 YearMonth.from(ZonedDateTime.ofInstant(cell.intervalStart(),
                     position.deliveryRange().deliveryTimezone())),
                 position.deliveryRange().deliveryTimezone());
-            for (String leaf : cell.activeLeaves()) {
+            for (String seriesKey : cell.inputVersionSet().keySet()) {
                 dependencyIndex.upsert(new DependencyEdge(
                     position.tenantId(), cell.cellId(), "SETTLEMENT",
-                    leaf, "PRICE_LEAF", cellRange,
+                    seriesKey, "PRICE_LEAF", cellRange,
                     cell.activeLeaves(), now, null));
             }
         }

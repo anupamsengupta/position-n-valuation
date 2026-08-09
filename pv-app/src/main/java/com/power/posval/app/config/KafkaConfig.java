@@ -4,18 +4,24 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.power.posval.domain.event.MarketDataUpdated;
 import com.power.posval.domain.event.PositionEntryCaptured;
 import com.power.posval.domain.event.SettlementRevaluationRequested;
+import com.power.posval.domain.event.VolumePublished;
+import com.power.posval.domain.event.VolumeSuperseded;
 import com.power.posval.domain.port.cache.MarketDataCache;
 import com.power.posval.domain.port.event.DomainEventPublisher;
 import com.power.posval.domain.port.repository.DependencyIndex;
 import com.power.posval.domain.port.repository.PositionLedgerRepository;
 import com.power.posval.domain.port.repository.SettlementCellRepository;
+import com.power.posval.domain.service.CacheInvalidationHandler;
 import com.power.posval.domain.service.SettlementMaterializationJob;
 import com.power.posval.domain.service.SettlementRevaluationService;
+import com.power.posval.domain.service.TradeIntervalCacheRebuilder;
 import com.power.posval.app.provider.SpringEntityManagerProvider;
 import com.power.posval.kafka.MarketDataUpdatedConsumer;
 import com.power.posval.kafka.OutboxRelayProducer;
 import com.power.posval.kafka.SettlementRevaluationConsumer;
 import com.power.posval.kafka.TradeCapturedConsumer;
+import com.power.posval.kafka.VolumePublishedConsumer;
+import com.power.posval.kafka.VolumeSupersededConsumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
@@ -270,5 +276,123 @@ public class KafkaConfig {
             DependencyIndex dependencyIndex,
             DomainEventPublisher eventPublisher) {
         return new MarketDataUpdatedConsumer(cache, dependencyIndex, eventPublisher);
+    }
+
+    // ── VolumeSuperseded consumer factory (typed deserializer) ────────
+
+    @Bean
+    public ConsumerFactory<String, VolumeSuperseded> volumeSupersededConsumerFactory(ObjectMapper objectMapper) {
+        Map<String, Object> props = new HashMap<>();
+        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        props.put(ConsumerConfig.GROUP_ID_CONFIG, "pv-volume-superseded-consumer");
+        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
+        props.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, maxPollRecords);
+
+        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ErrorHandlingDeserializer.class);
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ErrorHandlingDeserializer.class);
+        props.put(ErrorHandlingDeserializer.KEY_DESERIALIZER_CLASS, StringDeserializer.class);
+        props.put(ErrorHandlingDeserializer.VALUE_DESERIALIZER_CLASS, JsonDeserializer.class);
+
+        props.put(JsonDeserializer.TRUSTED_PACKAGES, "com.power.posval.domain.event");
+        props.put(JsonDeserializer.VALUE_DEFAULT_TYPE, VolumeSuperseded.class.getName());
+        props.put(JsonDeserializer.USE_TYPE_INFO_HEADERS, false);
+
+        return new DefaultKafkaConsumerFactory<>(props);
+    }
+
+    @Bean
+    public ConcurrentKafkaListenerContainerFactory<String, VolumeSuperseded>
+            volumeSupersededListenerFactory(
+                    ConsumerFactory<String, VolumeSuperseded> volumeSupersededConsumerFactory,
+                    KafkaTemplate<String, String> kafkaTemplate) {
+
+        var factory = new ConcurrentKafkaListenerContainerFactory<String, VolumeSuperseded>();
+        factory.setConsumerFactory(volumeSupersededConsumerFactory);
+        factory.setConcurrency(concurrency);
+        factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
+
+        ExponentialBackOff backOff = new ExponentialBackOff(1000L, 2.0);
+        backOff.setMaxAttempts(3);
+
+        DeadLetterPublishingRecoverer recoverer =
+                new DeadLetterPublishingRecoverer(kafkaTemplate,
+                        (record, ex) -> new org.apache.kafka.common.TopicPartition(
+                                record.topic() + ".DLQ", record.partition()));
+
+        DefaultErrorHandler errorHandler = new DefaultErrorHandler(recoverer, backOff);
+        errorHandler.addNotRetryableExceptions(
+                org.springframework.kafka.support.serializer.DeserializationException.class);
+
+        factory.setCommonErrorHandler(errorHandler);
+
+        return factory;
+    }
+
+    @Bean
+    public VolumeSupersededConsumer volumeSupersededConsumer(
+            CacheInvalidationHandler cacheInvalidator,
+            TradeIntervalCacheRebuilder cacheRebuilder,
+            PositionLedgerRepository ledgerRepo,
+            DomainEventPublisher eventPublisher) {
+        return new VolumeSupersededConsumer(cacheInvalidator, cacheRebuilder, ledgerRepo, eventPublisher);
+    }
+
+    // ── VolumePublished consumer factory (typed deserializer) ─────────
+
+    @Bean
+    public ConsumerFactory<String, VolumePublished> volumePublishedConsumerFactory(ObjectMapper objectMapper) {
+        Map<String, Object> props = new HashMap<>();
+        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        props.put(ConsumerConfig.GROUP_ID_CONFIG, "pv-volume-published-consumer");
+        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
+        props.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, maxPollRecords);
+
+        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ErrorHandlingDeserializer.class);
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ErrorHandlingDeserializer.class);
+        props.put(ErrorHandlingDeserializer.KEY_DESERIALIZER_CLASS, StringDeserializer.class);
+        props.put(ErrorHandlingDeserializer.VALUE_DESERIALIZER_CLASS, JsonDeserializer.class);
+
+        props.put(JsonDeserializer.TRUSTED_PACKAGES, "com.power.posval.domain.event");
+        props.put(JsonDeserializer.VALUE_DEFAULT_TYPE, VolumePublished.class.getName());
+        props.put(JsonDeserializer.USE_TYPE_INFO_HEADERS, false);
+
+        return new DefaultKafkaConsumerFactory<>(props);
+    }
+
+    @Bean
+    public ConcurrentKafkaListenerContainerFactory<String, VolumePublished>
+            volumePublishedListenerFactory(
+                    ConsumerFactory<String, VolumePublished> volumePublishedConsumerFactory,
+                    KafkaTemplate<String, String> kafkaTemplate) {
+
+        var factory = new ConcurrentKafkaListenerContainerFactory<String, VolumePublished>();
+        factory.setConsumerFactory(volumePublishedConsumerFactory);
+        factory.setConcurrency(concurrency);
+        factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
+
+        ExponentialBackOff backOff = new ExponentialBackOff(1000L, 2.0);
+        backOff.setMaxAttempts(3);
+
+        DeadLetterPublishingRecoverer recoverer =
+                new DeadLetterPublishingRecoverer(kafkaTemplate,
+                        (record, ex) -> new org.apache.kafka.common.TopicPartition(
+                                record.topic() + ".DLQ", record.partition()));
+
+        DefaultErrorHandler errorHandler = new DefaultErrorHandler(recoverer, backOff);
+        errorHandler.addNotRetryableExceptions(
+                org.springframework.kafka.support.serializer.DeserializationException.class);
+
+        factory.setCommonErrorHandler(errorHandler);
+
+        return factory;
+    }
+
+    @Bean
+    public VolumePublishedConsumer volumePublishedConsumer(
+            PositionLedgerRepository ledgerRepo,
+            TradeIntervalCacheRebuilder cacheRebuilder) {
+        return new VolumePublishedConsumer(ledgerRepo, cacheRebuilder);
     }
 }
