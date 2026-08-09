@@ -1,7 +1,5 @@
 package com.power.posval.domain.port.cache;
 
-import com.power.posval.domain.model.value.DeliveryRange;
-
 import java.time.Instant;
 import java.util.List;
 
@@ -18,10 +16,10 @@ public interface TradeIntervalCache {
                                               Instant rangeStart, Instant rangeEnd);
 
     /**
-     * Rebuild cache entries for affected trade-leg × interval range.
+     * Purge cache entries for a trade-leg within [rangeStart, rangeEnd).
      * FR-086b: triggered by VolumeSuperseded, VolumeReference change, trade amendment.
      */
-    void rebuild(String tenantId, String tradeLegId, DeliveryRange affectedRange);
+    void rebuild(String tenantId, String tradeLegId, Instant rangeStart, Instant rangeEnd);
 
     /** Bulk write pre-multiplied entries. */
     void writeAll(String tenantId, List<TradeIntervalRecord> records);

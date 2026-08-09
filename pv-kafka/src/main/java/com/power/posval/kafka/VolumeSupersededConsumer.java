@@ -80,7 +80,8 @@ public class VolumeSupersededConsumer extends IdempotentConsumer<VolumeSupersede
                 .effectiveTo(ZonedDateTime.ofInstant(
                     pos.deliveryEnd(), pos.deliveryRange().deliveryTimezone()))
                 .build();
-            cacheRebuilder.rebuildForTradeLeg(pos.tenantId(), ref, affectedDeliveryRange);
+            cacheRebuilder.rebuildForTradeLeg(pos.tenantId(), ref,
+                rangeStart, rangeEnd, affectedDeliveryRange);
         }
 
         // 3. Publish revaluation requests

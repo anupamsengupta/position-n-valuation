@@ -1,6 +1,5 @@
 package com.power.posval.persistence.adapter;
 
-import com.power.posval.domain.model.value.DeliveryRange;
 import com.power.posval.domain.port.cache.TradeIntervalCache;
 import com.power.posval.domain.port.cache.TradeIntervalRecord;
 import com.power.posval.persistence.batch.BatchWriter;
@@ -51,10 +50,8 @@ public class JpaTradeIntervalCache implements TradeIntervalCache {
     }
 
     @Override
-    public void rebuild(String tenantId, String tradeLegId, DeliveryRange affectedRange) {
+    public void rebuild(String tenantId, String tradeLegId, Instant rangeStart, Instant rangeEnd) {
         EntityManager em = emProvider.get();
-        Instant start = affectedRange.startInstant().toInstant();
-        Instant end = affectedRange.endInstant().toInstant();
 
         // Delete existing cache entries for affected range
         em.createQuery("""
@@ -66,8 +63,8 @@ public class JpaTradeIntervalCache implements TradeIntervalCache {
             """)
             .setParameter("tenantId", tenantId)
             .setParameter("tradeLegId", tradeLegId)
-            .setParameter("start", start)
-            .setParameter("end", end)
+            .setParameter("start", rangeStart)
+            .setParameter("end", rangeEnd)
             .executeUpdate();
     }
 

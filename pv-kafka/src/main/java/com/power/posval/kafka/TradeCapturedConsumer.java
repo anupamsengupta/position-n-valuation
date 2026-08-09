@@ -68,6 +68,7 @@ public class TradeCapturedConsumer extends IdempotentConsumer<PositionEntryCaptu
             .effectiveTo(ZonedDateTime.ofInstant(
                 entry.deliveryEnd(), entry.deliveryRange().deliveryTimezone()))
             .build();
-        cacheRebuilder.rebuildForTradeLeg(entry.tenantId(), ref, entry.deliveryRange());
+        cacheRebuilder.rebuildForTradeLeg(entry.tenantId(), ref,
+            entry.deliveryStart(), entry.deliveryEnd(), entry.deliveryRange());
     }
 }

@@ -75,7 +75,9 @@ public class VolumePublishedConsumer extends IdempotentConsumer<VolumePublished>
                     pos.deliveryEnd(), pos.deliveryRange().deliveryTimezone()))
                 .build();
 
-            cacheRebuilder.rebuildForTradeLeg(pos.tenantId(), ref, publishedRange);
+            cacheRebuilder.rebuildForTradeLeg(pos.tenantId(), ref,
+                deliveryRange.start().toInstant(), deliveryRange.end().toInstant(),
+                publishedRange);
         }
     }
 }
