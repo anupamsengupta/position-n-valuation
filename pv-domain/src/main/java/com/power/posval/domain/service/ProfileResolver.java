@@ -31,7 +31,7 @@ public record ProfileResolver(
                                        Instant rangeEnd,
                                        ResolutionPurpose purpose) {
         var seriesOpt = seriesRepo.findCurrentBySeriesKeyAndRange(
-            ref.tradeId(), ref.volumeSeriesKey().value(),
+            ref.tenantId(), ref.volumeSeriesKey().value(),
             rangeStart, rangeEnd);
         if (seriesOpt.isEmpty()) {
             return List.of();

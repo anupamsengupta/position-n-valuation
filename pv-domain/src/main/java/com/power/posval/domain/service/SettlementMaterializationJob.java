@@ -17,7 +17,6 @@ import com.power.posval.domain.port.repository.SettlementCellRepository;
 
 import java.math.BigDecimal;
 import java.time.Instant;
-import java.time.YearMonth;
 import java.time.ZonedDateTime;
 import java.util.*;
 
@@ -135,17 +134,14 @@ public class SettlementMaterializationJob extends AbstractMaterializationJob<Set
     protected void flushResults(PositionLedgerEntry position, List<SettlementCell> cells) {
         cellRepo.saveAll(cells);
 
-        // S8: upsert dependency edges for blast-radius optimization (FR-102–104)
+        // S8: upsert dependency edges at cell interval precision (FR-102–104)
         Instant now = Instant.now();
         for (SettlementCell cell : cells) {
-            DeliveryRange cellRange = DeliveryRange.ofMonth(
-                YearMonth.from(ZonedDateTime.ofInstant(cell.intervalStart(),
-                    position.deliveryRange().deliveryTimezone())),
-                position.deliveryRange().deliveryTimezone());
             for (String seriesKey : cell.inputVersionSet().keySet()) {
                 dependencyIndex.upsert(new DependencyEdge(
                     position.tenantId(), cell.cellId(), "SETTLEMENT",
-                    seriesKey, "PRICE_LEAF", cellRange,
+                    seriesKey, "PRICE_LEAF",
+                    cell.intervalStart(), cell.intervalEnd(),
                     cell.activeLeaves(), now, null));
             }
         }
@@ -178,10 +174,9 @@ public class SettlementMaterializationJob extends AbstractMaterializationJob<Set
             .multiplier(position.multiplier())
             .volumeSeriesKey(position.volumeSeriesKey())
             .effectiveFrom(ZonedDateTime.ofInstant(
-                position.validFrom(), position.deliveryRange().deliveryTimezone()))
+                position.deliveryStart(), position.deliveryRange().deliveryTimezone()))
             .effectiveTo(ZonedDateTime.ofInstant(
-                position.deliveryRange().endInstant().toInstant(),
-                position.deliveryRange().deliveryTimezone()))
+                position.deliveryEnd(), position.deliveryRange().deliveryTimezone()))
             .build();
     }
 }

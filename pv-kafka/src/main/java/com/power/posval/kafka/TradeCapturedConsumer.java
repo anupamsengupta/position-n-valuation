@@ -64,10 +64,9 @@ public class TradeCapturedConsumer extends IdempotentConsumer<PositionEntryCaptu
             .multiplier(entry.multiplier())
             .volumeSeriesKey(entry.volumeSeriesKey())
             .effectiveFrom(ZonedDateTime.ofInstant(
-                entry.validFrom(), entry.deliveryRange().deliveryTimezone()))
+                entry.deliveryStart(), entry.deliveryRange().deliveryTimezone()))
             .effectiveTo(ZonedDateTime.ofInstant(
-                entry.deliveryRange().endInstant().toInstant(),
-                entry.deliveryRange().deliveryTimezone()))
+                entry.deliveryEnd(), entry.deliveryRange().deliveryTimezone()))
             .build();
         cacheRebuilder.rebuildForTradeLeg(entry.tenantId(), ref, entry.deliveryRange());
     }

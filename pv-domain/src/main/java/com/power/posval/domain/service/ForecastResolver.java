@@ -43,7 +43,7 @@ public record ForecastResolver(
                                                     Instant rangeStart,
                                                     Instant rangeEnd) {
         var seriesOpt = seriesRepo.findCurrentBySeriesKeyAndRange(
-            ref.tradeId(), ref.volumeSeriesKey().value(),
+            ref.tenantId(), ref.volumeSeriesKey().value(),
             rangeStart, rangeEnd);
         if (seriesOpt.isEmpty()) {
             return List.of();
@@ -58,7 +58,7 @@ public record ForecastResolver(
                                                    Instant rangeStart,
                                                    Instant rangeEnd) {
         var seriesOpt = meteredRepo.findCurrentBySeriesKey(
-            ref.tradeId(), ref.meteredSeriesKey());
+            ref.tenantId(), ref.meteredSeriesKey());
         if (seriesOpt.isEmpty()) {
             return List.of();
         }

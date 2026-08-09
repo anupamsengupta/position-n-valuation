@@ -1,6 +1,5 @@
 package com.power.posval.persistence.adapter;
 
-import com.power.posval.domain.model.value.DeliveryRange;
 import com.power.posval.domain.port.repository.DependencyEdge;
 import com.power.posval.domain.port.repository.DependencyIndex;
 import com.power.posval.domain.service.PrunePolicy;
@@ -49,8 +48,8 @@ public class JpaDependencyIndex implements DependencyIndex {
             .setParameter("cellType", edge.cellType())
             .setParameter("inputSeriesKey", edge.inputSeriesKey())
             .setParameter("inputType", edge.inputType())
-            .setParameter("rangeStart", edge.affectedRange().startInstant().toInstant())
-            .setParameter("rangeEnd", edge.affectedRange().endInstant().toInstant())
+            .setParameter("rangeStart", edge.affectedRangeStart())
+            .setParameter("rangeEnd", edge.affectedRangeEnd())
             .setParameter("activeLeaves", toJsonArray(edge.activeLeaves()))
             .setParameter("createdAt", edge.createdAt())
             .executeUpdate();
@@ -60,7 +59,8 @@ public class JpaDependencyIndex implements DependencyIndex {
     @SuppressWarnings("unchecked")
     public List<DependencyEdge> findAffectedCells(String tenantId,
                                                     String inputSeriesKey,
-                                                    DeliveryRange affectedRange,
+                                                    Instant rangeStart,
+                                                    Instant rangeEnd,
                                                     String activeLeafFilter) {
         String sql = """
             SELECT tenant_id, cell_id, cell_type, input_series_key, input_type,
@@ -81,15 +81,15 @@ public class JpaDependencyIndex implements DependencyIndex {
         var query = emProvider.get().createNativeQuery(sql)
             .setParameter("tenantId", tenantId)
             .setParameter("inputSeriesKey", inputSeriesKey)
-            .setParameter("rangeStart", affectedRange.startInstant().toInstant())
-            .setParameter("rangeEnd", affectedRange.endInstant().toInstant());
+            .setParameter("rangeStart", rangeStart)
+            .setParameter("rangeEnd", rangeEnd);
 
         if (activeLeafFilter != null) {
             query.setParameter("leafFilter", "[\"" + activeLeafFilter + "\"]");
         }
 
         return query.getResultList().stream()
-            .map(row -> mapToEdge((Object[]) row, affectedRange))
+            .map(row -> mapToEdge((Object[]) row))
             .toList();
     }
 
@@ -188,14 +188,15 @@ public class JpaDependencyIndex implements DependencyIndex {
         return Set.copyOf(result);
     }
 
-    private DependencyEdge mapToEdge(Object[] row, DeliveryRange range) {
+    private DependencyEdge mapToEdge(Object[] row) {
         return new DependencyEdge(
             (String) row[0],                                                // tenantId
             java.util.UUID.fromString(row[1].toString()),                   // cellId (UUID)
             (String) row[2],                                                // cellType
             (String) row[3],                                                // inputSeriesKey
             (String) row[4],                                                // inputType
-            range,                                                          // affectedRange
+            ((java.sql.Timestamp) row[5]).toInstant(),                      // affectedRangeStart
+            ((java.sql.Timestamp) row[6]).toInstant(),                      // affectedRangeEnd
             parseJsonArray(row[7] != null ? row[7].toString() : "[]"),     // activeLeaves
             ((java.sql.Timestamp) row[8]).toInstant(),                      // createdAt
             row[9] != null ? ((java.sql.Timestamp) row[9]).toInstant() : null); // prunedAt

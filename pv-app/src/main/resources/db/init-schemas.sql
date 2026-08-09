@@ -269,7 +269,7 @@ CREATE TABLE IF NOT EXISTS volume_series.trade_interval_cache (
     interval_end     TIMESTAMPTZ     NOT NULL,
     resolved_qty     NUMERIC(15, 8)  NOT NULL,
     resolved_energy  NUMERIC(18, 8)  NOT NULL,
-    multiplier       NUMERIC(8, 8)   NOT NULL,
+    multiplier       NUMERIC(15, 8)  NOT NULL,
     series_key       VARCHAR(128)    NOT NULL,
     version_hash     VARCHAR(64)     NOT NULL,
     created_at       TIMESTAMPTZ     NOT NULL,

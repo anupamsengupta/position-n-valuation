@@ -4,6 +4,7 @@ import com.power.posval.domain.event.SettlementRevaluationRequested;
 import com.power.posval.domain.event.VolumeSuperseded;
 import com.power.posval.domain.model.PositionLedgerEntry;
 import com.power.posval.domain.model.value.DeliveryPeriod;
+import com.power.posval.domain.model.value.DeliveryRange;
 import com.power.posval.domain.model.value.VolumeReference;
 import com.power.posval.domain.port.event.DomainEventPublisher;
 import com.power.posval.domain.port.repository.PositionLedgerRepository;
@@ -12,6 +13,7 @@ import com.power.posval.domain.service.TradeIntervalCacheRebuilder;
 import jakarta.inject.Inject;
 
 import java.time.Instant;
+import java.time.YearMonth;
 import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -60,7 +62,11 @@ public class VolumeSupersededConsumer extends IdempotentConsumer<VolumeSupersede
             ledgerRepo.findCurrentByVolumeSeriesKeyAndDeliveryRange(
                 event.seriesKey().value(), rangeStart, rangeEnd);
 
-        // 2b. S6b: rebuild trade interval cache for each affected position (FR-086b)
+        // 2b. S6b: rebuild trade interval cache scoped to affected range only (FR-086b)
+        DeliveryRange affectedDeliveryRange = new DeliveryRange(
+            YearMonth.from(affectedRange.start()),
+            YearMonth.from(affectedRange.end().minusNanos(1)),
+            affectedRange.deliveryTimezone());
         for (PositionLedgerEntry pos : affected) {
             VolumeReference ref = VolumeReference.builder()
                 .id(UUID.randomUUID())
@@ -70,12 +76,11 @@ public class VolumeSupersededConsumer extends IdempotentConsumer<VolumeSupersede
                 .multiplier(pos.multiplier())
                 .volumeSeriesKey(pos.volumeSeriesKey())
                 .effectiveFrom(ZonedDateTime.ofInstant(
-                    pos.validFrom(), pos.deliveryRange().deliveryTimezone()))
+                    pos.deliveryStart(), pos.deliveryRange().deliveryTimezone()))
                 .effectiveTo(ZonedDateTime.ofInstant(
-                    pos.deliveryRange().endInstant().toInstant(),
-                    pos.deliveryRange().deliveryTimezone()))
+                    pos.deliveryEnd(), pos.deliveryRange().deliveryTimezone()))
                 .build();
-            cacheRebuilder.rebuildForTradeLeg(pos.tenantId(), ref, pos.deliveryRange());
+            cacheRebuilder.rebuildForTradeLeg(pos.tenantId(), ref, affectedDeliveryRange);
         }
 
         // 3. Publish revaluation requests

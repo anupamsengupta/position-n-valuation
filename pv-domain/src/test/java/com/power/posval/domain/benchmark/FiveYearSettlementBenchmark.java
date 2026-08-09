@@ -186,7 +186,7 @@ public class FiveYearSettlementBenchmark {
             new com.power.posval.domain.port.repository.DependencyIndex() {
                 @Override public void upsert(com.power.posval.domain.port.repository.DependencyEdge edge) {}
                 @Override public java.util.List<com.power.posval.domain.port.repository.DependencyEdge> findAffectedCells(
-                    String t, String k, com.power.posval.domain.model.value.DeliveryRange r, String f) { return List.of(); }
+                    String t, String k, java.time.Instant rs, java.time.Instant re, String f) { return List.of(); }
                 @Override public void prune(String t, com.power.posval.domain.service.PrunePolicy p) {}
             };
         settlementJob = new SettlementMaterializationJob(

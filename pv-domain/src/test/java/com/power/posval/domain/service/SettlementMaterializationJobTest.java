@@ -30,7 +30,7 @@ class SettlementMaterializationJobTest {
     private static final DependencyIndex NO_OP_INDEX = new DependencyIndex() {
         @Override public void upsert(DependencyEdge edge) {}
         @Override public java.util.List<DependencyEdge> findAffectedCells(
-            String t, String k, DeliveryRange r, String f) { return java.util.List.of(); }
+            String t, String k, java.time.Instant rs, java.time.Instant re, String f) { return java.util.List.of(); }
         @Override public void prune(String t, com.power.posval.domain.service.PrunePolicy p) {}
     };
 

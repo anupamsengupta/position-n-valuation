@@ -2,6 +2,7 @@ package com.power.posval.kafka;
 
 import com.power.posval.domain.event.VolumePublished;
 import com.power.posval.domain.model.PositionLedgerEntry;
+import com.power.posval.domain.model.value.DeliveryRange;
 import com.power.posval.domain.model.value.VolumeReference;
 import com.power.posval.domain.port.repository.PositionLedgerRepository;
 import com.power.posval.domain.service.TradeIntervalCacheRebuilder;
@@ -9,6 +10,7 @@ import jakarta.inject.Inject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.YearMonth;
 import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -54,7 +56,11 @@ public class VolumePublishedConsumer extends IdempotentConsumer<VolumePublished>
         log.info("VolumePublished series={} range=[{}, {}): {} affected positions for S6b population",
             event.seriesKey(), deliveryRange.start(), deliveryRange.end(), affected.size());
 
-        // Rebuild S6b trade interval cache for each affected position
+        // Rebuild S6b scoped to the published range, not the full position delivery range
+        DeliveryRange publishedRange = new DeliveryRange(
+            YearMonth.from(deliveryRange.start()),
+            YearMonth.from(deliveryRange.end().minusNanos(1)),
+            deliveryRange.deliveryTimezone());
         for (PositionLedgerEntry pos : affected) {
             VolumeReference ref = VolumeReference.builder()
                 .id(UUID.randomUUID())
@@ -64,13 +70,12 @@ public class VolumePublishedConsumer extends IdempotentConsumer<VolumePublished>
                 .multiplier(pos.multiplier())
                 .volumeSeriesKey(pos.volumeSeriesKey())
                 .effectiveFrom(ZonedDateTime.ofInstant(
-                    pos.validFrom(), pos.deliveryRange().deliveryTimezone()))
+                    pos.deliveryStart(), pos.deliveryRange().deliveryTimezone()))
                 .effectiveTo(ZonedDateTime.ofInstant(
-                    pos.deliveryRange().endInstant().toInstant(),
-                    pos.deliveryRange().deliveryTimezone()))
+                    pos.deliveryEnd(), pos.deliveryRange().deliveryTimezone()))
                 .build();
 
-            cacheRebuilder.rebuildForTradeLeg(pos.tenantId(), ref, pos.deliveryRange());
+            cacheRebuilder.rebuildForTradeLeg(pos.tenantId(), ref, publishedRange);
         }
     }
 }

@@ -1,6 +1,5 @@
 package com.power.posval.domain.port.repository;
 
-import com.power.posval.domain.model.value.DeliveryRange;
 import com.power.posval.domain.service.PrunePolicy;
 
 import java.time.Instant;
@@ -25,7 +24,8 @@ public interface DependencyIndex {
      */
     List<DependencyEdge> findAffectedCells(String tenantId,
                                             String inputSeriesKey,
-                                            DeliveryRange affectedRange,
+                                            Instant rangeStart,
+                                            Instant rangeEnd,
                                             String activeLeafFilter);
 
     /**

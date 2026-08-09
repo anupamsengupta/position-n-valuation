@@ -1699,3 +1699,108 @@ This ensures the S6b cache is always a clean re-derive from source, consistent w
 - **FR-052c:** S6b initial population on VolumePublished
 - **FR-086b:** S6b rebuild triggered by VolumeSuperseded
 - **FR-103:** S8 blast-radius optimization — `input_series_key` must match `MarketDataUpdated.series()`
+
+---
+
+## Enhancement 11 — Volume resolver tenant bug, VolumeReference date fix, scoped S6b rebuild
+
+**Date:** 2026-08-09
+
+### 11.1 Problem Statement
+
+Three related bugs prevented settlement cells and S6b trade interval cache from being populated, and caused unnecessary full-range cache rebuilds:
+
+1. **`ProfileResolver` and `ForecastResolver` used `ref.tradeId()` as tenant parameter.** Volume series lookups in `findCurrentBySeriesKeyAndRange()` queried `WHERE tenantId = '<tradeId>'` (e.g. `"T-7788"`) instead of the actual tenant (`"default"`). Result: zero volume records returned, zero settlement cells, empty `trade_interval_cache`.
+
+2. **`VolumeReference.effectiveFrom` mixed bitemporal and delivery dimensions.** `effectiveFrom` was set to `position.validFrom()` (bitemporal valid-time = when this position version became valid) while `effectiveTo` was set to `deliveryRange().endInstant()` (delivery end = when power stops flowing). These are from different time axes. Both should use delivery boundaries.
+
+3. **S6b cache rebuild always used the full position delivery range.** When a `VolumeSuperseded` event affected a single month, the rebuilder purged and re-resolved all 24 months of a multi-year trade. Both `VolumeSupersededConsumer` and `VolumePublishedConsumer` passed `pos.deliveryRange()` instead of the event's scoped range.
+
+### 11.2 Fix 1: Volume resolver tenant parameter
+
+**Root cause:** `ProfileResolver.resolve()` passed `ref.tradeId()` (the trade identifier) as the `tenantId` parameter to `seriesRepo.findCurrentBySeriesKeyAndRange()`. Volume series are stored under the real tenant ID (e.g. `"default"`), so the query always returned empty. Same bug existed in `ForecastResolver` for both forecast and metered paths.
+
+The integration test wiring had a `tenantNormalizedRepo` wrapper (lines 120–136) that masked this bug — the real app had no such wrapper.
+
+**Files changed:**
+
+| File | Line | Change |
+|------|------|--------|
+| `pv-domain/service/ProfileResolver.java` | 34 | `ref.tradeId()` → `ref.tenantId()` |
+| `pv-domain/service/ForecastResolver.java` | 46 | `ref.tradeId()` → `ref.tenantId()` (forecast path) |
+| `pv-domain/service/ForecastResolver.java` | 61 | `ref.tradeId()` → `ref.tenantId()` (metered path) |
+
+### 11.3 Fix 2: VolumeReference effectiveFrom/effectiveTo — use delivery boundaries
+
+**Root cause:** `effectiveFrom` and `effectiveTo` on `VolumeReference` represent the delivery window over which volume applies. Code was inconsistently setting `effectiveFrom = position.validFrom()` (bitemporal axis) and `effectiveTo = deliveryRange.endInstant()` (delivery axis).
+
+**Change:** Both fields now use `position.deliveryStart()` / `position.deliveryEnd()` — the exact sub-month delivery boundaries from the position entry.
+
+**Files changed (4 locations, same pattern):**
+
+```java
+// BEFORE:
+.effectiveFrom(ZonedDateTime.ofInstant(
+    position.validFrom(), position.deliveryRange().deliveryTimezone()))
+.effectiveTo(ZonedDateTime.ofInstant(
+    position.deliveryRange().endInstant().toInstant(),
+    position.deliveryRange().deliveryTimezone()))
+
+// AFTER:
+.effectiveFrom(ZonedDateTime.ofInstant(
+    position.deliveryStart(), position.deliveryRange().deliveryTimezone()))
+.effectiveTo(ZonedDateTime.ofInstant(
+    position.deliveryEnd(), position.deliveryRange().deliveryTimezone()))
+```
+
+| File | Method |
+|------|--------|
+| `pv-domain/service/SettlementMaterializationJob.java` | `buildVolumeReference()` |
+| `pv-domain/service/SettlementRevaluationService.java` | `buildVolumeReference()` |
+| `pv-kafka/TradeCapturedConsumer.java` | `process()` |
+| `pv-kafka/VolumeSupersededConsumer.java` | `process()` |
+| `pv-kafka/VolumePublishedConsumer.java` | `process()` |
+
+### 11.4 Fix 3: Scope S6b rebuild to event's affected range
+
+**Root cause:** `VolumeSupersededConsumer` and `VolumePublishedConsumer` both passed `pos.deliveryRange()` (the full position delivery range, e.g. 24 months) to `cacheRebuilder.rebuildForTradeLeg()`. This meant a single-month volume update caused purge + re-resolve + re-write across the entire delivery window. For a 2-year trade at 15-minute granularity, that's ~70,000 intervals re-processed unnecessarily.
+
+**Change:** Convert the event's scoped range (`event.affectedRange()` or `event.deliveryRange()`, both `DeliveryPeriod`) to a month-aligned `DeliveryRange` and pass that instead.
+
+```java
+// VolumeSupersededConsumer — scope to event.affectedRange()
+DeliveryRange affectedDeliveryRange = new DeliveryRange(
+    YearMonth.from(affectedRange.start()),
+    YearMonth.from(affectedRange.end().minusNanos(1)),
+    affectedRange.deliveryTimezone());
+cacheRebuilder.rebuildForTradeLeg(pos.tenantId(), ref, affectedDeliveryRange);
+
+// VolumePublishedConsumer — scope to event.deliveryRange()
+DeliveryRange publishedRange = new DeliveryRange(
+    YearMonth.from(deliveryRange.start()),
+    YearMonth.from(deliveryRange.end().minusNanos(1)),
+    deliveryRange.deliveryTimezone());
+cacheRebuilder.rebuildForTradeLeg(pos.tenantId(), ref, publishedRange);
+```
+
+`TradeCapturedConsumer` is unchanged — initial population correctly uses the full `pos.deliveryRange()`.
+
+`TradeIntervalCacheRebuilder.rebuildForTradeLeg()` already scopes both purge and resolve to the passed range, so narrowing the range at the caller is sufficient.
+
+### 11.5 Files
+
+| Module | File | Action |
+|--------|------|--------|
+| pv-domain | `service/ProfileResolver.java` | Fix: `ref.tradeId()` → `ref.tenantId()` |
+| pv-domain | `service/ForecastResolver.java` | Fix: same (2 locations) |
+| pv-domain | `service/SettlementMaterializationJob.java` | Fix: `validFrom` → `deliveryStart()` in `buildVolumeReference()` |
+| pv-domain | `service/SettlementRevaluationService.java` | Fix: same |
+| pv-kafka | `TradeCapturedConsumer.java` | Fix: `validFrom` → `deliveryStart()` |
+| pv-kafka | `VolumeSupersededConsumer.java` | Fix: `validFrom` → `deliveryStart()`, scoped rebuild to `event.affectedRange()` |
+| pv-kafka | `VolumePublishedConsumer.java` | Fix: `validFrom` → `deliveryStart()`, scoped rebuild to `event.deliveryRange()` |
+
+### 11.6 Constraints Referenced
+
+- **D-1:** Ledger grain = trade-leg × delivery-month; `deliveryStart()`/`deliveryEnd()` are the exact sub-month boundaries within that grain
+- **D-11:** Unified volume `VolumeReference × multiplier` — `effectiveFrom`/`effectiveTo` must represent the delivery window, not bitemporal validity
+- **D-12:** S6b trade interval cache is optional and rebuildable — scoped rebuild avoids unnecessary I/O

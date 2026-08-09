@@ -53,7 +53,8 @@ public class CurveTickConsumer extends IdempotentConsumer<CurveTick> {
         DeliveryRange range = new DeliveryRange(minPillar, maxPillar, UTC);
 
         List<DependencyEdge> affected = dependencyIndex.findAffectedCells(
-            event.tenantId(), event.series(), range, null);
+            event.tenantId(), event.series(),
+            range.startInstant().toInstant(), range.endInstant().toInstant(), null);
 
         for (DependencyEdge edge : affected) {
             Optional<PositionLedgerEntry> position =

@@ -141,7 +141,7 @@ public class IntegrationTestWiring {
         DependencyIndex dependencyIndex = new DependencyIndex() {
             @Override public void upsert(DependencyEdge edge) {}
             @Override public List<DependencyEdge> findAffectedCells(
-                String t, String k, DeliveryRange r, String f) { return List.of(); }
+                String t, String k, java.time.Instant rs, java.time.Instant re, String f) { return List.of(); }
             @Override public void prune(String t, PrunePolicy p) {}
         };
 

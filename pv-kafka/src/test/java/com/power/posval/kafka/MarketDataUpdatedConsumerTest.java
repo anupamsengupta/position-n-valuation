@@ -191,7 +191,7 @@ class MarketDataUpdatedConsumerTest {
         private final List<UUID> positionIds;
         StubDependencyIndex(List<UUID> positionIds) { this.positionIds = positionIds; }
         @Override public void upsert(DependencyEdge edge) {}
-        @Override public List<DependencyEdge> findAffectedCells(String t, String s, DeliveryRange r, String f) { return List.of(); }
+        @Override public List<DependencyEdge> findAffectedCells(String t, String s, Instant rs, Instant re, String f) { return List.of(); }
         @Override public void prune(String t, PrunePolicy p) {}
         @Override public List<UUID> findAffectedPositionIds(String t, String s, Instant rs, Instant re) {
             return new ArrayList<>(positionIds);
