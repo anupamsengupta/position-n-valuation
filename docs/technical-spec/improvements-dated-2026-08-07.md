@@ -923,15 +923,15 @@ Both endpoints accept a JSON body, construct the domain event, and publish via `
     │
     ▼ POST /api/trades/capture
 ┌─────────────────┐
-│ TradeController  │
+│ TradeController │
 │  (pv-app)       │
 └────────┬────────┘
          │ tradeCaptureHandler.handle(cmd)
          ▼
-┌──────────────────────────┐
+┌───────────────────────────┐
 │ DefaultTradeCaptureHandler│   Decomposes delivery period into monthly blocks
 │  (pv-domain)              │   Creates PositionLedgerEntry per month
-└────────┬─────────────────┘
+└────────┬──────────────────┘
          │ eventPublisher.publish(PositionEntryCaptured)
          ▼
 ┌────────────────────┐
@@ -1006,12 +1006,12 @@ Both endpoints accept a JSON body, construct the domain event, and publish via `
 [Test via REST API]                         [Production — internal]
     │                                           │
     ▼ POST /api/events/market-data-updated      ▼ Domain operation publishes event
-┌──────────────────────┐                   ┌─────────────────────┐
-│ EventTriggerController│                  │ DomainEventPublisher │
-│  (pv-app)             │                  │  (called internally) │
-└────────┬─────────────┘                   └────────┬────────────┘
-         │                                          │
-         └──────────────┬───────────────────────────┘
+┌───────────────────────┐                   ┌──────────────────────┐
+│ EventTriggerController│                   │ DomainEventPublisher │
+│  (pv-app)             │                   │  (called internally) │
+└────────┬──────────────┘                   └────────┬─────────────┘
+         │                                           │
+         └──────────────┬────────────────────────────┘
                         ▼
                  ┌─────────────────┐
                  │ outbox_event    │   Written by OutboxDomainEventPublisher
@@ -1026,8 +1026,8 @@ Both endpoints accept a JSON body, construct the domain event, and publish via `
                ┌───────────────────────────┐
                │ MarketDataUpdatedConsumer │   1. Invalidate cache
                │  (pv-kafka)               │   2. S8 dependency index lookup:
-               │                            │      series + range → affected position IDs
-               │                            │      (FR-103 blast-radius optimization)
+               │                           │      series + range → affected position IDs
+               │                           │      (FR-103 blast-radius optimization)
                └────────┬──────────────────┘
                         │ eventPublisher.publish(SettlementRevaluationRequested) per position
                         ▼
@@ -1045,11 +1045,11 @@ Both endpoints accept a JSON body, construct the domain event, and publish via `
                ┌───────────────────────────────────┐
                │ SettlementRevaluationService      │   1. Clamp to delivery boundaries
                │  (pv-domain)                      │   2. Resolve volume for sub-range
-               │                                    │   3. Evaluate trade + market price
-               │                                    │   4. DELETE old cells in [start, end)
-               │                                    │   5. INSERT new cells
-               │                                    │   6. Publish SettlementComputed
-               └────────────────────────────────────┘
+               │                                   │   3. Evaluate trade + market price
+               │                                   │   4. DELETE old cells in [start, end)
+               │                                   │   5. INSERT new cells
+               │                                   │   6. Publish SettlementComputed
+               └───────────────────────────────────┘
 ```
 
 **Test trigger — `POST /api/events/market-data-updated`:**
@@ -1108,12 +1108,12 @@ Both endpoints accept a JSON body, construct the domain event, and publish via `
 [Test via REST API]                              [Production — internal]
     │                                                │
     ▼ POST /api/events/volume-superseded             ▼ Domain operation publishes event
-┌──────────────────────┐                        ┌─────────────────────┐
-│ EventTriggerController│                       │ DomainEventPublisher │
-│  (pv-app)             │                       │  (called internally) │
-└────────┬─────────────┘                        └────────┬────────────┘
-         │                                               │
-         └──────────────┬────────────────────────────────┘
+┌───────────────────────┐                        ┌──────────────────────┐
+│ EventTriggerController│                        │ DomainEventPublisher │
+│  (pv-app)             │                        │ (called internally)  │
+└────────┬──────────────┘                        └─────────┬────────────┘
+         │                                                 │
+         └──────────────┬──────────────────────────────────┘
                         ▼
                  ┌─────────────────┐
                  │ outbox_event    │   Written by OutboxDomainEventPublisher
@@ -1187,10 +1187,10 @@ Both endpoints accept a JSON body, construct the domain event, and publish via `
 [Client/UI]
     │
     ▼ GET /api/positions/summary?tenantId=TN_0042&rangeStart=2025-01-01T00:00:00Z&rangeEnd=2026-01-01T00:00:00Z
-┌──────────────────┐
+┌───────────────────┐
 │ PositionController│
 │  (pv-app)         │
-└────────┬─────────┘
+└────────┬──────────┘
          │ positionService.monthlySummary(tenantId, rangeStart, rangeEnd)
          ▼
 ┌──────────────────────────────┐
@@ -1249,9 +1249,9 @@ Both endpoints accept a JSON body, construct the domain event, and publish via `
 ┌──────────────────────────────────┐
 │ RollupMaterializationService     │   1. Load positions in range
 │  (pv-domain)                     │   2. Load settlement cells per position
-│                                   │   3. Group by (deliveryPoint, portfolio, month)
-│                                   │   4. Aggregate: TWA(MW), SUM(MWh, amount, PnL)
-│                                   │   5. Upsert to rollup_cell table
+│                                  │   3. Group by (deliveryPoint, portfolio, month)
+│                                  │   4. Aggregate: TWA(MW), SUM(MWh, amount, PnL)
+│                                  │   5. Upsert to rollup_cell table
 └──────────────────────────────────┘
 
 [Client/UI — Query Rollups]

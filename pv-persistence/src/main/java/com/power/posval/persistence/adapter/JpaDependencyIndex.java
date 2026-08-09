@@ -45,7 +45,7 @@ public class JpaDependencyIndex implements DependencyIndex {
                     pruned_at = NULL
                 """)
             .setParameter("tenantId", edge.tenantId())
-            .setParameter("cellId", edge.cellId().toString())
+            .setParameter("cellId", edge.cellId())
             .setParameter("cellType", edge.cellType())
             .setParameter("inputSeriesKey", edge.inputSeriesKey())
             .setParameter("inputType", edge.inputType())

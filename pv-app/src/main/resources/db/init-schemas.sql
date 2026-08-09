@@ -204,6 +204,21 @@ CREATE TABLE IF NOT EXISTS valuation.struck_mark (
     CONSTRAINT pk_struck_mark PRIMARY KEY (id)
 );
 
+-- valuation.dependency_edge (S8 — reverse-dependency index for blast-radius optimization, FR-102–104)
+CREATE TABLE IF NOT EXISTS valuation.dependency_edge (
+    tenant_id               VARCHAR         NOT NULL,
+    cell_id                 UUID            NOT NULL,
+    cell_type               VARCHAR(32)     NOT NULL,
+    input_series_key        VARCHAR(128)    NOT NULL,
+    input_type              VARCHAR(32)     NOT NULL,
+    affected_range_start    TIMESTAMPTZ     NOT NULL,
+    affected_range_end      TIMESTAMPTZ     NOT NULL,
+    active_leaves           JSONB           NOT NULL DEFAULT '[]',
+    created_at              TIMESTAMPTZ     NOT NULL,
+    pruned_at               TIMESTAMPTZ,
+    CONSTRAINT pk_dependency_edge PRIMARY KEY (tenant_id, cell_id, input_series_key)
+);
+
 -- volume_series.volume_series
 CREATE TABLE IF NOT EXISTS volume_series.volume_series (
     id                      BIGINT      NOT NULL DEFAULT nextval('volume_series.volume_series_seq'),
@@ -259,6 +274,30 @@ CREATE TABLE IF NOT EXISTS volume_series.trade_interval_cache (
     version_hash     VARCHAR(64)     NOT NULL,
     created_at       TIMESTAMPTZ     NOT NULL,
     CONSTRAINT pk_trade_interval_cache PRIMARY KEY (id)
+);
+
+-- volume_series.rollup_cell (S7 — materialized rollup aggregates, no JPA entity, native SQL only)
+CREATE TABLE IF NOT EXISTS volume_series.rollup_cell (
+    tenant_id           VARCHAR         NOT NULL,
+    delivery_point_id   VARCHAR         NOT NULL,
+    portfolio_id        VARCHAR         NOT NULL,
+    interval_start      TIMESTAMPTZ     NOT NULL,
+    interval_end        TIMESTAMPTZ     NOT NULL,
+    granularity         VARCHAR(16)     NOT NULL,
+    net_mw              NUMERIC(15, 8)  NOT NULL,
+    net_mwh             NUMERIC(18, 8)  NOT NULL,
+    is_peak             BOOLEAN         NOT NULL,
+    settled_value       NUMERIC(18, 4),
+    market_value        NUMERIC(18, 4),
+    pnl                 NUMERIC(18, 4),
+    forward_mark_value  NUMERIC(18, 4),
+    currency            VARCHAR(3),
+    calendar_version    VARCHAR,
+    version_hash        VARCHAR,
+    refreshed_at        TIMESTAMPTZ,
+    CONSTRAINT uq_rollup_cell
+        UNIQUE (tenant_id, delivery_point_id, portfolio_id,
+                interval_start, granularity, is_peak)
 );
 
 -- ============================================================
@@ -338,6 +377,11 @@ CREATE INDEX IF NOT EXISTS idx_outbox_unpublished_relay
 CREATE INDEX IF NOT EXISTS idx_sc_position_interval_range
     ON valuation.settlement_cell (tenant_id, position_id, interval_start, interval_end);
 
+-- Dependency edges: range-overlap lookup for revaluation blast-radius (FR-103)
+CREATE INDEX IF NOT EXISTS idx_de_series_range
+    ON valuation.dependency_edge (tenant_id, input_series_key, affected_range_start, affected_range_end)
+    WHERE pruned_at IS NULL;
+
 -- Position ledger: partial indexes for current knowledge queries
 CREATE INDEX IF NOT EXISTS idx_ple_trade_leg_current
     ON position.position_ledger_entry (tenant_id, trade_id, trade_leg_id, delivery_start)
@@ -354,3 +398,12 @@ CREATE INDEX IF NOT EXISTS idx_fc_tenant_series_pillar_asof_ver
 -- Index values: covering index with version_id
 CREATE INDEX IF NOT EXISTS idx_iv_tenant_series_refmonth_ver
     ON market_data.index_value (tenant_id, series, ref_month_expression, version_id DESC);
+
+-- Dependency edges: GIN index for JSONB active_leaves containment queries (FR-103)
+CREATE INDEX IF NOT EXISTS idx_de_active_leaves_gin
+    ON valuation.dependency_edge USING GIN (active_leaves)
+    WHERE pruned_at IS NULL;
+
+-- Rollup cells: range-overlap query for findByRange()
+CREATE INDEX IF NOT EXISTS idx_rc_tenant_dp_port_range
+    ON volume_series.rollup_cell (tenant_id, delivery_point_id, portfolio_id, interval_start, interval_end, granularity);
