@@ -25,7 +25,7 @@ class SettlementRevaluationConsumerTest {
         final List<UUID> revaluedPositions = new ArrayList<>();
 
         CapturingRevaluationService() {
-            super(null, null, null, null, null, null, null);
+            super(null, null, null, null, null, null, null, null);
         }
 
         @Override

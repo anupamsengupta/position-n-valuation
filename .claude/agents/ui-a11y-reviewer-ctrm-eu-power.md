@@ -1,8 +1,8 @@
 ---
-name: a11y-reviewer
+name: ui-a11y-reviewer-ctrm-eu-power
 description: "Use this agent when UI changes have been made to web application code, particularly when diffs include modifications to components, forms, modals, navigation elements, dialogs, menus, or page templates. This agent should be triggered after any pull request or commit that touches user interface code to ensure accessibility compliance before merging.\\n\\nExamples:\\n\\n<example>\\nContext: The user just created a new modal component with form inputs.\\nuser: \"Create a modal for the user profile settings\"\\nassistant: \"Here is the modal component with form fields for updating user settings:\"\\n<code changes omitted for brevity>\\n<commentary>\\nSince UI components with forms and modal dialogs were created, use the Task tool to launch the a11y-reviewer agent to check for accessibility issues.\\n</commentary>\\nassistant: \"Now let me use the a11y-reviewer agent to review the accessibility of this new modal component\"\\n</example>\\n\\n<example>\\nContext: The user modified navigation menu items.\\nuser: \"Add dropdown submenus to the main navigation\"\\nassistant: \"I've updated the navigation component with dropdown functionality:\"\\n<code changes omitted for brevity>\\n<commentary>\\nSince navigation components were modified with interactive dropdown menus, use the Task tool to launch the a11y-reviewer agent to verify keyboard navigation and ARIA attributes.\\n</commentary>\\nassistant: \"Let me run the a11y-reviewer agent to ensure the dropdown menus are accessible\"\\n</example>\\n\\n<example>\\nContext: The user added error handling to a form.\\nuser: \"Add validation error messages to the signup form\"\\nassistant: \"I've implemented form validation with error messages:\"\\n<code changes omitted for brevity>\\n<commentary>\\nSince form error messaging was added, use the Task tool to launch the a11y-reviewer agent to verify error announcements and associations are accessible.\\n</commentary>\\nassistant: \"Now I'll use the a11y-reviewer agent to verify the error messages are properly announced to screen readers\"\\n</example>"
-tools: Bash
-model: sonnet
+tools: Read, Grep, Glob, Edit, Write, Bash, WebFetch
+model: opus
 color: green
 ---
 

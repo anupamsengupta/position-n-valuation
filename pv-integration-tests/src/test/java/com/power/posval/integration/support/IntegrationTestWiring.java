@@ -16,6 +16,10 @@ import com.power.posval.domain.service.CachingMarketDataPort;
 import com.power.posval.domain.service.PriceExpressionBasedEvaluator;
 import com.power.posval.domain.service.DefaultTradeCaptureHandler;
 import com.power.posval.domain.service.ProfileResolver;
+import com.power.posval.domain.model.value.DeliveryRange;
+import com.power.posval.domain.port.repository.DependencyEdge;
+import com.power.posval.domain.port.repository.DependencyIndex;
+import com.power.posval.domain.service.PrunePolicy;
 import com.power.posval.domain.service.SettlementMaterializationJob;
 import com.power.posval.domain.service.stub.JsonPriceExpressionRepository;
 import com.power.posval.kafka.TradeCapturedConsumer;
@@ -133,9 +137,17 @@ public class IntegrationTestWiring {
 
         var volumeResolver = new ProfileResolver(tenantNormalizedRepo, np);
 
+        // No-op DependencyIndex — H2 does not support jsonb native queries
+        DependencyIndex dependencyIndex = new DependencyIndex() {
+            @Override public void upsert(DependencyEdge edge) {}
+            @Override public List<DependencyEdge> findAffectedCells(
+                String t, String k, DeliveryRange r, String f) { return List.of(); }
+            @Override public void prune(String t, PrunePolicy p) {}
+        };
+
         settlementJob = new SettlementMaterializationJob(
             volumeResolver, priceEvaluator, cachingMarketData, exprRepo,
-            cellRepo, eventPublisher, np);
+            cellRepo, eventPublisher, np, dependencyIndex);
 
         tradeCaptureHandler = new DefaultTradeCaptureHandler(ledgerRepo, eventPublisher);
         tradeCapturedConsumer = new TradeCapturedConsumer(

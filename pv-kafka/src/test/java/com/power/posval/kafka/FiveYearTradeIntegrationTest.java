@@ -140,9 +140,16 @@ class FiveYearTradeIntegrationTest {
         // --- Wire domain services ---
         var priceEvaluator = new PriceExpressionBasedEvaluator(new DefaultNumericPrecision());
         var volumeResolver = new ProfileResolver(seriesRepo, new DefaultNumericPrecision());
+        com.power.posval.domain.port.repository.DependencyIndex noOpIndex =
+            new com.power.posval.domain.port.repository.DependencyIndex() {
+                @Override public void upsert(com.power.posval.domain.port.repository.DependencyEdge edge) {}
+                @Override public java.util.List<com.power.posval.domain.port.repository.DependencyEdge> findAffectedCells(
+                    String t, String k, com.power.posval.domain.model.value.DeliveryRange r, String f) { return java.util.List.of(); }
+                @Override public void prune(String t, com.power.posval.domain.service.PrunePolicy p) {}
+            };
         var settlementJob = new SettlementMaterializationJob(
             volumeResolver, priceEvaluator, marketData, exprRepo,
-            cellRepo, eventPublisher, new DefaultNumericPrecision());
+            cellRepo, eventPublisher, new DefaultNumericPrecision(), noOpIndex);
 
         tradeCaptureHandler = new DefaultTradeCaptureHandler(ledgerRepo, eventPublisher);
         tradeCapturedConsumer = new TradeCapturedConsumer(

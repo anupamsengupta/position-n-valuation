@@ -1,18 +1,37 @@
 ---
-description: Run a feature from functional spec through code review
-argument-hint: [feature-description]
+description: "Drive a backend feature from functional spec through code review with STOP gates between stages"
+argument-hint: "[feature description or user story]"
 allowed-tools: Read, Write, Grep, Glob, Bash, Agent
 ---
 
-Drive the following feature through our full pipeline: $ARGUMENTS
+Drive the following feature through our full backend pipeline: $ARGUMENTS
 
-1. Delegate to @fc-functional-expert-ctrm-eu-power to produce docs/specs/<slug>.functional.md
-2. STOP. Ask me to review the functional spec before continuing.
-3. Delegate to @ssv-solutions-architect-ctrm with the approved functional spec. Produce
-   docs/specs/<slug>.tech.md and any ADRs.
-4. STOP. Ask me to review the design.
-5. Delegate to @sv-implementation-engineer-ctrm with the approved tech spec.
-6. Delegate to @sv-code-reviewer to review against the tech spec.
-7. Summarize the review findings and stop.
+Execute these stages in order. Do NOT skip STOP points. Do NOT proceed without explicit user approval at each gate.
 
-Do not skip STOP points. Do not proceed to the next stage without my explicit go-ahead.
+## Stage 1 — Functional Specification
+Delegate to @fc-functional-expert-ctrm-eu-power to produce a functional spec.
+Save to docs/functional-spec/claude-gen/<feature-slug>.functional.md.
+**STOP.** Present the functional spec. Wait for user approval before continuing.
+
+## Stage 2 — Technical Design
+Delegate to @sv-solutions-architect-ctrm-eu-power with the approved functional spec.
+Produce a tech spec at docs/technical-spec/claude-gen/<feature-slug>-v1.0.md and any required ADRs.
+**STOP.** Present the tech spec. Wait for user approval before continuing.
+
+## Stage 3 — Implementation
+Delegate to @sv-implementation-engineer-ctrm-eu-power with the approved tech spec.
+The engineer must classify scope (library / simulator / production-host) before coding.
+**STOP.** Present the implementation summary. Wait for user approval before continuing.
+
+## Stage 4 — Code Review
+Delegate to @sv-code-reviewer-ctrm-eu-power to review the implementation against the tech spec.
+Present the CRITICAL / WARNING / SUGGESTION report.
+**STOP.** If any CRITICAL findings exist, route back to Stage 3 for fixes.
+
+## Stage 5 — Summary
+Summarize:
+- Functional spec path
+- Tech spec path
+- Files changed
+- Review findings resolved
+- Any open items remaining

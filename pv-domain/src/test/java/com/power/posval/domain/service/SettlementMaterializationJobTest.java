@@ -5,6 +5,8 @@ import com.power.posval.domain.model.value.DeliveryPeriod;
 import com.power.posval.domain.model.value.DeliveryRange;
 import com.power.posval.domain.model.value.SeriesKey;
 import com.power.posval.domain.port.event.DomainEventPublisher;
+import com.power.posval.domain.port.repository.DependencyEdge;
+import com.power.posval.domain.port.repository.DependencyIndex;
 import com.power.posval.domain.port.repository.SettlementCellRepository;
 import com.power.posval.domain.port.repository.VolumeSeriesRepository;
 import com.power.posval.domain.port.repository.VolumeSeriesSpec;
@@ -25,6 +27,12 @@ import static org.junit.jupiter.api.Assertions.*;
 class SettlementMaterializationJobTest {
 
     private static final ZoneId CET = ZoneId.of("Europe/Berlin");
+    private static final DependencyIndex NO_OP_INDEX = new DependencyIndex() {
+        @Override public void upsert(DependencyEdge edge) {}
+        @Override public java.util.List<DependencyEdge> findAffectedCells(
+            String t, String k, DeliveryRange r, String f) { return java.util.List.of(); }
+        @Override public void prune(String t, com.power.posval.domain.service.PrunePolicy p) {}
+    };
 
     /** Simple cell repo that captures saved cells for test assertions. */
     private static SettlementCellRepository capturingCellRepo(List<SettlementCell> target) {
@@ -108,7 +116,7 @@ class SettlementMaterializationJobTest {
 
         var job = new SettlementMaterializationJob(
             resolver, priceEvaluator, marketData, exprRepo,
-            capturingCellRepo(savedCells), eventPublisher, new DefaultNumericPrecision());
+            capturingCellRepo(savedCells), eventPublisher, new DefaultNumericPrecision(), NO_OP_INDEX);
 
         var position = PositionLedgerEntry.builder()
             .id(UUID.randomUUID())
@@ -164,7 +172,7 @@ class SettlementMaterializationJobTest {
 
         var job = new SettlementMaterializationJob(
             resolver, priceEvaluator, marketData, exprRepo,
-            capturingCellRepo(savedCells), eventPublisher, new DefaultNumericPrecision());
+            capturingCellRepo(savedCells), eventPublisher, new DefaultNumericPrecision(), NO_OP_INDEX);
 
         var position = PositionLedgerEntry.builder()
             .id(UUID.randomUUID())
@@ -221,7 +229,7 @@ class SettlementMaterializationJobTest {
 
         var job = new SettlementMaterializationJob(
             resolver, priceEvaluator, marketData, exprRepo,
-            capturingCellRepo(savedCells), eventPublisher, new DefaultNumericPrecision());
+            capturingCellRepo(savedCells), eventPublisher, new DefaultNumericPrecision(), NO_OP_INDEX);
 
         var position = PositionLedgerEntry.builder()
             .id(UUID.randomUUID())
@@ -302,7 +310,7 @@ class SettlementMaterializationJobTest {
 
         var job = new SettlementMaterializationJob(
             resolver, priceEvaluator, marketData, exprRepo,
-            capturingCellRepo(savedCells), eventPublisher, new DefaultNumericPrecision());
+            capturingCellRepo(savedCells), eventPublisher, new DefaultNumericPrecision(), NO_OP_INDEX);
 
         var position = PositionLedgerEntry.builder()
             .id(UUID.randomUUID())

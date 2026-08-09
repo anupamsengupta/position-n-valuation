@@ -51,7 +51,7 @@ public class JpaDependencyIndex implements DependencyIndex {
             .setParameter("inputType", edge.inputType())
             .setParameter("rangeStart", edge.affectedRange().startInstant().toInstant())
             .setParameter("rangeEnd", edge.affectedRange().endInstant().toInstant())
-            .setParameter("activeLeaves", edge.activeLeaves().toString())
+            .setParameter("activeLeaves", toJsonArray(edge.activeLeaves()))
             .setParameter("createdAt", edge.createdAt())
             .executeUpdate();
     }
@@ -102,7 +102,7 @@ public class JpaDependencyIndex implements DependencyIndex {
         return emProvider.get().createNativeQuery("""
                 SELECT DISTINCT sc.position_id
                 FROM valuation.dependency_edge de
-                JOIN valuation.settlement_cell sc ON sc.cell_id = de.cell_id
+                JOIN valuation.settlement_cell sc ON sc.cell_uuid = de.cell_id
                 WHERE de.tenant_id = :tenantId
                   AND de.input_series_key = :inputSeriesKey
                   AND de.affected_range_start < :rangeEnd
@@ -155,6 +155,39 @@ public class JpaDependencyIndex implements DependencyIndex {
         }
     }
 
+    /** Serializes a Set<String> to a valid JSON array, e.g. ["a","b"]. */
+    private static String toJsonArray(Set<String> leaves) {
+        if (leaves == null || leaves.isEmpty()) return "[]";
+        var sb = new StringBuilder("[");
+        boolean first = true;
+        for (String leaf : leaves) {
+            if (!first) sb.append(',');
+            sb.append('"').append(leaf.replace("\"", "\\\"")).append('"');
+            first = false;
+        }
+        return sb.append(']').toString();
+    }
+
+    /** Parses a JSON array string like ["a","b"] back into a Set<String>. */
+    private static Set<String> parseJsonArray(String json) {
+        if (json == null || json.isBlank() || "[]".equals(json.trim())) {
+            return Set.of();
+        }
+        String trimmed = json.trim();
+        // Strip surrounding brackets
+        String inner = trimmed.substring(1, trimmed.length() - 1).trim();
+        if (inner.isEmpty()) return Set.of();
+        var result = new java.util.HashSet<String>();
+        for (String token : inner.split(",")) {
+            String t = token.trim();
+            if (t.startsWith("\"") && t.endsWith("\"")) {
+                t = t.substring(1, t.length() - 1);
+            }
+            if (!t.isEmpty()) result.add(t);
+        }
+        return Set.copyOf(result);
+    }
+
     private DependencyEdge mapToEdge(Object[] row, DeliveryRange range) {
         return new DependencyEdge(
             (String) row[0],                                                // tenantId
@@ -163,7 +196,7 @@ public class JpaDependencyIndex implements DependencyIndex {
             (String) row[3],                                                // inputSeriesKey
             (String) row[4],                                                // inputType
             range,                                                          // affectedRange
-            Set.of(),                                                       // activeLeaves
+            parseJsonArray(row[7] != null ? row[7].toString() : "[]"),     // activeLeaves
             ((java.sql.Timestamp) row[8]).toInstant(),                      // createdAt
             row[9] != null ? ((java.sql.Timestamp) row[9]).toInstant() : null); // prunedAt
     }

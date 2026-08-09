@@ -10,11 +10,14 @@ import com.power.posval.domain.model.value.VolumeReference;
 import com.power.posval.domain.port.NumericPrecision;
 import com.power.posval.domain.port.event.DomainEventPublisher;
 import com.power.posval.domain.port.marketdata.MarketDataPort;
+import com.power.posval.domain.port.repository.DependencyEdge;
+import com.power.posval.domain.port.repository.DependencyIndex;
 import com.power.posval.domain.port.repository.PriceExpressionRepository;
 import com.power.posval.domain.port.repository.SettlementCellRepository;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.YearMonth;
 import java.time.ZonedDateTime;
 import java.util.*;
 
@@ -28,6 +31,7 @@ public class SettlementMaterializationJob extends AbstractMaterializationJob<Set
     private final SettlementCellRepository cellRepo;
     private final DomainEventPublisher eventPublisher;
     private final NumericPrecision np;
+    private final DependencyIndex dependencyIndex;
 
     @jakarta.inject.Inject
     public SettlementMaterializationJob(VolumeResolver volumeResolver,
@@ -36,11 +40,13 @@ public class SettlementMaterializationJob extends AbstractMaterializationJob<Set
                                          PriceExpressionRepository priceExpressionRepo,
                                          SettlementCellRepository cellRepo,
                                          DomainEventPublisher eventPublisher,
-                                         NumericPrecision np) {
+                                         NumericPrecision np,
+                                         DependencyIndex dependencyIndex) {
         super(volumeResolver, priceEvaluator, marketData, priceExpressionRepo);
         this.cellRepo = cellRepo;
         this.eventPublisher = eventPublisher;
         this.np = np;
+        this.dependencyIndex = dependencyIndex;
     }
 
     @Override
@@ -129,9 +135,25 @@ public class SettlementMaterializationJob extends AbstractMaterializationJob<Set
     protected void flushResults(PositionLedgerEntry position, List<SettlementCell> cells) {
         cellRepo.saveAll(cells);
 
+        // S8: upsert dependency edges for blast-radius optimization (FR-102–104)
+        Instant now = Instant.now();
+        for (SettlementCell cell : cells) {
+            DeliveryRange cellRange = DeliveryRange.ofMonth(
+                YearMonth.from(ZonedDateTime.ofInstant(cell.intervalStart(),
+                    position.deliveryRange().deliveryTimezone())),
+                position.deliveryRange().deliveryTimezone());
+            for (String leaf : cell.activeLeaves()) {
+                dependencyIndex.upsert(new DependencyEdge(
+                    position.tenantId(), cell.cellId(), "SETTLEMENT",
+                    leaf, "PRICE_LEAF", cellRange,
+                    cell.activeLeaves(), now, null));
+            }
+        }
+
         Instant eventTime = Instant.now();
         List<Object> events = cells.stream()
             .<Object>map(cell -> new SettlementComputed(
+                position.tenantId(),
                 position.id(),
                 ZonedDateTime.ofInstant(cell.intervalStart(),
                     position.deliveryRange().deliveryTimezone()),

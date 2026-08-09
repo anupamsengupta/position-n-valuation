@@ -52,6 +52,7 @@ class EventSmokeTest {
     void settlementComputed() {
         var np = new DefaultNumericPrecision();
         var event = new SettlementComputed(
+            "TN_0042",
             UUID.randomUUID(),
             ZonedDateTime.of(2025, 3, 1, 0, 0, 0, 0, CET),
             ZonedDateTime.of(2025, 3, 1, 1, 0, 0, 0, CET),

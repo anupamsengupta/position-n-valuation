@@ -9,14 +9,19 @@ import com.power.posval.domain.model.value.VolumeReference;
 import com.power.posval.domain.port.NumericPrecision;
 import com.power.posval.domain.port.event.DomainEventPublisher;
 import com.power.posval.domain.port.marketdata.MarketDataPort;
+import com.power.posval.domain.port.repository.DependencyEdge;
+import com.power.posval.domain.port.repository.DependencyIndex;
 import com.power.posval.domain.port.repository.PriceExpressionRepository;
 import com.power.posval.domain.port.repository.SettlementCellRepository;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.power.posval.domain.model.value.DeliveryRange;
+
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.YearMonth;
 import java.time.ZonedDateTime;
 import java.util.*;
 
@@ -40,6 +45,7 @@ public class SettlementRevaluationService {
     private final SettlementCellRepository cellRepo;
     private final DomainEventPublisher eventPublisher;
     private final NumericPrecision np;
+    private final DependencyIndex dependencyIndex;
 
     @jakarta.inject.Inject
     public SettlementRevaluationService(VolumeResolver volumeResolver,
@@ -48,7 +54,8 @@ public class SettlementRevaluationService {
                                          PriceExpressionRepository priceExpressionRepo,
                                          SettlementCellRepository cellRepo,
                                          DomainEventPublisher eventPublisher,
-                                         NumericPrecision np) {
+                                         NumericPrecision np,
+                                         DependencyIndex dependencyIndex) {
         this.volumeResolver = volumeResolver;
         this.priceEvaluator = priceEvaluator;
         this.marketData = marketData;
@@ -56,6 +63,7 @@ public class SettlementRevaluationService {
         this.cellRepo = cellRepo;
         this.eventPublisher = eventPublisher;
         this.np = np;
+        this.dependencyIndex = dependencyIndex;
     }
 
     /**
@@ -111,10 +119,26 @@ public class SettlementRevaluationService {
 
         cellRepo.saveAll(newCells);
 
+        // 3b. S8: upsert dependency edges for blast-radius optimization (FR-102–104)
+        Instant now = Instant.now();
+        for (SettlementCell cell : newCells) {
+            DeliveryRange cellRange = DeliveryRange.ofMonth(
+                YearMonth.from(ZonedDateTime.ofInstant(cell.intervalStart(),
+                    position.deliveryRange().deliveryTimezone())),
+                position.deliveryRange().deliveryTimezone());
+            for (String leaf : cell.activeLeaves()) {
+                dependencyIndex.upsert(new DependencyEdge(
+                    position.tenantId(), cell.cellId(), "SETTLEMENT",
+                    leaf, "PRICE_LEAF", cellRange,
+                    cell.activeLeaves(), now, null));
+            }
+        }
+
         // 4. Publish SettlementComputed events
         Instant eventTime = Instant.now();
         List<Object> events = newCells.stream()
             .<Object>map(cell -> new SettlementComputed(
+                position.tenantId(),
                 position.id(),
                 ZonedDateTime.ofInstant(cell.intervalStart(),
                     position.deliveryRange().deliveryTimezone()),

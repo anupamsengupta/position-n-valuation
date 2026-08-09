@@ -6,6 +6,8 @@ import com.power.posval.domain.model.value.DeliveryRange;
 import com.power.posval.domain.model.value.SeriesKey;
 import com.power.posval.domain.port.DefaultNumericPrecision;
 import com.power.posval.domain.port.event.DomainEventPublisher;
+import com.power.posval.domain.port.repository.DependencyEdge;
+import com.power.posval.domain.port.repository.DependencyIndex;
 import com.power.posval.domain.port.repository.SettlementCellRepository;
 import com.power.posval.domain.port.repository.VolumeSeriesRepository;
 import com.power.posval.domain.port.repository.VolumeSeriesSpec;
@@ -159,9 +161,15 @@ class SettlementRevaluationServiceTest {
             }
         };
 
+        DependencyIndex noOpIndex = new DependencyIndex() {
+            @Override public void upsert(DependencyEdge edge) {}
+            @Override public java.util.List<DependencyEdge> findAffectedCells(
+                String t, String k, DeliveryRange r, String f) { return java.util.List.of(); }
+            @Override public void prune(String t, PrunePolicy p) {}
+        };
         return new SettlementRevaluationService(
             resolver, priceEvaluator, marketData, exprRepo,
-            cellRepo, eventPublisher, new DefaultNumericPrecision());
+            cellRepo, eventPublisher, new DefaultNumericPrecision(), noOpIndex);
     }
 
     private PositionLedgerEntry testPosition(UUID priceExprId, UUID marketPriceExprId) {

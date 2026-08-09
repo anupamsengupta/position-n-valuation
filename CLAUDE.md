@@ -137,6 +137,7 @@ All events flow through the outbox pattern (`OutboxDomainEventPublisher` → `Ou
 - `docs/functional-spec/functional-spec-position-valuation-v1.0.md` is the binding spec
 - `docs/context/CONTEXT-position-valuation-design.md` has design rationale
 - `docs/technical-spec/improvements-dated-2026-08-07.md` tracks recent enhancements (1–9)
+- `docs/adr/` contains Architecture Decision Records (pattern catalogs, design decisions)
 - Test naming: `*Test.java` for unit tests, `*IT.java` for integration tests
 - Kafka consumers extend `IdempotentConsumer<T>` with `alreadyProcessed()` + `process()`
 - Spring Kafka listeners in `pv-app/kafka/` follow pattern: set tenant context → run in TX → ack
@@ -169,7 +170,7 @@ When Claude Code operates on this repo through subagents (functional-expert, sol
 - **Simulator-scope:** touches only `pv-app`. May hardcode tenant, use in-memory caches, use `hbm2ddl`. Simulator-scope patterns must not leak into library modules.
 - If the scope is unclear, the coder agent must ask before starting.
 
-**Read-only for coders:** `docs/functional-spec/`, `docs/context/`, all ADRs. Changes to these come only from functional-expert or solutions-architect after human approval.
+**Read-only for coders:** `docs/functional-spec/`, `docs/context/`, `docs/adr/`. Changes to these come only from functional-expert or solutions-architect after human approval.
 
 **ADR required before code:** schema migrations, new Kafka topics, new domain ports, changes to the DI wiring boundary between Guice and Spring, changes to the tenant-context propagation mechanism, changes to the outbox / idempotency mechanism, and — critically — the introduction of a real production hosting layer.
 
