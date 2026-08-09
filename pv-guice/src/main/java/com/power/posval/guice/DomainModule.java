@@ -1,9 +1,13 @@
 package com.power.posval.guice;
 
 import com.google.inject.AbstractModule;
+import com.google.inject.Provides;
 import com.google.inject.Singleton;
 import com.power.posval.domain.port.DefaultNumericPrecision;
 import com.power.posval.domain.port.NumericPrecision;
+import com.power.posval.domain.port.cache.VolumeCache;
+import com.power.posval.domain.port.repository.VolumeSeriesRepository;
+import com.power.posval.domain.port.service.*;
 import com.power.posval.domain.service.*;
 
 /**
@@ -30,7 +34,7 @@ public class DomainModule extends AbstractModule {
             .in(Singleton.class);
 
         bind(PriceEvaluator.class)
-            .to(DefaultPriceEvaluator.class)
+            .to(PriceExpressionBasedEvaluator.class)
             .in(Singleton.class);
 
         bind(ProfileResolver.class).in(Singleton.class);
@@ -39,5 +43,28 @@ public class DomainModule extends AbstractModule {
 
         bind(CacheInvalidationHandler.class).in(Singleton.class);
         bind(TradeIntervalCacheRebuilder.class).in(Singleton.class);
+        bind(SettlementMaterializationJob.class).in(Singleton.class);
+        bind(SettlementRevaluationService.class).in(Singleton.class);
+        bind(RollupMaterializationService.class).in(Singleton.class);
+
+        bind(PositionQueryService.class).to(DefaultPositionQueryService.class).in(Singleton.class);
+        bind(SettlementQueryService.class).to(DefaultSettlementQueryService.class).in(Singleton.class);
+        bind(MarketDataService.class).to(DefaultMarketDataService.class).in(Singleton.class);
+        bind(VolumeSeriesQueryService.class).to(DefaultVolumeSeriesQueryService.class).in(Singleton.class);
+        bind(RollupQueryService.class).to(DefaultRollupQueryService.class).in(Singleton.class);
+    }
+
+    /**
+     * VolumeResolver → CachingVolumeResolver with ProfileResolver as delegate.
+     * Cannot use bind().to() because CachingVolumeResolver's constructor takes
+     * a VolumeResolver delegate (circular). ProfileResolver is the concrete delegate.
+     */
+    @Provides
+    @Singleton
+    VolumeResolver volumeResolver(ProfileResolver profileResolver,
+                                   VolumeCache cache,
+                                   VolumeSeriesRepository seriesRepo,
+                                   NumericPrecision np) {
+        return new CachingVolumeResolver(profileResolver, cache, seriesRepo, np);
     }
 }

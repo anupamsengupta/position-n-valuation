@@ -10,16 +10,15 @@ import com.power.posval.domain.model.value.VolumeReference;
 import com.power.posval.domain.port.NumericPrecision;
 import com.power.posval.domain.port.event.DomainEventPublisher;
 import com.power.posval.domain.port.marketdata.MarketDataPort;
+import com.power.posval.domain.port.repository.DependencyEdge;
+import com.power.posval.domain.port.repository.DependencyIndex;
 import com.power.posval.domain.port.repository.PriceExpressionRepository;
 import com.power.posval.domain.port.repository.SettlementCellRepository;
 
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.ZonedDateTime;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
 
 /**
  * Settlement materialization job (S5a).
@@ -31,25 +30,32 @@ public class SettlementMaterializationJob extends AbstractMaterializationJob<Set
     private final SettlementCellRepository cellRepo;
     private final DomainEventPublisher eventPublisher;
     private final NumericPrecision np;
+    private final DependencyIndex dependencyIndex;
 
+    @jakarta.inject.Inject
     public SettlementMaterializationJob(VolumeResolver volumeResolver,
                                          PriceEvaluator priceEvaluator,
                                          MarketDataPort marketData,
                                          PriceExpressionRepository priceExpressionRepo,
                                          SettlementCellRepository cellRepo,
                                          DomainEventPublisher eventPublisher,
-                                         NumericPrecision np) {
+                                         NumericPrecision np,
+                                         DependencyIndex dependencyIndex) {
         super(volumeResolver, priceEvaluator, marketData, priceExpressionRepo);
         this.cellRepo = cellRepo;
         this.eventPublisher = eventPublisher;
         this.np = np;
+        this.dependencyIndex = dependencyIndex;
     }
 
     @Override
     protected List<VolumeRecord> resolveVolume(PositionLedgerEntry position,
                                                 DeliveryRange intervalRange) {
         VolumeReference ref = buildVolumeReference(position);
-        return volumeResolver.resolve(ref, intervalRange, ResolutionPurpose.SETTLEMENT);
+        // Use exact delivery boundaries, not month-aligned DeliveryRange
+        return volumeResolver.resolve(ref,
+            position.deliveryStart(), position.deliveryEnd(),
+            ResolutionPurpose.SETTLEMENT);
     }
 
     @Override
@@ -67,9 +73,41 @@ public class SettlementMaterializationJob extends AbstractMaterializationJob<Set
     protected SettlementCell buildResult(PositionLedgerEntry position,
                                           VolumeRecord volume,
                                           PriceResolution price) {
-        BigDecimal amount = np.round(
+        BigDecimal tradeAmount = np.round(
             price.value().multiply(volume.energy()), NumericPrecision.Domain.MONETARY);
-        Instant now = Instant.now();
+
+        BigDecimal marketPrice = null;
+        BigDecimal marketAmount = null;
+        BigDecimal pnl = null;
+        Set<String> activeLeaves = price.activeLeaves();
+        Map<String, Long> inputVersionSet = price.inputVersionSet();
+
+        if (position.marketPriceExpressionId() != null) {
+            DeliveryPeriod interval = new DeliveryPeriod(
+                ZonedDateTime.ofInstant(volume.intervalStart(),
+                    position.deliveryRange().deliveryTimezone()),
+                ZonedDateTime.ofInstant(volume.intervalEnd(),
+                    position.deliveryRange().deliveryTimezone()),
+                position.deliveryRange().deliveryTimezone());
+
+            PriceResolution marketRes = evaluatePrice(
+                position.marketPriceExpressionId(), interval);
+
+            marketPrice = marketRes.value();
+            marketAmount = np.round(
+                marketPrice.multiply(volume.energy()), NumericPrecision.Domain.MONETARY);
+            pnl = np.round(
+                marketAmount.subtract(tradeAmount), NumericPrecision.Domain.MONETARY);
+
+            // Merge active leaves and input version sets from both resolutions
+            var mergedLeaves = new HashSet<>(activeLeaves);
+            mergedLeaves.addAll(marketRes.activeLeaves());
+            activeLeaves = mergedLeaves;
+
+            var mergedVersions = new HashMap<>(inputVersionSet);
+            mergedVersions.putAll(marketRes.inputVersionSet());
+            inputVersionSet = mergedVersions;
+        }
 
         return new SettlementCell(
             UUID.randomUUID(),
@@ -82,19 +120,36 @@ public class SettlementMaterializationJob extends AbstractMaterializationJob<Set
             price.value(),
             volume.volume(),
             volume.energy(),
-            amount,
+            tradeAmount,
+            marketPrice,
+            marketAmount,
+            pnl,
             "EUR",
-            price.activeLeaves(),
-            price.inputVersionSet(),
-            now, null, now, null);
+            activeLeaves,
+            inputVersionSet,
+            Instant.now());
     }
 
     @Override
     protected void flushResults(PositionLedgerEntry position, List<SettlementCell> cells) {
         cellRepo.saveAll(cells);
 
+        // S8: upsert dependency edges at cell interval precision (FR-102–104)
+        Instant now = Instant.now();
+        for (SettlementCell cell : cells) {
+            for (String seriesKey : cell.inputVersionSet().keySet()) {
+                dependencyIndex.upsert(new DependencyEdge(
+                    position.tenantId(), cell.cellId(), "SETTLEMENT",
+                    seriesKey, "PRICE_LEAF",
+                    cell.intervalStart(), cell.intervalEnd(),
+                    cell.activeLeaves(), now, null));
+            }
+        }
+
+        Instant eventTime = Instant.now();
         List<Object> events = cells.stream()
             .<Object>map(cell -> new SettlementComputed(
+                position.tenantId(),
                 position.id(),
                 ZonedDateTime.ofInstant(cell.intervalStart(),
                     position.deliveryRange().deliveryTimezone()),
@@ -104,7 +159,7 @@ public class SettlementMaterializationJob extends AbstractMaterializationJob<Set
                 "PROVISIONAL",
                 cell.activeLeaves(),
                 cell.inputVersionSet(),
-                cell.knownFrom()))
+                eventTime))
             .toList();
 
         eventPublisher.publishAll(events);
@@ -115,13 +170,13 @@ public class SettlementMaterializationJob extends AbstractMaterializationJob<Set
             .id(UUID.randomUUID())
             .tradeLegId(position.tradeLegId())
             .tradeId(position.tradeId())
+            .tenantId(position.tenantId())
             .multiplier(position.multiplier())
             .volumeSeriesKey(position.volumeSeriesKey())
             .effectiveFrom(ZonedDateTime.ofInstant(
-                position.validFrom(), position.deliveryRange().deliveryTimezone()))
+                position.deliveryStart(), position.deliveryRange().deliveryTimezone()))
             .effectiveTo(ZonedDateTime.ofInstant(
-                position.deliveryRange().endInstant().toInstant(),
-                position.deliveryRange().deliveryTimezone()))
+                position.deliveryEnd(), position.deliveryRange().deliveryTimezone()))
             .build();
     }
 }

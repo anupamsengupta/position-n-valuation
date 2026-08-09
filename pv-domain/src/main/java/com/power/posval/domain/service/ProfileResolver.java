@@ -1,10 +1,11 @@
 package com.power.posval.domain.service;
 
-import com.power.posval.domain.model.value.DeliveryRange;
 import com.power.posval.domain.model.value.VolumeReference;
 import com.power.posval.domain.port.NumericPrecision;
 import com.power.posval.domain.port.repository.VolumeSeriesRepository;
+import jakarta.inject.Inject;
 
+import java.time.Instant;
 import java.util.List;
 
 /**
@@ -21,18 +22,23 @@ public record ProfileResolver(
     NumericPrecision np
 ) implements VolumeResolver {
 
+    @Inject
+    public ProfileResolver {}
+
     @Override
     public List<VolumeRecord> resolve(VolumeReference ref,
-                                       DeliveryRange intervalRange,
+                                       Instant rangeStart,
+                                       Instant rangeEnd,
                                        ResolutionPurpose purpose) {
-        var seriesOpt = seriesRepo.findCurrentBySeriesKey(
-            ref.tradeId(), ref.volumeSeriesKey().value());
+        var seriesOpt = seriesRepo.findCurrentBySeriesKeyAndRange(
+            ref.tenantId(), ref.volumeSeriesKey().value(),
+            rangeStart, rangeEnd);
         if (seriesOpt.isEmpty()) {
             return List.of();
         }
         var series = seriesOpt.get();
         return VolumeFilterMapper.filterAndMap(
-            series.intervals(), intervalRange, ref.multiplier(),
+            series.intervals(), rangeStart, rangeEnd, ref.multiplier(),
             series.versionId(), series.qualityState(), series.seriesType(), null, np);
     }
 }

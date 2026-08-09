@@ -30,5 +30,7 @@ public class KafkaModule extends AbstractModule {
         bind(SettlementPublishedConsumer.class).in(Singleton.class);
         bind(CurveTickConsumer.class).in(Singleton.class);
         bind(MarketDataUpdatedConsumer.class).in(Singleton.class);
+        bind(VolumePublishedConsumer.class).in(Singleton.class);
+        bind(SettlementRevaluationConsumer.class).in(Singleton.class);
     }
 }

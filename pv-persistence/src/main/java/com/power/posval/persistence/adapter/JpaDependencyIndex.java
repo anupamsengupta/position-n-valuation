@@ -1,6 +1,5 @@
 package com.power.posval.persistence.adapter;
 
-import com.power.posval.domain.model.value.DeliveryRange;
 import com.power.posval.domain.port.repository.DependencyEdge;
 import com.power.posval.domain.port.repository.DependencyIndex;
 import com.power.posval.domain.service.PrunePolicy;
@@ -13,6 +12,7 @@ import jakarta.persistence.EntityManager;
 import java.time.Instant;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * JPA adapter for DependencyIndex. §13.2, Pattern #18.
@@ -44,13 +44,13 @@ public class JpaDependencyIndex implements DependencyIndex {
                     pruned_at = NULL
                 """)
             .setParameter("tenantId", edge.tenantId())
-            .setParameter("cellId", edge.cellId().toString())
+            .setParameter("cellId", edge.cellId())
             .setParameter("cellType", edge.cellType())
             .setParameter("inputSeriesKey", edge.inputSeriesKey())
             .setParameter("inputType", edge.inputType())
-            .setParameter("rangeStart", edge.affectedRange().startInstant().toInstant())
-            .setParameter("rangeEnd", edge.affectedRange().endInstant().toInstant())
-            .setParameter("activeLeaves", edge.activeLeaves().toString())
+            .setParameter("rangeStart", edge.affectedRangeStart())
+            .setParameter("rangeEnd", edge.affectedRangeEnd())
+            .setParameter("activeLeaves", toJsonArray(edge.activeLeaves()))
             .setParameter("createdAt", edge.createdAt())
             .executeUpdate();
     }
@@ -59,7 +59,8 @@ public class JpaDependencyIndex implements DependencyIndex {
     @SuppressWarnings("unchecked")
     public List<DependencyEdge> findAffectedCells(String tenantId,
                                                     String inputSeriesKey,
-                                                    DeliveryRange affectedRange,
+                                                    Instant rangeStart,
+                                                    Instant rangeEnd,
                                                     String activeLeafFilter) {
         String sql = """
             SELECT tenant_id, cell_id, cell_type, input_series_key, input_type,
@@ -80,16 +81,57 @@ public class JpaDependencyIndex implements DependencyIndex {
         var query = emProvider.get().createNativeQuery(sql)
             .setParameter("tenantId", tenantId)
             .setParameter("inputSeriesKey", inputSeriesKey)
-            .setParameter("rangeStart", affectedRange.startInstant().toInstant())
-            .setParameter("rangeEnd", affectedRange.endInstant().toInstant());
+            .setParameter("rangeStart", rangeStart)
+            .setParameter("rangeEnd", rangeEnd);
 
         if (activeLeafFilter != null) {
             query.setParameter("leafFilter", "[\"" + activeLeafFilter + "\"]");
         }
 
         return query.getResultList().stream()
-            .map(row -> mapToEdge((Object[]) row, affectedRange))
+            .map(row -> mapToEdge((Object[]) row))
             .toList();
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public List<UUID> findAffectedPositionIds(String tenantId,
+                                               String inputSeriesKey,
+                                               Instant rangeStart,
+                                               Instant rangeEnd) {
+        return emProvider.get().createNativeQuery("""
+                SELECT DISTINCT sc.position_id
+                FROM valuation.dependency_edge de
+                JOIN valuation.settlement_cell sc ON sc.cell_uuid = de.cell_id
+                WHERE de.tenant_id = :tenantId
+                  AND de.input_series_key = :inputSeriesKey
+                  AND de.affected_range_start < :rangeEnd
+                  AND de.affected_range_end > :rangeStart
+                  AND de.pruned_at IS NULL
+                """)
+            .setParameter("tenantId", tenantId)
+            .setParameter("inputSeriesKey", inputSeriesKey)
+            .setParameter("rangeStart", rangeStart)
+            .setParameter("rangeEnd", rangeEnd)
+            .getResultList()
+            .stream()
+            .map(row -> UUID.fromString(row.toString()))
+            .toList();
+    }
+
+    @Override
+    public int deleteByCellPosition(String tenantId, UUID positionId) {
+        return emProvider.get()
+            .createNativeQuery("""
+                DELETE FROM valuation.dependency_edge de
+                USING valuation.settlement_cell sc
+                WHERE de.cell_id = sc.cell_uuid
+                  AND sc.tenant_id = :tenantId
+                  AND sc.position_id = :positionId
+                """)
+            .setParameter("tenantId", tenantId)
+            .setParameter("positionId", positionId)
+            .executeUpdate();
     }
 
     @Override
@@ -128,15 +170,49 @@ public class JpaDependencyIndex implements DependencyIndex {
         }
     }
 
-    private DependencyEdge mapToEdge(Object[] row, DeliveryRange range) {
+    /** Serializes a Set<String> to a valid JSON array, e.g. ["a","b"]. */
+    private static String toJsonArray(Set<String> leaves) {
+        if (leaves == null || leaves.isEmpty()) return "[]";
+        var sb = new StringBuilder("[");
+        boolean first = true;
+        for (String leaf : leaves) {
+            if (!first) sb.append(',');
+            sb.append('"').append(leaf.replace("\"", "\\\"")).append('"');
+            first = false;
+        }
+        return sb.append(']').toString();
+    }
+
+    /** Parses a JSON array string like ["a","b"] back into a Set<String>. */
+    private static Set<String> parseJsonArray(String json) {
+        if (json == null || json.isBlank() || "[]".equals(json.trim())) {
+            return Set.of();
+        }
+        String trimmed = json.trim();
+        // Strip surrounding brackets
+        String inner = trimmed.substring(1, trimmed.length() - 1).trim();
+        if (inner.isEmpty()) return Set.of();
+        var result = new java.util.HashSet<String>();
+        for (String token : inner.split(",")) {
+            String t = token.trim();
+            if (t.startsWith("\"") && t.endsWith("\"")) {
+                t = t.substring(1, t.length() - 1);
+            }
+            if (!t.isEmpty()) result.add(t);
+        }
+        return Set.copyOf(result);
+    }
+
+    private DependencyEdge mapToEdge(Object[] row) {
         return new DependencyEdge(
             (String) row[0],                                                // tenantId
             java.util.UUID.fromString(row[1].toString()),                   // cellId (UUID)
             (String) row[2],                                                // cellType
             (String) row[3],                                                // inputSeriesKey
             (String) row[4],                                                // inputType
-            range,                                                          // affectedRange
-            Set.of(),                                                       // activeLeaves
+            ((java.sql.Timestamp) row[5]).toInstant(),                      // affectedRangeStart
+            ((java.sql.Timestamp) row[6]).toInstant(),                      // affectedRangeEnd
+            parseJsonArray(row[7] != null ? row[7].toString() : "[]"),     // activeLeaves
             ((java.sql.Timestamp) row[8]).toInstant(),                      // createdAt
             row[9] != null ? ((java.sql.Timestamp) row[9]).toInstant() : null); // prunedAt
     }

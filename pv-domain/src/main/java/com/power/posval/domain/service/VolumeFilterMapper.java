@@ -4,10 +4,10 @@ import com.power.posval.domain.model.MeteredActualInterval;
 import com.power.posval.domain.model.QualityState;
 import com.power.posval.domain.model.SeriesType;
 import com.power.posval.domain.model.VolumeInterval;
-import com.power.posval.domain.model.value.DeliveryRange;
 import com.power.posval.domain.port.NumericPrecision;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.SequencedSet;
@@ -34,19 +34,20 @@ final class VolumeFilterMapper {
     private VolumeFilterMapper() {} // utility class
 
     /**
-     * Filters {@link VolumeInterval}s overlapping the delivery range,
+     * Filters {@link VolumeInterval}s overlapping [rangeStart, rangeEnd),
      * applies multiplier with domain rounding, and maps to {@link VolumeRecord}s.
      */
     static List<VolumeRecord> filterAndMap(SequencedSet<VolumeInterval> intervals,
-                                            DeliveryRange range,
+                                            Instant rangeStart,
+                                            Instant rangeEnd,
                                             BigDecimal multiplier,
                                             long versionId,
                                             QualityState quality,
                                             SeriesType seriesType,
                                             String meteringPointId,
                                             NumericPrecision np) {
-        long rangeStartMillis = range.startInstant().toInstant().toEpochMilli();
-        long rangeEndMillis = range.endInstant().toInstant().toEpochMilli();
+        long rangeStartMillis = rangeStart.toEpochMilli();
+        long rangeEndMillis = rangeEnd.toEpochMilli();
 
         var result = new ArrayList<VolumeRecord>();
         boolean unitMultiplier = BigDecimal.ONE.compareTo(multiplier) == 0;
@@ -81,14 +82,15 @@ final class VolumeFilterMapper {
      * Same as above for {@link MeteredActualInterval} (separate interface, same fields).
      */
     static List<VolumeRecord> filterAndMapMetered(SequencedSet<MeteredActualInterval> intervals,
-                                                   DeliveryRange range,
+                                                   Instant rangeStart,
+                                                   Instant rangeEnd,
                                                    BigDecimal multiplier,
                                                    long versionId,
                                                    QualityState quality,
                                                    String meteringPointId,
                                                    NumericPrecision np) {
-        long rangeStartMillis = range.startInstant().toInstant().toEpochMilli();
-        long rangeEndMillis = range.endInstant().toInstant().toEpochMilli();
+        long rangeStartMillis = rangeStart.toEpochMilli();
+        long rangeEndMillis = rangeEnd.toEpochMilli();
 
         var result = new ArrayList<VolumeRecord>();
         boolean unitMultiplier = BigDecimal.ONE.compareTo(multiplier) == 0;

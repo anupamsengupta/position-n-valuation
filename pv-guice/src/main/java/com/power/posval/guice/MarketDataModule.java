@@ -6,7 +6,6 @@ import com.power.posval.domain.port.cache.MarketDataCache;
 import com.power.posval.domain.port.marketdata.MarketDataPort;
 import com.power.posval.domain.port.repository.MarketDataRepository;
 import com.power.posval.domain.service.CachingMarketDataPort;
-import com.power.posval.kafka.MarketDataUpdatedConsumer;
 import com.power.posval.persistence.adapter.JpaMarketDataRepository;
 import com.power.posval.redis.RedisMarketDataCache;
 
@@ -29,9 +28,6 @@ public class MarketDataModule extends AbstractModule {
 
         bind(MarketDataPort.class)
             .to(CachingMarketDataPort.class)
-            .in(Singleton.class);
-
-        bind(MarketDataUpdatedConsumer.class)
             .in(Singleton.class);
     }
 }

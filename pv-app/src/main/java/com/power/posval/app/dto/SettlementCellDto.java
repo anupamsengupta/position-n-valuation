@@ -18,12 +18,12 @@ public record SettlementCellDto(
         BigDecimal volumeMw,
         BigDecimal volumeMwh,
         BigDecimal amount,
+        BigDecimal marketPrice,
+        BigDecimal marketAmount,
+        BigDecimal pnl,
         String currency,
         Set<String> activeLeaves,
-        Instant validFrom,
-        Instant validTo,
-        Instant knownFrom,
-        Instant knownTo
+        Instant computedAt
 ) {
     public static SettlementCellDto from(SettlementCell c) {
         return new SettlementCellDto(
@@ -38,12 +38,12 @@ public record SettlementCellDto(
                 c.volumeMw(),
                 c.volumeMwh(),
                 c.amount(),
+                c.marketPrice(),
+                c.marketAmount(),
+                c.pnl(),
                 c.currency(),
                 c.activeLeaves(),
-                c.validFrom(),
-                c.validTo(),
-                c.knownFrom(),
-                c.knownTo()
+                c.computedAt()
         );
     }
 }

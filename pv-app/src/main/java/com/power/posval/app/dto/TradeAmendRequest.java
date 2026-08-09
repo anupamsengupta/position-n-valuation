@@ -18,6 +18,7 @@ public record TradeAmendRequest(
         String businessEffectiveDate,
         String quantity,
         String priceExpressionId,
+        String marketPriceExpressionId,
         String portfolioId,
         String multiplier,
         String deliveryStart,
@@ -42,6 +43,7 @@ public record TradeAmendRequest(
                 Instant.parse(businessEffectiveDate),
                 quantity != null ? new BigDecimal(quantity) : null,
                 priceExpressionId != null ? UUID.fromString(priceExpressionId) : null,
+                marketPriceExpressionId != null ? UUID.fromString(marketPriceExpressionId) : null,
                 portfolioId,
                 multiplier != null ? new BigDecimal(multiplier) : null,
                 dp

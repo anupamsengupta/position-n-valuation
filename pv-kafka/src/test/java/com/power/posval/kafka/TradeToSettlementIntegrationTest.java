@@ -1,7 +1,7 @@
 package com.power.posval.kafka;
 
 import com.power.posval.domain.command.TradeCapture;
-import com.power.posval.domain.event.PositionCaptured;
+import com.power.posval.domain.event.PositionEntryCaptured;
 import com.power.posval.domain.event.SettlementComputed;
 import com.power.posval.domain.model.*;
 import com.power.posval.domain.model.value.DeliveryPeriod;
@@ -36,19 +36,19 @@ import static org.junit.jupiter.api.Assertions.*;
  *
  *   Step 1: TradeCapture command
  *           → DefaultTradeCaptureHandler
- *           → PositionLedgerEntry saved + PositionCaptured event published
+ *           → PositionLedgerEntry saved + PositionEntryCaptured events published (one per entry)
  *
- *   Step 2: Outbox relay (simulated — event passed directly to consumer)
+ *   Step 2: Outbox relay (simulated — events passed directly to consumer)
  *
  *   Step 3: TradeCapturedConsumer.handle()
- *           → idempotency check
- *           → loads position entries from ledger
+ *           → idempotency check (existsByPositionId)
+ *           → loads single entry by positionId
  *           → calls SettlementMaterializationJob
  *
  *   Step 4: SettlementMaterializationJob.execute()
  *           → ProfileResolver resolves volume
  *           → PriceExpressionRepository loads formula
- *           → DefaultPriceEvaluator walks expression tree
+ *           → PriceExpressionBasedEvaluator walks expression tree
  *           → writeResult() computes amount = price × energy
  *
  *   Step 5: SettlementCell persisted + SettlementComputed event published
@@ -96,17 +96,32 @@ class TradeToSettlementIntegrationTest {
         // --- Domain services ---
         var marketData = new JsonMarketDataPort();
         var exprRepo = new JsonPriceExpressionRepository();
-        var priceEvaluator = new DefaultPriceEvaluator(new DefaultNumericPrecision());
+        var priceEvaluator = new PriceExpressionBasedEvaluator(new DefaultNumericPrecision());
         var volumeResolver = new ProfileResolver(seriesRepo, new DefaultNumericPrecision());
 
+        com.power.posval.domain.port.repository.DependencyIndex noOpIndex =
+            new com.power.posval.domain.port.repository.DependencyIndex() {
+                @Override public void upsert(com.power.posval.domain.port.repository.DependencyEdge edge) {}
+                @Override public java.util.List<com.power.posval.domain.port.repository.DependencyEdge> findAffectedCells(
+                    String t, String k, java.time.Instant rs, java.time.Instant re, String f) { return java.util.List.of(); }
+                @Override public void prune(String t, com.power.posval.domain.service.PrunePolicy p) {}
+            };
         var settlementJob = new SettlementMaterializationJob(
             volumeResolver, priceEvaluator, marketData, exprRepo,
-            cellRepo, eventPublisher, new DefaultNumericPrecision());
+            cellRepo, eventPublisher, new DefaultNumericPrecision(), noOpIndex);
 
         // --- Wire the two entry points ---
-        tradeCaptureHandler = new DefaultTradeCaptureHandler(ledgerRepo, eventPublisher);
+        var noOpCache = new com.power.posval.domain.port.cache.TradeIntervalCache() {
+            @Override public java.util.List<com.power.posval.domain.port.cache.TradeIntervalRecord> getForTradeLeg(
+                String t, String id, java.time.Instant s, java.time.Instant e) { return java.util.List.of(); }
+            @Override public void rebuild(String t, String id, java.time.Instant s, java.time.Instant e) {}
+            @Override public void writeAll(String t, java.util.List<com.power.posval.domain.port.cache.TradeIntervalRecord> r) {}
+        };
+        tradeCaptureHandler = new DefaultTradeCaptureHandler(ledgerRepo, eventPublisher, cellRepo, noOpIndex, noOpCache);
+        var cacheRebuilder = new com.power.posval.domain.service.TradeIntervalCacheRebuilder(
+            noOpCache, volumeResolver, seriesRepo);
         tradeCapturedConsumer = new TradeCapturedConsumer(
-            seriesRepo, ledgerRepo, settlementJob);
+            ledgerRepo, cellRepo, settlementJob, cacheRebuilder);
     }
 
     // =====================================================================
@@ -126,11 +141,11 @@ class TradeToSettlementIntegrationTest {
         assertEquals(1, ledgerStore.size(), "Entry persisted to ledger");
         assertEquals("ACTIVE", entries.get(0).status());
 
-        // PositionCaptured event was published
+        // One PositionEntryCaptured event per entry
         assertEquals(1, publishedEvents.size());
-        assertInstanceOf(PositionCaptured.class, publishedEvents.get(0));
-        PositionCaptured capturedEvent = (PositionCaptured) publishedEvents.get(0);
-        assertEquals("T-9999", capturedEvent.tradeId());
+        assertInstanceOf(PositionEntryCaptured.class, publishedEvents.get(0));
+        PositionEntryCaptured capturedEvent = (PositionEntryCaptured) publishedEvents.get(0);
+        assertEquals(entries.get(0).id(), capturedEvent.positionId());
 
         // --- STEP 2: Outbox relay (simulated) ---
         // In production: outbox row → OutboxRelayProducer → Kafka topic
@@ -178,7 +193,7 @@ class TradeToSettlementIntegrationTest {
 
         TradeCapture command = tradeCapture("T-8888", indexSpreadExprId);
         tradeCaptureHandler.handle(command);
-        PositionCaptured event = (PositionCaptured) publishedEvents.get(0);
+        PositionEntryCaptured event = (PositionEntryCaptured) publishedEvents.get(0);
 
         publishedEvents.clear();
         tradeCapturedConsumer.handle(event);
@@ -207,7 +222,7 @@ class TradeToSettlementIntegrationTest {
         TradeCapture command = tradeCapture("T-7777", exprId);
 
         tradeCaptureHandler.handle(command);
-        PositionCaptured event = (PositionCaptured) publishedEvents.get(0);
+        PositionEntryCaptured event = (PositionEntryCaptured) publishedEvents.get(0);
         publishedEvents.clear();
 
         // First time
@@ -234,6 +249,7 @@ class TradeToSettlementIntegrationTest {
                 ZonedDateTime.of(2025, 3, 1, 0, 0, 0, 0, CET),
                 ZonedDateTime.of(2025, 6, 1, 0, 0, 0, 0, CET), CET),
             new BigDecimal("50.0"), VolumeUnit.MW_CAPACITY, exprId,
+            null,
             "PORTFOLIO-1", "DE_LU", "BILATERAL_TRADE",
             Instant.parse("2025-02-15T00:00:00Z"),
             null, BigDecimal.ONE, new SeriesKey("VS-T9999-1"), null);
@@ -241,18 +257,73 @@ class TradeToSettlementIntegrationTest {
         List<PositionLedgerEntry> entries = tradeCaptureHandler.handle(command);
         assertEquals(3, entries.size(), "Mar + Apr + May = 3 monthly blocks");
         assertEquals(3, ledgerStore.size());
+
+        // 3 entries → 3 PositionEntryCaptured events
+        assertEquals(3, publishedEvents.size());
+        for (int i = 0; i < 3; i++) {
+            assertInstanceOf(PositionEntryCaptured.class, publishedEvents.get(i));
+            assertEquals(entries.get(i).id(),
+                ((PositionEntryCaptured) publishedEvents.get(i)).positionId());
+        }
     }
 
+
+    // =====================================================================
+    //  Test 5: Dual expressions — trade price + market price → PnL
+    // =====================================================================
+
+    @Test
+    void fullPipeline_dualExpressions_producesPnl() {
+        // EXPR-1: ConstantLeaf(85.00) — trade price
+        UUID tradePriceExprId = UUID.fromString("00000000-0000-0000-0000-000000000001");
+        // EXPR-2: Add(EPEX_DA15_SETTLE + 3.20) — market price (~28.06)
+        UUID marketPriceExprId = UUID.fromString("00000000-0000-0000-0000-000000000002");
+
+        TradeCapture command = tradeCapture("T-5555", tradePriceExprId, marketPriceExprId);
+        List<PositionLedgerEntry> entries = tradeCaptureHandler.handle(command);
+        assertEquals(1, entries.size());
+        assertEquals(marketPriceExprId, entries.get(0).marketPriceExpressionId());
+
+        PositionEntryCaptured event = (PositionEntryCaptured) publishedEvents.get(0);
+        publishedEvents.clear();
+        tradeCapturedConsumer.handle(event);
+
+        assertEquals(1, settlementStore.size());
+        SettlementCell cell = settlementStore.get(0);
+
+        // Trade price = 85.00
+        assertEquals(0, new BigDecimal("85.00").compareTo(cell.price()),
+            "Trade price should be 85.00");
+
+        // Market price ≈ 28.06 (EPEX 24.86 + premium 3.20)
+        assertNotNull(cell.marketPrice(), "Market price should be set");
+        assertTrue(cell.marketPrice().subtract(new BigDecimal("28.06")).abs()
+            .compareTo(new BigDecimal("0.01")) < 0,
+            "Market price ≈ 28.06, got " + cell.marketPrice());
+
+        // Market amount and PnL
+        assertNotNull(cell.marketAmount(), "Market amount should be set");
+        assertNotNull(cell.pnl(), "PnL should be set");
+        // PnL = marketAmount - tradeAmount (should be negative since market < trade)
+        assertTrue(cell.pnl().compareTo(BigDecimal.ZERO) < 0,
+            "PnL should be negative (market < trade), got " + cell.pnl());
+    }
 
     // ===== Helpers =====
 
     private TradeCapture tradeCapture(String tradeId, UUID priceExpressionId) {
+        return tradeCapture(tradeId, priceExpressionId, null);
+    }
+
+    private TradeCapture tradeCapture(String tradeId, UUID priceExpressionId,
+                                       UUID marketPriceExpressionId) {
         return new TradeCapture(
             tradeId, 1, "LEG-1", "TN_0042",
             new DeliveryPeriod(
                 ZonedDateTime.of(2025, 3, 1, 0, 0, 0, 0, CET),
                 ZonedDateTime.of(2025, 4, 1, 0, 0, 0, 0, CET), CET),
             new BigDecimal("50.0"), VolumeUnit.MW_CAPACITY, priceExpressionId,
+            marketPriceExpressionId,
             "PORTFOLIO-1", "DE_LU", "BILATERAL_TRADE",
             Instant.parse("2025-02-15T00:00:00Z"),
             null, BigDecimal.ONE, new SeriesKey("VS-T9999-1"), null);
@@ -322,15 +393,8 @@ class TradeToSettlementIntegrationTest {
             .intervals(intervals)
             .build();
 
-        // Track processed trade IDs for idempotency checking
-        Set<String> processedTrades = new HashSet<>();
-
         return new VolumeSeriesRepository() {
-            @Override public void save(VolumeSeries s) {
-                // When settlement job runs, it writes through the consumer which
-                // first creates volume series. Mark the trade as processed.
-                processedTrades.add(s.tradeLegId() + ":" + s.versionId());
-            }
+            @Override public void save(VolumeSeries s) {}
             @Override public Optional<VolumeSeries> findById(UUID id) { return Optional.empty(); }
             @Override public Optional<VolumeSeries> findCurrentBySeriesKey(String tenantId, String sk) {
                 return sk.equals(key.value()) ? Optional.of(series) : Optional.empty();
@@ -338,8 +402,7 @@ class TradeToSettlementIntegrationTest {
             @Override public List<VolumeSeries> findByTenantId(String t) { return List.of(); }
             @Override public List<VolumeSeries> findAll(String t, VolumeSeriesSpec s) { return List.of(); }
             @Override public boolean existsByTradeIdAndTradeVersion(String tradeId, int tradeVersion) {
-                // After first processing, mark as seen so second call returns true
-                return !processedTrades.add(tradeId + ":" + tradeVersion);
+                return false;
             }
             @Override public void supersede(VolumeSeries o, VolumeSeries n) {}
         };

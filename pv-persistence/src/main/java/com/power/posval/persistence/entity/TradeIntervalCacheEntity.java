@@ -40,7 +40,7 @@ public class TradeIntervalCacheEntity {
     @Column(name = "resolved_energy", nullable = false, precision = 18, scale = 8)
     private BigDecimal resolvedEnergy;
 
-    @Column(name = "multiplier", nullable = false, precision = 8, scale = 8)
+    @Column(name = "multiplier", nullable = false, precision = 15, scale = 8)
     private BigDecimal multiplier;
 
     @Column(name = "series_key", length = 128, nullable = false)

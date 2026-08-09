@@ -14,6 +14,7 @@ import java.util.UUID;
  * Pattern #14, FR-071, S5a/S8.
  */
 public record SettlementComputed(
+    String tenantId,
     UUID positionId,
     ZonedDateTime intervalStart,
     ZonedDateTime intervalEnd,

@@ -1,7 +1,7 @@
 package com.power.posval.kafka;
 
 import com.power.posval.domain.command.TradeCapture;
-import com.power.posval.domain.event.PositionCaptured;
+import com.power.posval.domain.event.PositionEntryCaptured;
 import com.power.posval.domain.event.SettlementComputed;
 import com.power.posval.domain.model.*;
 import com.power.posval.domain.model.value.DeliveryPeriod;
@@ -9,7 +9,7 @@ import com.power.posval.domain.model.value.SeriesKey;
 import com.power.posval.domain.port.DefaultNumericPrecision;
 import com.power.posval.domain.port.event.DomainEventPublisher;
 import com.power.posval.domain.port.repository.*;
-import com.power.posval.domain.service.DefaultPriceEvaluator;
+import com.power.posval.domain.service.PriceExpressionBasedEvaluator;
 import com.power.posval.domain.service.DefaultTradeCaptureHandler;
 import com.power.posval.domain.service.ProfileResolver;
 import com.power.posval.domain.service.SettlementMaterializationJob;
@@ -138,15 +138,30 @@ class FiveYearTradeIntegrationTest {
         DomainEventPublisher eventPublisher = publishedEvents::add;
 
         // --- Wire domain services ---
-        var priceEvaluator = new DefaultPriceEvaluator(new DefaultNumericPrecision());
+        var priceEvaluator = new PriceExpressionBasedEvaluator(new DefaultNumericPrecision());
         var volumeResolver = new ProfileResolver(seriesRepo, new DefaultNumericPrecision());
+        com.power.posval.domain.port.repository.DependencyIndex noOpIndex =
+            new com.power.posval.domain.port.repository.DependencyIndex() {
+                @Override public void upsert(com.power.posval.domain.port.repository.DependencyEdge edge) {}
+                @Override public java.util.List<com.power.posval.domain.port.repository.DependencyEdge> findAffectedCells(
+                    String t, String k, java.time.Instant rs, java.time.Instant re, String f) { return java.util.List.of(); }
+                @Override public void prune(String t, com.power.posval.domain.service.PrunePolicy p) {}
+            };
         var settlementJob = new SettlementMaterializationJob(
             volumeResolver, priceEvaluator, marketData, exprRepo,
-            cellRepo, eventPublisher, new DefaultNumericPrecision());
+            cellRepo, eventPublisher, new DefaultNumericPrecision(), noOpIndex);
 
-        tradeCaptureHandler = new DefaultTradeCaptureHandler(ledgerRepo, eventPublisher);
+        var noOpCache = new com.power.posval.domain.port.cache.TradeIntervalCache() {
+            @Override public java.util.List<com.power.posval.domain.port.cache.TradeIntervalRecord> getForTradeLeg(
+                String t, String id, java.time.Instant s, java.time.Instant e) { return java.util.List.of(); }
+            @Override public void rebuild(String t, String id, java.time.Instant s, java.time.Instant e) {}
+            @Override public void writeAll(String t, java.util.List<com.power.posval.domain.port.cache.TradeIntervalRecord> r) {}
+        };
+        tradeCaptureHandler = new DefaultTradeCaptureHandler(ledgerRepo, eventPublisher, cellRepo, noOpIndex, noOpCache);
+        var cacheRebuilder = new com.power.posval.domain.service.TradeIntervalCacheRebuilder(
+            noOpCache, volumeResolver, seriesRepo);
         tradeCapturedConsumer = new TradeCapturedConsumer(
-            seriesRepo, ledgerRepo, settlementJob);
+            ledgerRepo, cellRepo, settlementJob, cacheRebuilder);
     }
 
     @Test
@@ -159,6 +174,7 @@ class FiveYearTradeIntegrationTest {
                 ZonedDateTime.of(2025, 1, 1, 0, 0, 0, 0, CET),
                 ZonedDateTime.of(2030, 1, 1, 0, 0, 0, 0, CET), CET),
             new BigDecimal("80.0"), VolumeUnit.MW_CAPACITY, EXPR_4_ID,
+            null,
             "PORTFOLIO-WIND", "DE_LU", "PPA_ONSHORE",
             Instant.parse("2024-12-01T00:00:00Z"),
             "ASSET-WP-NORDSEE-01", BigDecimal.ONE, SERIES_KEY, null);
@@ -173,12 +189,17 @@ class FiveYearTradeIntegrationTest {
         assertEquals(YearMonth.of(2025, 1), entries.get(0).deliveryRange().startMonth());
         assertEquals(YearMonth.of(2029, 12), entries.get(59).deliveryRange().startMonth());
 
-        // --- STEP 2+3: Consumer processes all 60 months ---
-        PositionCaptured capturedEvent = (PositionCaptured) publishedEvents.get(0);
-        assertEquals(60, capturedEvent.entryCount());
+        // --- STEP 2+3: Consumer processes all 60 entries ---
+        // 60 entries → 60 PositionEntryCaptured events
+        assertEquals(60, publishedEvents.size());
+        List<PositionEntryCaptured> capturedEvents = publishedEvents.stream()
+            .map(e -> (PositionEntryCaptured) e)
+            .toList();
 
         publishedEvents.clear();
-        tradeCapturedConsumer.handle(capturedEvent);
+        for (PositionEntryCaptured event : capturedEvents) {
+            tradeCapturedConsumer.handle(event);
+        }
 
         // --- STEP 4+5: Verify settlement cells ---
         assertEquals(totalIntervalCount, settlementStore.size(),

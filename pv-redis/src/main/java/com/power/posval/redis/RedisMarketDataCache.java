@@ -9,7 +9,6 @@ import io.lettuce.core.api.sync.RedisCommands;
 import jakarta.inject.Inject;
 
 import java.math.BigDecimal;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
 
@@ -21,15 +20,19 @@ import java.util.Optional;
  */
 public class RedisMarketDataCache implements MarketDataCache {
 
-    private static final long TTL_STABLE = Duration.ofHours(24).toSeconds();
-    private static final long TTL_VOLATILE = Duration.ofHours(1).toSeconds();
     private static final String KEY_PREFIX = "md:";
 
     private final RedisCommands<String, String> commands;
+    private final RedisCacheTtl ttl;
 
     @Inject
     public RedisMarketDataCache(RedisCommands<String, String> commands) {
+        this(commands, RedisCacheTtl.DEFAULTS);
+    }
+
+    public RedisMarketDataCache(RedisCommands<String, String> commands, RedisCacheTtl ttl) {
         this.commands = commands;
+        this.ttl = ttl;
     }
 
     @Override
@@ -59,7 +62,7 @@ public class RedisMarketDataCache implements MarketDataCache {
     public void putVolSurface(String tenantId, String surfaceId,
                                String lookupKey, VolSurfaceLookup value) {
         String key = key(MarketDataType.VOL_SURFACE, tenantId, surfaceId, lookupKey);
-        commands.setex(key, TTL_VOLATILE, serializeVolSurface(value));
+        commands.setex(key, ttl.marketDataVolatileSeconds(), serializeVolSurface(value));
     }
 
     @Override
@@ -84,15 +87,15 @@ public class RedisMarketDataCache implements MarketDataCache {
 
     private long ttlFor(MarketDataType type) {
         return switch (type) {
-            case FORWARD_CURVE, VOL_SURFACE -> TTL_VOLATILE;
-            case FIXING, FX_RATE, INDEX, SPREAD -> TTL_STABLE;
+            case FORWARD_CURVE, VOL_SURFACE -> ttl.marketDataVolatileSeconds();
+            case FIXING, FX_RATE, INDEX, SPREAD -> ttl.marketDataStableSeconds();
         };
     }
 
     // --- SCAN+DEL invalidation ---
 
     private void scanAndDelete(String pattern) {
-        var scanArgs = io.lettuce.core.ScanArgs.Builder.matches(pattern).limit(1000);
+        var scanArgs = io.lettuce.core.ScanArgs.Builder.matches(pattern).limit(ttl.scanBatchSize());
         var cursor = io.lettuce.core.ScanCursor.INITIAL;
         do {
             var result = commands.scan(cursor, scanArgs);

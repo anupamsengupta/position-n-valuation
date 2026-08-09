@@ -1,7 +1,7 @@
 package com.power.posval.integration;
 
 import com.power.posval.domain.command.TradeCapture;
-import com.power.posval.domain.event.PositionCaptured;
+import com.power.posval.domain.event.PositionEntryCaptured;
 import com.power.posval.domain.model.PositionLedgerEntry;
 import com.power.posval.domain.model.SettlementCell;
 import com.power.posval.domain.model.VolumeUnit;
@@ -105,7 +105,7 @@ class EndToEndValuationIT {
                 VolumeSeriesGenerator.ASSET2_SERIES_KEY, "T-ASSET2")
         );
 
-        List<PositionCaptured> capturedEvents = new ArrayList<>();
+        List<PositionEntryCaptured> capturedEvents = new ArrayList<>();
 
         for (var asset : assets) {
             for (int i = 0; i < multipliers.length; i++) {
@@ -116,6 +116,7 @@ class EndToEndValuationIT {
                     tradeId, 1, "LEG-1", IntegrationTestWiring.TENANT_ID,
                     deliveryPeriod,
                     new BigDecimal("80.0"), VolumeUnit.MW_CAPACITY, EXPR_4_ID,
+                    null,
                     "PORTFOLIO-RENEW", "DE_LU", "PPA_ONSHORE",
                     Instant.parse("2026-06-01T00:00:00Z"),
                     asset.assetId(), mult, asset.seriesKey(), null);
@@ -129,11 +130,12 @@ class EndToEndValuationIT {
                 assertEquals(12, entries.size(),
                     tradeId + " should produce 12 monthly ledger entries");
 
-                // Collect the PositionCaptured event
-                assertTrue(wiring.publishedEvents.size() >= 1,
-                    "At least one event should be published for " + tradeId);
-                capturedEvents.add(
-                    (PositionCaptured) wiring.publishedEvents.get(0));
+                // Collect the PositionEntryCaptured events (one per entry)
+                assertEquals(12, wiring.publishedEvents.size(),
+                    "12 events should be published for " + tradeId);
+                for (Object evt : wiring.publishedEvents) {
+                    capturedEvents.add((PositionEntryCaptured) evt);
+                }
             }
         }
         System.out.println("Phase 3: Created 6 trades (" + capturedEvents.size() + " events)");
@@ -144,7 +146,7 @@ class EndToEndValuationIT {
         wiring.publishedEvents.clear();
 
         long start = System.currentTimeMillis();
-        for (PositionCaptured event : capturedEvents) {
+        for (PositionEntryCaptured event : capturedEvents) {
             wiring.unitOfWork.run(em -> {
                 wiring.tradeCapturedConsumer.handle(event);
             });
@@ -268,6 +270,7 @@ class EndToEndValuationIT {
         TradeCapture cmd = new TradeCapture(
             "T-COLLAR-TEST", 1, "LEG-1", IntegrationTestWiring.TENANT_ID,
             dp, new BigDecimal("80.0"), VolumeUnit.MW_CAPACITY, EXPR_4_ID,
+            null,
             "PORTFOLIO-TEST", "DE_LU", "PPA_ONSHORE",
             Instant.parse("2026-06-01T00:00:00Z"),
             VolumeSeriesGenerator.ASSET1_ID, BigDecimal.ONE,
@@ -276,9 +279,13 @@ class EndToEndValuationIT {
         wiring.publishedEvents.clear();
         wiring.unitOfWork.execute(em -> wiring.tradeCaptureHandler.handle(cmd));
 
-        PositionCaptured event = (PositionCaptured) wiring.publishedEvents.get(0);
+        // Process all per-entry events
+        List<PositionEntryCaptured> events = wiring.publishedEvents.stream()
+            .map(e -> (PositionEntryCaptured) e).toList();
         wiring.publishedEvents.clear();
-        wiring.unitOfWork.run(em -> wiring.tradeCapturedConsumer.handle(event));
+        for (PositionEntryCaptured event : events) {
+            wiring.unitOfWork.run(em -> wiring.tradeCapturedConsumer.handle(event));
+        }
 
         // Verify all cells within collar
         List<SettlementCellEntity> allCells = wiring.unitOfWork.execute(em ->
@@ -312,6 +319,7 @@ class EndToEndValuationIT {
         TradeCapture cmd = new TradeCapture(
             "T-JPQL-TEST", 1, "LEG-1", IntegrationTestWiring.TENANT_ID,
             dp, new BigDecimal("80.0"), VolumeUnit.MW_CAPACITY, EXPR_4_ID,
+            null,
             "PORTFOLIO-TEST", "DE_LU", "PPA_ONSHORE",
             Instant.parse("2026-06-01T00:00:00Z"),
             VolumeSeriesGenerator.ASSET1_ID, BigDecimal.ONE,
@@ -320,9 +328,13 @@ class EndToEndValuationIT {
         wiring.publishedEvents.clear();
         wiring.unitOfWork.execute(em -> wiring.tradeCaptureHandler.handle(cmd));
 
-        PositionCaptured event = (PositionCaptured) wiring.publishedEvents.get(0);
+        // Process all per-entry events
+        List<PositionEntryCaptured> jpqlEvents = wiring.publishedEvents.stream()
+            .map(e -> (PositionEntryCaptured) e).toList();
         wiring.publishedEvents.clear();
-        wiring.unitOfWork.run(em -> wiring.tradeCapturedConsumer.handle(event));
+        for (PositionEntryCaptured event : jpqlEvents) {
+            wiring.unitOfWork.run(em -> wiring.tradeCapturedConsumer.handle(event));
+        }
 
         // Direct JPQL query
         Long count = wiring.unitOfWork.execute(em ->

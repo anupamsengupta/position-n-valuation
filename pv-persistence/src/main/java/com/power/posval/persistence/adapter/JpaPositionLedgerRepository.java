@@ -79,6 +79,30 @@ public class JpaPositionLedgerRepository implements PositionLedgerRepository {
     }
 
     @Override
+    public List<PositionLedgerEntry> findCurrentByTradeLegAndVersion(String tenantId,
+                                                                       String tradeId,
+                                                                       String tradeLegId,
+                                                                       int tradeVersion) {
+        return emProvider.get()
+            .createQuery("""
+                SELECT e FROM PositionLedgerEntryEntity e
+                WHERE e.tenantId     = :tenantId
+                  AND e.tradeId      = :tradeId
+                  AND e.tradeLegId   = :tradeLegId
+                  AND e.tradeVersion = :tradeVersion
+                  AND e.knownTo IS NULL
+                ORDER BY e.deliveryStart
+                """, PositionLedgerEntryEntity.class)
+            .setParameter("tenantId", tenantId)
+            .setParameter("tradeId", tradeId)
+            .setParameter("tradeLegId", tradeLegId)
+            .setParameter("tradeVersion", tradeVersion)
+            .getResultStream()
+            .map(this::toDomain)
+            .toList();
+    }
+
+    @Override
     public List<PositionLedgerEntry> findAsOf(String tenantId,
                                                String tradeId,
                                                String tradeLegId,
@@ -155,6 +179,28 @@ public class JpaPositionLedgerRepository implements PositionLedgerRepository {
     }
 
     @Override
+    public List<PositionLedgerEntry> findCurrentByVolumeSeriesKeyAndDeliveryRange(
+            String volumeSeriesKey,
+            Instant deliveryStart,
+            Instant deliveryEnd) {
+        return emProvider.get()
+            .createQuery("""
+                SELECT e FROM PositionLedgerEntryEntity e
+                WHERE e.volumeSeriesKey = :seriesKey
+                  AND e.deliveryStart < :deliveryEnd
+                  AND e.deliveryEnd > :deliveryStart
+                  AND e.knownTo IS NULL
+                ORDER BY e.tradeLegId, e.deliveryStart
+                """, PositionLedgerEntryEntity.class)
+            .setParameter("seriesKey", volumeSeriesKey)
+            .setParameter("deliveryStart", deliveryStart)
+            .setParameter("deliveryEnd", deliveryEnd)
+            .getResultStream()
+            .map(this::toDomain)
+            .toList();
+    }
+
+    @Override
     public void supersede(List<PositionLedgerEntry> entriesToClose,
                           List<PositionLedgerEntry> newEntries) {
         EntityManager em = emProvider.get();
@@ -181,12 +227,13 @@ public class JpaPositionLedgerRepository implements PositionLedgerRepository {
         e.setTradeId(d.tradeId());
         e.setTradeLegId(d.tradeLegId());
         e.setTradeVersion(d.tradeVersion());
-        e.setDeliveryStart(d.deliveryRange().startInstant().toInstant());
-        e.setDeliveryEnd(d.deliveryRange().endInstant().toInstant());
+        e.setDeliveryStart(d.deliveryStart());
+        e.setDeliveryEnd(d.deliveryEnd());
         e.setDeliveryTimezone(d.deliveryRange().deliveryTimezone().getId());
         e.setQuantity(d.quantity());
         e.setVolumeUnit(d.volumeUnit().name());
         e.setPriceExpressionId(d.priceExpressionId());
+        e.setMarketPriceExpressionId(d.marketPriceExpressionId());
         e.setVolumeSeriesKey(d.volumeSeriesKey() != null ? d.volumeSeriesKey().value() : null);
         e.setMultiplier(d.multiplier());
         e.setValidFrom(d.validFrom());
@@ -211,9 +258,12 @@ public class JpaPositionLedgerRepository implements PositionLedgerRepository {
                 YearMonth.from(e.getDeliveryStart().atZone(tz)),
                 YearMonth.from(e.getDeliveryEnd().minusNanos(1).atZone(tz)),
                 tz))
+            .deliveryStart(e.getDeliveryStart())
+            .deliveryEnd(e.getDeliveryEnd())
             .quantity(e.getQuantity())
             .volumeUnit(VolumeUnit.valueOf(e.getVolumeUnit()))
             .priceExpressionId(e.getPriceExpressionId())
+            .marketPriceExpressionId(e.getMarketPriceExpressionId())
             .volumeSeriesKey(e.getVolumeSeriesKey() != null
                 ? new SeriesKey(e.getVolumeSeriesKey()) : null)
             .multiplier(e.getMultiplier())

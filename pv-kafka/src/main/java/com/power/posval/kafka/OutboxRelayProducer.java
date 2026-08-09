@@ -9,6 +9,7 @@ import org.apache.kafka.clients.producer.ProducerRecord;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.concurrent.ExecutionException;
 
 /**
  * Outbox relay producer. §15.2, Pattern #24.
@@ -50,16 +51,15 @@ public class OutboxRelayProducer {
                 var record = new ProducerRecord<>(topic,
                     entry.getAggregateId(), entry.getPayload());
 
-                producer.send(record, (metadata, exception) -> {
-                    if (exception == null) {
-                        entry.setPublishedAt(Instant.now());
-                        em.merge(entry);
-                    } else {
-                        entry.setPublishAttempts(entry.getPublishAttempts() + 1);
-                        em.merge(entry);
-                    }
-                });
+                // Synchronous send — block until broker ACK so EM is still open
+                producer.send(record).get();
+                entry.setPublishedAt(Instant.now());
+                em.merge(entry);
                 published++;
+            } catch (ExecutionException e) {
+                // Broker rejected the message
+                entry.setPublishAttempts(entry.getPublishAttempts() + 1);
+                em.merge(entry);
             } catch (Exception e) {
                 entry.setPublishAttempts(entry.getPublishAttempts() + 1);
                 em.merge(entry);

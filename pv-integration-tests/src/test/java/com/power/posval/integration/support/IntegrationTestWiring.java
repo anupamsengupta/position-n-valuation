@@ -13,9 +13,13 @@ import com.power.posval.domain.port.repository.VolumeSeriesRepository;
 import com.power.posval.domain.port.repository.VolumeSeriesSpec;
 import com.power.posval.domain.port.tenant.TenantContext;
 import com.power.posval.domain.service.CachingMarketDataPort;
-import com.power.posval.domain.service.DefaultPriceEvaluator;
+import com.power.posval.domain.service.PriceExpressionBasedEvaluator;
 import com.power.posval.domain.service.DefaultTradeCaptureHandler;
 import com.power.posval.domain.service.ProfileResolver;
+import com.power.posval.domain.model.value.DeliveryRange;
+import com.power.posval.domain.port.repository.DependencyEdge;
+import com.power.posval.domain.port.repository.DependencyIndex;
+import com.power.posval.domain.service.PrunePolicy;
 import com.power.posval.domain.service.SettlementMaterializationJob;
 import com.power.posval.domain.service.stub.JsonPriceExpressionRepository;
 import com.power.posval.kafka.TradeCapturedConsumer;
@@ -108,7 +112,7 @@ public class IntegrationTestWiring {
         NumericPrecision np = new DefaultNumericPrecision();
         cachingMarketData = new CachingMarketDataPort(cache, marketDataRepo, tenantContext);
         var exprRepo = new JsonPriceExpressionRepository();
-        var priceEvaluator = new DefaultPriceEvaluator(np);
+        var priceEvaluator = new PriceExpressionBasedEvaluator(np);
 
         // ProfileResolver passes ref.tradeId() as tenantId to findCurrentBySeriesKey,
         // but JpaVolumeSeriesRepository.toEntity() hardcodes tenantId to "default".
@@ -118,6 +122,10 @@ public class IntegrationTestWiring {
             @Override public Optional<VolumeSeries> findById(UUID id) { return volumeSeriesRepo.findById(id); }
             @Override public Optional<VolumeSeries> findCurrentBySeriesKey(String tenantId, String sk) {
                 return volumeSeriesRepo.findCurrentBySeriesKey(TENANT_ID, sk);
+            }
+            @Override public Optional<VolumeSeries> findCurrentBySeriesKeyAndRange(String tenantId, String sk,
+                                                                                     java.time.Instant rangeStart, java.time.Instant rangeEnd) {
+                return volumeSeriesRepo.findCurrentBySeriesKeyAndRange(TENANT_ID, sk, rangeStart, rangeEnd);
             }
             @Override public List<VolumeSeries> findByTenantId(String t) { return volumeSeriesRepo.findByTenantId(TENANT_ID); }
             @Override public List<VolumeSeries> findAll(String t, VolumeSeriesSpec s) { return volumeSeriesRepo.findAll(TENANT_ID, s); }
@@ -129,13 +137,30 @@ public class IntegrationTestWiring {
 
         var volumeResolver = new ProfileResolver(tenantNormalizedRepo, np);
 
+        // No-op DependencyIndex — H2 does not support jsonb native queries
+        DependencyIndex dependencyIndex = new DependencyIndex() {
+            @Override public void upsert(DependencyEdge edge) {}
+            @Override public List<DependencyEdge> findAffectedCells(
+                String t, String k, java.time.Instant rs, java.time.Instant re, String f) { return List.of(); }
+            @Override public void prune(String t, PrunePolicy p) {}
+        };
+
         settlementJob = new SettlementMaterializationJob(
             volumeResolver, priceEvaluator, cachingMarketData, exprRepo,
-            cellRepo, eventPublisher, np);
+            cellRepo, eventPublisher, np, dependencyIndex);
 
-        tradeCaptureHandler = new DefaultTradeCaptureHandler(ledgerRepo, eventPublisher);
+        var noOpCache = new com.power.posval.domain.port.cache.TradeIntervalCache() {
+            @Override public java.util.List<com.power.posval.domain.port.cache.TradeIntervalRecord> getForTradeLeg(
+                String t, String id, java.time.Instant s, java.time.Instant e) { return java.util.List.of(); }
+            @Override public void rebuild(String t, String id, java.time.Instant s, java.time.Instant e) {}
+            @Override public void writeAll(String t, java.util.List<com.power.posval.domain.port.cache.TradeIntervalRecord> r) {}
+        };
+        var cacheRebuilder = new com.power.posval.domain.service.TradeIntervalCacheRebuilder(
+            noOpCache, volumeResolver, tenantNormalizedRepo);
+
+        tradeCaptureHandler = new DefaultTradeCaptureHandler(ledgerRepo, eventPublisher, cellRepo, dependencyIndex, noOpCache);
         tradeCapturedConsumer = new TradeCapturedConsumer(
-            tenantNormalizedRepo, ledgerRepo, settlementJob);
+            ledgerRepo, cellRepo, settlementJob, cacheRebuilder);
     }
 
     public static IntegrationTestWiring create() {

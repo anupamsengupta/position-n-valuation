@@ -1,5 +1,6 @@
 package com.power.posval.domain.port.repository;
 
+import com.power.posval.domain.model.PositionMonthSummary;
 import com.power.posval.domain.model.SettlementCell;
 
 import java.time.Instant;
@@ -27,4 +28,53 @@ public interface SettlementCellRepository {
     /** Find current-knowledge settlement cells for a position within a range. */
     List<SettlementCell> findByPosition(String tenantId, UUID positionId,
                                          Instant rangeStart, Instant rangeEnd);
+
+    /**
+     * Delete settlement cells for a position whose intervalStart falls within [start, end).
+     * Used by revaluation to replace stale cells with fresh computations.
+     * @return number of cells deleted
+     */
+    default int deleteByPositionAndInterval(String tenantId, UUID positionId,
+                                             Instant intervalStart, Instant intervalEnd) {
+        throw new UnsupportedOperationException("deleteByPositionAndInterval not implemented");
+    }
+
+    /**
+     * Aggregate settlement cells per position × delivery-month for a tenant
+     * within a delivery range. Computes: totalMwh (sum), avgMw (TWA),
+     * totalAmount (sum), totalMarketAmount (sum), totalPnl (sum),
+     * avgPrice (volume-weighted), avgMarketPrice (volume-weighted).
+     * FR-035, FR-090.
+     */
+    default List<PositionMonthSummary> findMonthlySummary(String tenantId,
+                                                            Instant rangeStart,
+                                                            Instant rangeEnd) {
+        throw new UnsupportedOperationException("findMonthlySummary not implemented");
+    }
+
+    /**
+     * Aggregate settlement cells for a single position within a delivery range.
+     * Returns one PositionMonthSummary per delivery month.
+     */
+    default List<PositionMonthSummary> findMonthlySummaryByPosition(String tenantId,
+                                                                      UUID positionId,
+                                                                      Instant rangeStart,
+                                                                      Instant rangeEnd) {
+        throw new UnsupportedOperationException("findMonthlySummaryByPosition not implemented");
+    }
+
+    /**
+     * Delete all settlement cells for a position.
+     * Used during trade supersession to clean up old position's cells.
+     * @return number of cells deleted
+     */
+    default int deleteByPositionId(String tenantId, UUID positionId) {
+        throw new UnsupportedOperationException("deleteByPositionId not implemented");
+    }
+
+    /** Check if any settlement cells exist for a given position (idempotency check). */
+    default boolean existsByPositionId(String tenantId, UUID positionId) {
+        return !findByPosition(tenantId, positionId,
+                Instant.EPOCH, Instant.parse("2100-01-01T00:00:00Z")).isEmpty();
+    }
 }

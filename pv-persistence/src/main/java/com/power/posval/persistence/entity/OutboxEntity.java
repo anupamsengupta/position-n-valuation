@@ -1,6 +1,9 @@
 package com.power.posval.persistence.entity;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
 import java.time.Instant;
 
 /** §15.2 — transactional outbox for domain events (Pattern #24). */
@@ -24,6 +27,7 @@ public class OutboxEntity {
     @Column(name = "event_type", length = 64, nullable = false)
     private String eventType;
 
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "payload", columnDefinition = "jsonb", nullable = false)
     private String payload;
 

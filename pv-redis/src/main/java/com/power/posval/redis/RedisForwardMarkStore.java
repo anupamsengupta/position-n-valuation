@@ -6,7 +6,6 @@ import io.lettuce.core.api.sync.RedisCommands;
 import jakarta.inject.Inject;
 
 import java.math.BigDecimal;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
 
@@ -17,14 +16,19 @@ import java.util.*;
  */
 public class RedisForwardMarkStore implements ForwardMarkStore {
 
-    private static final long TTL_SECONDS = Duration.ofMinutes(5).toSeconds();
     private static final String KEY_PREFIX = "fwd:";
 
     private final RedisCommands<String, String> commands;
+    private final RedisCacheTtl ttl;
 
     @Inject
     public RedisForwardMarkStore(RedisCommands<String, String> commands) {
+        this(commands, RedisCacheTtl.DEFAULTS);
+    }
+
+    public RedisForwardMarkStore(RedisCommands<String, String> commands, RedisCacheTtl ttl) {
         this.commands = commands;
+        this.ttl = ttl;
     }
 
     @Override
@@ -35,7 +39,7 @@ public class RedisForwardMarkStore implements ForwardMarkStore {
         String key = key(tenantId, positionId, intervalStart);
         String value = markValue + "|" + currency + "|" + intervalEnd
             + "|" + inputVersionSet;
-        commands.setex(key, TTL_SECONDS, value);
+        commands.setex(key, ttl.forwardMarkSeconds(), value);
     }
 
     @Override
@@ -53,7 +57,7 @@ public class RedisForwardMarkStore implements ForwardMarkStore {
         // SCAN for matching keys in range
         String pattern = KEY_PREFIX + tenantId + ":" + positionId + ":*";
         io.lettuce.core.ScanArgs scanArgs = io.lettuce.core.ScanArgs.Builder
-            .matches(pattern).limit(1000);
+            .matches(pattern).limit(ttl.scanBatchSize());
         var cursor = io.lettuce.core.ScanCursor.INITIAL;
         List<ForwardMark> results = new ArrayList<>();
 
@@ -79,7 +83,7 @@ public class RedisForwardMarkStore implements ForwardMarkStore {
     public void removeAll(String tenantId, UUID positionId) {
         String pattern = KEY_PREFIX + tenantId + ":" + positionId + ":*";
         io.lettuce.core.ScanArgs scanArgs = io.lettuce.core.ScanArgs.Builder
-            .matches(pattern).limit(1000);
+            .matches(pattern).limit(ttl.scanBatchSize());
         var cursor = io.lettuce.core.ScanCursor.INITIAL;
 
         do {

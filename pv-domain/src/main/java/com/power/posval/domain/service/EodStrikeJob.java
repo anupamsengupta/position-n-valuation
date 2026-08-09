@@ -44,7 +44,9 @@ public class EodStrikeJob extends AbstractMaterializationJob<StruckMark> {
     protected List<VolumeRecord> resolveVolume(PositionLedgerEntry position,
                                                 DeliveryRange intervalRange) {
         VolumeReference ref = buildVolumeReference(position);
-        return volumeResolver.resolve(ref, intervalRange, ResolutionPurpose.FORWARD);
+        return volumeResolver.resolve(ref,
+            position.deliveryStart(), position.deliveryEnd(),
+            ResolutionPurpose.FORWARD);
     }
 
     @Override
@@ -92,6 +94,7 @@ public class EodStrikeJob extends AbstractMaterializationJob<StruckMark> {
             .id(UUID.randomUUID())
             .tradeLegId(position.tradeLegId())
             .tradeId(position.tradeId())
+            .tenantId(position.tenantId())
             .multiplier(position.multiplier())
             .volumeSeriesKey(position.volumeSeriesKey())
             .effectiveFrom(ZonedDateTime.ofInstant(

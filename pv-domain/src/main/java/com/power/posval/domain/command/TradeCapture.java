@@ -22,6 +22,7 @@ public record TradeCapture(
     BigDecimal quantity,
     VolumeUnit volumeUnit,
     UUID priceExpressionId,
+    UUID marketPriceExpressionId,  // nullable — market-to-market price expression
     String portfolioId,
     String deliveryPointId,
     String originType,         // EXCHANGE_FILL, BILATERAL_TRADE, ...

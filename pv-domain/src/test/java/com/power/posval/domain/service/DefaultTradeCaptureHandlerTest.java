@@ -6,7 +6,9 @@ import com.power.posval.domain.model.VolumeUnit;
 import com.power.posval.domain.model.value.DeliveryPeriod;
 import com.power.posval.domain.model.value.SeriesKey;
 import com.power.posval.domain.port.event.DomainEventPublisher;
+import com.power.posval.domain.port.repository.DependencyIndex;
 import com.power.posval.domain.port.repository.PositionLedgerRepository;
+import com.power.posval.domain.port.repository.SettlementCellRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -34,8 +36,27 @@ class DefaultTradeCaptureHandlerTest {
 
         PositionLedgerRepository stubRepo = new StubPositionLedgerRepository(savedEntries);
         DomainEventPublisher stubPublisher = publishedEvents::add;
+        SettlementCellRepository noOpCellRepo = new SettlementCellRepository() {
+            @Override public void save(com.power.posval.domain.model.SettlementCell cell) {}
+            @Override public List<com.power.posval.domain.model.SettlementCell> findByPosition(
+                String t, UUID p, Instant s, Instant e) { return List.of(); }
+        };
+        DependencyIndex noOpDepIndex = new DependencyIndex() {
+            @Override public void upsert(com.power.posval.domain.port.repository.DependencyEdge edge) {}
+            @Override public List<com.power.posval.domain.port.repository.DependencyEdge> findAffectedCells(
+                String t, String k, Instant rs, Instant re, String f) { return List.of(); }
+            @Override public void prune(String t, com.power.posval.domain.service.PrunePolicy p) {}
+        };
 
-        handler = new DefaultTradeCaptureHandler(stubRepo, stubPublisher);
+        com.power.posval.domain.port.cache.TradeIntervalCache noOpCache =
+            new com.power.posval.domain.port.cache.TradeIntervalCache() {
+                @Override public java.util.List<com.power.posval.domain.port.cache.TradeIntervalRecord> getForTradeLeg(
+                    String t, String id, Instant s, Instant e) { return List.of(); }
+                @Override public void rebuild(String t, String id, Instant s, Instant e) {}
+                @Override public void writeAll(String t, java.util.List<com.power.posval.domain.port.cache.TradeIntervalRecord> r) {}
+            };
+
+        handler = new DefaultTradeCaptureHandler(stubRepo, stubPublisher, noOpCellRepo, noOpDepIndex, noOpCache);
     }
 
     @Test
@@ -79,12 +100,32 @@ class DefaultTradeCaptureHandlerTest {
         assertEquals(0, new BigDecimal("10.0").compareTo(entry.quantity()));
     }
 
+    @Test
+    void marketPriceExpressionId_flowsThrough() {
+        UUID marketExprId = UUID.randomUUID();
+        var cmd = new TradeCapture(
+            "T-7788", 1, "LEG-1", "TN_0042",
+            new DeliveryPeriod(
+                ZonedDateTime.of(2025, 3, 1, 0, 0, 0, 0, CET),
+                ZonedDateTime.of(2025, 4, 1, 0, 0, 0, 0, CET), CET),
+            new BigDecimal("10.0"), VolumeUnit.MW_CAPACITY,
+            UUID.randomUUID(), marketExprId, "PORTFOLIO-1", "DE_LU",
+            "BILATERAL_TRADE", Instant.now(),
+            null, BigDecimal.ONE,
+            new SeriesKey("VS-T7788-1"), null);
+
+        List<PositionLedgerEntry> entries = handler.handle(cmd);
+
+        assertEquals(1, entries.size());
+        assertEquals(marketExprId, entries.get(0).marketPriceExpressionId());
+    }
+
     private TradeCapture tradeCapture(ZonedDateTime start, ZonedDateTime end) {
         return new TradeCapture(
             "T-7788", 1, "LEG-1", "TN_0042",
             new DeliveryPeriod(start, end, CET),
             new BigDecimal("10.0"), VolumeUnit.MW_CAPACITY,
-            UUID.randomUUID(), "PORTFOLIO-1", "DE_LU",
+            UUID.randomUUID(), null, "PORTFOLIO-1", "DE_LU",
             "BILATERAL_TRADE", Instant.now(),
             null, BigDecimal.ONE,
             new SeriesKey("VS-T7788-1"), null);

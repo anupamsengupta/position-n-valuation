@@ -1,8 +1,8 @@
 package com.power.posval.persistence.adapter;
 
-import com.power.posval.domain.model.value.DeliveryRange;
 import com.power.posval.domain.port.cache.TradeIntervalCache;
 import com.power.posval.domain.port.cache.TradeIntervalRecord;
+import com.power.posval.persistence.batch.BatchWriter;
 import com.power.posval.persistence.entity.TradeIntervalCacheEntity;
 import jakarta.inject.Inject;
 import jakarta.inject.Provider;
@@ -17,10 +17,13 @@ import java.util.List;
 public class JpaTradeIntervalCache implements TradeIntervalCache {
 
     private final Provider<EntityManager> emProvider;
+    private final BatchWriter batchWriter;
 
     @Inject
-    public JpaTradeIntervalCache(Provider<EntityManager> emProvider) {
+    public JpaTradeIntervalCache(Provider<EntityManager> emProvider,
+                                  BatchWriter batchWriter) {
         this.emProvider = emProvider;
+        this.batchWriter = batchWriter;
     }
 
     @Override
@@ -47,10 +50,8 @@ public class JpaTradeIntervalCache implements TradeIntervalCache {
     }
 
     @Override
-    public void rebuild(String tenantId, String tradeLegId, DeliveryRange affectedRange) {
+    public void rebuild(String tenantId, String tradeLegId, Instant rangeStart, Instant rangeEnd) {
         EntityManager em = emProvider.get();
-        Instant start = affectedRange.startInstant().toInstant();
-        Instant end = affectedRange.endInstant().toInstant();
 
         // Delete existing cache entries for affected range
         em.createQuery("""
@@ -62,16 +63,15 @@ public class JpaTradeIntervalCache implements TradeIntervalCache {
             """)
             .setParameter("tenantId", tenantId)
             .setParameter("tradeLegId", tradeLegId)
-            .setParameter("start", start)
-            .setParameter("end", end)
+            .setParameter("start", rangeStart)
+            .setParameter("end", rangeEnd)
             .executeUpdate();
     }
 
     @Override
     public void writeAll(String tenantId, List<TradeIntervalRecord> records) {
-        EntityManager em = emProvider.get();
         Instant now = Instant.now();
-        for (TradeIntervalRecord r : records) {
+        List<TradeIntervalCacheEntity> entities = records.stream().map(r -> {
             var entity = new TradeIntervalCacheEntity();
             entity.setTenantId(tenantId);
             entity.setTradeLegId(r.tradeLegId());
@@ -83,8 +83,9 @@ public class JpaTradeIntervalCache implements TradeIntervalCache {
             entity.setSeriesKey(r.seriesKey());
             entity.setVersionHash(r.versionHash());
             entity.setCreatedAt(now);
-            em.persist(entity);
-        }
+            return entity;
+        }).toList();
+        batchWriter.writeAll(entities);
     }
 
     private TradeIntervalRecord toDomain(TradeIntervalCacheEntity e) {

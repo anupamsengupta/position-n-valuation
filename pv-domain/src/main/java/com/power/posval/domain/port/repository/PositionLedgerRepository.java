@@ -33,6 +33,14 @@ public interface PositionLedgerRepository {
     /** Current-knowledge entries for a trade-leg across all delivery months. */
     List<PositionLedgerEntry> findCurrentByTradeLeg(String tenantId, String tradeId, String tradeLegId);
 
+    /** Current-knowledge entries for a specific trade-leg and version. Used for idempotency checks. */
+    default List<PositionLedgerEntry> findCurrentByTradeLegAndVersion(String tenantId, String tradeId,
+                                                                       String tradeLegId, int tradeVersion) {
+        return findCurrentByTradeLeg(tenantId, tradeId, tradeLegId).stream()
+                .filter(e -> e.tradeVersion() == tradeVersion)
+                .toList();
+    }
+
     /** Bitemporal as-of reconstruction (FR-007). Grain = trade-leg × delivery-month. */
     List<PositionLedgerEntry> findAsOf(String tenantId, String tradeId, String tradeLegId,
                                        Instant businessDate, Instant knowledgeDate);
@@ -48,6 +56,17 @@ public interface PositionLedgerRepository {
                                                               String tradeLegId,
                                                               Instant deliveryStart,
                                                               Instant deliveryEnd);
+
+    /**
+     * Current-knowledge entries that reference a specific volume series key
+     * and whose delivery range overlaps the given interval.
+     * Used by VolumeSuperseded revaluation to find affected positions.
+     */
+    default List<PositionLedgerEntry> findCurrentByVolumeSeriesKeyAndDeliveryRange(
+            String volumeSeriesKey, Instant deliveryStart, Instant deliveryEnd) {
+        throw new UnsupportedOperationException(
+            "findCurrentByVolumeSeriesKeyAndDeliveryRange not implemented");
+    }
 
     /**
      * Supersede existing entries by closing known_to, then saving new versions.

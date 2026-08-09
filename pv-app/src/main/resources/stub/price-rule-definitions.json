@@ -1,0 +1,87 @@
+[
+  {
+    "priceExpressionId": "00000000-0000-0000-0000-000000000001",
+    "mvelFormula": "fixed_price",
+    "constants": {
+      "fixed_price": 85.0
+    },
+    "seriesBindings": {}
+  },
+  {
+    "priceExpressionId": "00000000-0000-0000-0000-000000000002",
+    "mvelFormula": "epex_da15 + premium",
+    "constants": {
+      "premium": 3.2
+    },
+    "seriesBindings": {
+      "epex_da15": {
+        "series": "EPEX_DA15",
+        "settlementSeries": "EPEX_DA15_SETTLE",
+        "lookupType": "FIXING",
+        "refMonthExpression": null
+      }
+    }
+  },
+  {
+    "priceExpressionId": "00000000-0000-0000-0000-000000000003",
+    "mvelFormula": "np.clamp(floor, cap, epex_da15)",
+    "constants": {
+      "floor": 42.0,
+      "cap": 95.0
+    },
+    "seriesBindings": {
+      "epex_da15": {
+        "series": "EPEX_DA15",
+        "settlementSeries": "EPEX_DA15_SETTLE",
+        "lookupType": "FIXING",
+        "refMonthExpression": null
+      }
+    }
+  },
+  {
+    "priceExpressionId": "00000000-0000-0000-0000-000000000004",
+    "mvelFormula": "epex_da15_gate.compareTo(java.math.BigDecimal.ZERO) < 0 ? zero_override : np.clamp(floor, cap, np.escalate(base_price, np.divide(hicp_current, hicp_base)))",
+    "constants": {
+      "zero_override": 0,
+      "floor": 38,
+      "cap": 110,
+      "base_price": 72,
+      "hicp_base": 108.7
+    },
+    "seriesBindings": {
+      "epex_da15_gate": {
+        "series": "EPEX_DA15",
+        "settlementSeries": "EPEX_DA15_SETTLE",
+        "lookupType": "FIXING",
+        "refMonthExpression": null
+      },
+      "hicp_current": {
+        "series": "HICP-DE",
+        "settlementSeries": null,
+        "lookupType": "INDEX",
+        "refMonthExpression": "deliveryYear-1:November"
+      }
+    }
+  },
+  {
+    "priceExpressionId": "00000000-0000-0000-0000-000000000005",
+    "mvelFormula": "np.monetary((nordpool_sys - nok_discount) * fx_eur_nok)",
+    "constants": {
+      "nok_discount": 12.0
+    },
+    "seriesBindings": {
+      "nordpool_sys": {
+        "series": "NORDPOOL_SYS",
+        "settlementSeries": "NORDPOOL_SYS_SETTLE",
+        "lookupType": "FIXING",
+        "refMonthExpression": null
+      },
+      "fx_eur_nok": {
+        "series": "EUR/NOK",
+        "settlementSeries": null,
+        "lookupType": "FX_RATE",
+        "refMonthExpression": null
+      }
+    }
+  }
+]
