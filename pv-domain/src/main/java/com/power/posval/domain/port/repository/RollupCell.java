@@ -19,6 +19,8 @@ public record RollupCell(
     boolean isPeak,
     BigDecimal netMw,
     BigDecimal netMwh,
+    BigDecimal price,           // volume-weighted average trade price (settledValue / netMwh)
+    BigDecimal marketPrice,     // volume-weighted average market price (marketValue / netMwh)
     BigDecimal settledValue,
     BigDecimal marketValue,
     BigDecimal pnl,

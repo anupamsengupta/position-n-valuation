@@ -234,6 +234,8 @@ public class JpaPositionLedgerRepository implements PositionLedgerRepository {
         e.setVolumeUnit(d.volumeUnit().name());
         e.setPriceExpressionId(d.priceExpressionId());
         e.setMarketPriceExpressionId(d.marketPriceExpressionId());
+        e.setPortfolioId(d.portfolioId());
+        e.setDeliveryPointId(d.deliveryPointId());
         e.setVolumeSeriesKey(d.volumeSeriesKey() != null ? d.volumeSeriesKey().value() : null);
         e.setMultiplier(d.multiplier());
         e.setValidFrom(d.validFrom());
@@ -264,6 +266,8 @@ public class JpaPositionLedgerRepository implements PositionLedgerRepository {
             .volumeUnit(VolumeUnit.valueOf(e.getVolumeUnit()))
             .priceExpressionId(e.getPriceExpressionId())
             .marketPriceExpressionId(e.getMarketPriceExpressionId())
+            .portfolioId(e.getPortfolioId())
+            .deliveryPointId(e.getDeliveryPointId())
             .volumeSeriesKey(e.getVolumeSeriesKey() != null
                 ? new SeriesKey(e.getVolumeSeriesKey()) : null)
             .multiplier(e.getMultiplier())

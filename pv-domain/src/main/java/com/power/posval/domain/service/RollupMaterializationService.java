@@ -151,8 +151,29 @@ public class RollupMaterializationService {
     private RollupCell aggregate(RollupKey key, List<SettlementCell> cells,
                                   TimeGranularity granularity) {
         // FR-035: MW = time-weighted average; MWh = sum; amounts = sum
+        // Fix: group by interval first, sum MW per interval (net position across trades),
+        // then TWA across distinct intervals so overlapping trade cells don't inflate
+        // the denominator.
+
+        // 1. Sum MW per distinct interval (net position at each interval)
+        record IntervalKey(Instant start, Instant end) {}
+        Map<IntervalKey, BigDecimal> netMwByInterval = new LinkedHashMap<>();
+        for (SettlementCell cell : cells) {
+            IntervalKey ik = new IntervalKey(cell.intervalStart(), cell.intervalEnd());
+            BigDecimal mw = cell.volumeMw() != null ? cell.volumeMw() : BigDecimal.ZERO;
+            netMwByInterval.merge(ik, mw, BigDecimal::add);
+        }
+
+        // 2. TWA across distinct intervals
         BigDecimal weightedMwSum = BigDecimal.ZERO;
         long totalMinutes = 0;
+        for (var entry : netMwByInterval.entrySet()) {
+            long minutes = Duration.between(entry.getKey().start(), entry.getKey().end()).toMinutes();
+            weightedMwSum = weightedMwSum.add(entry.getValue().multiply(BigDecimal.valueOf(minutes)));
+            totalMinutes += minutes;
+        }
+
+        // 3. Accumulate energy and monetary totals (sum across all cells — correct for portfolio)
         BigDecimal totalMwh = BigDecimal.ZERO;
         BigDecimal totalAmount = BigDecimal.ZERO;
         BigDecimal totalMarketAmount = BigDecimal.ZERO;
@@ -160,13 +181,6 @@ public class RollupMaterializationService {
         String currency = "EUR";
 
         for (SettlementCell cell : cells) {
-            long minutes = Duration.between(cell.intervalStart(), cell.intervalEnd()).toMinutes();
-            if (cell.volumeMw() != null) {
-                weightedMwSum = weightedMwSum.add(
-                    cell.volumeMw().multiply(BigDecimal.valueOf(minutes)));
-            }
-            totalMinutes += minutes;
-
             if (cell.volumeMwh() != null) {
                 totalMwh = totalMwh.add(cell.volumeMwh());
             }
@@ -188,9 +202,22 @@ public class RollupMaterializationService {
                 NumericPrecision.Domain.VOLUME)
             : BigDecimal.ZERO;
 
+        BigDecimal netMwh = np.round(totalMwh, NumericPrecision.Domain.ENERGY);
         BigDecimal settledValue = np.round(totalAmount, NumericPrecision.Domain.MONETARY);
         BigDecimal marketValue = np.round(totalMarketAmount, NumericPrecision.Domain.MONETARY);
         BigDecimal pnl = np.round(totalPnl, NumericPrecision.Domain.MONETARY);
+
+        // Volume-weighted average prices: price = settledValue / netMwh
+        BigDecimal price = netMwh.signum() != 0
+            ? np.round(settledValue.divide(netMwh,
+                np.scale(NumericPrecision.Domain.PRICE), np.roundingMode()),
+                NumericPrecision.Domain.PRICE)
+            : BigDecimal.ZERO;
+        BigDecimal marketPrice = netMwh.signum() != 0
+            ? np.round(marketValue.divide(netMwh,
+                np.scale(NumericPrecision.Domain.PRICE), np.roundingMode()),
+                NumericPrecision.Domain.PRICE)
+            : BigDecimal.ZERO;
 
         // Version hash from cell count + total for staleness detection
         String versionHash = Integer.toHexString(
@@ -201,7 +228,9 @@ public class RollupMaterializationService {
             key.deliveryPointId, key.portfolioId,
             false,  // isPeak — requires PeakCalendar (FR-026), not yet implemented
             netMw,
-            np.round(totalMwh, NumericPrecision.Domain.ENERGY),
+            netMwh,
+            price,
+            marketPrice,
             settledValue,
             marketValue,
             pnl,

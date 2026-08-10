@@ -3,7 +3,7 @@ server:
 
 pv:
   pricing:
-    strategy: expression  # "expression" or "rule-engine"
+    strategy: rule-engine  # "expression" or "rule-engine"
   datasource:
     url: jdbc:postgresql://localhost:9432/posval
     username: posval
