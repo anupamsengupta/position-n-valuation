@@ -118,8 +118,15 @@ public class RollupMaterializationService {
             rollupCells.size(), tenantId, rangeStart, rangeEnd, granularity);
     }
 
+    /** Granularities materialized on every settlement event for portfolio views. */
+    private static final List<TimeGranularity> PORTFOLIO_GRANULARITIES = List.of(
+        TimeGranularity.WEEKLY, TimeGranularity.MONTHLY, TimeGranularity.YEARLY);
+
     /**
      * Materialize rollup for a single position (triggered by settlement events).
+     * Delegates to bulk materialize() at WEEKLY, MONTHLY, and YEARLY granularities
+     * so that the rollup cells reflect ALL trades in the same (deliveryPoint, portfolio)
+     * for each period, not just the triggering position.
      */
     public void materializeForPosition(String tenantId, UUID positionId,
                                         Instant rangeStart, Instant rangeEnd) {
@@ -129,29 +136,16 @@ public class RollupMaterializationService {
             return;
         }
 
-        PositionLedgerEntry pos = posOpt.get();
-        List<SettlementCell> cells = cellRepo.findByPosition(tenantId, positionId, rangeStart, rangeEnd);
-        if (cells.isEmpty()) return;
-
-        // Group by monthly period
-        Map<RollupKey, List<SettlementCell>> groups = new LinkedHashMap<>();
-        for (SettlementCell cell : cells) {
-            Instant periodStart = truncateToPeriod(cell.intervalStart(), TimeGranularity.MONTHLY);
-            Instant periodEnd = advancePeriod(periodStart, TimeGranularity.MONTHLY);
-
-            RollupKey key = new RollupKey(
-                pos.deliveryPointId() != null ? pos.deliveryPointId() : "DEFAULT",
-                pos.portfolioId() != null ? pos.portfolioId() : "DEFAULT",
-                periodStart, periodEnd);
-
-            groups.computeIfAbsent(key, k -> new ArrayList<>()).add(cell);
+        // Widen to the coarsest boundary (YEARLY) so all three granularities are covered
+        Instant wideStart = truncateToPeriod(rangeStart, TimeGranularity.YEARLY);
+        Instant wideEnd = advancePeriod(truncateToPeriod(rangeEnd, TimeGranularity.YEARLY), TimeGranularity.YEARLY);
+        if (!wideEnd.isAfter(rangeEnd)) {
+            wideEnd = advancePeriod(wideEnd, TimeGranularity.YEARLY);
         }
 
-        List<RollupCell> rollupCells = groups.entrySet().stream()
-            .map(e -> aggregate(e.getKey(), e.getValue(), TimeGranularity.MONTHLY))
-            .toList();
-
-        rollupRepo.saveAll(tenantId, rollupCells);
+        for (TimeGranularity granularity : PORTFOLIO_GRANULARITIES) {
+            materialize(tenantId, wideStart, wideEnd, granularity);
+        }
     }
 
     private RollupCell aggregate(RollupKey key, List<SettlementCell> cells,
@@ -223,7 +217,9 @@ public class RollupMaterializationService {
         return switch (granularity) {
             case HOURLY -> zdt.truncatedTo(ChronoUnit.HOURS).toInstant();
             case DAILY -> zdt.truncatedTo(ChronoUnit.DAYS).toInstant();
+            case WEEKLY -> zdt.with(java.time.DayOfWeek.MONDAY).truncatedTo(ChronoUnit.DAYS).toInstant();
             case MONTHLY -> zdt.withDayOfMonth(1).truncatedTo(ChronoUnit.DAYS).toInstant();
+            case YEARLY -> zdt.withDayOfYear(1).truncatedTo(ChronoUnit.DAYS).toInstant();
             default -> zdt.truncatedTo(ChronoUnit.HOURS).toInstant();
         };
     }
@@ -233,7 +229,9 @@ public class RollupMaterializationService {
         return switch (granularity) {
             case HOURLY -> zdt.plusHours(1).toInstant();
             case DAILY -> zdt.plusDays(1).toInstant();
+            case WEEKLY -> zdt.plusWeeks(1).toInstant();
             case MONTHLY -> zdt.plusMonths(1).toInstant();
+            case YEARLY -> zdt.plusYears(1).toInstant();
             default -> zdt.plusHours(1).toInstant();
         };
     }

@@ -9,7 +9,9 @@ public enum TimeGranularity {
     MIN_30(Duration.ofMinutes(30)),
     HOURLY(Duration.ofHours(1)),
     DAILY(null),
-    MONTHLY(null);
+    WEEKLY(null),
+    MONTHLY(null),
+    YEARLY(null);
 
     private final Duration fixedDuration;
 
