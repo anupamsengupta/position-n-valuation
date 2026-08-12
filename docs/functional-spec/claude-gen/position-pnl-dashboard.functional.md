@@ -331,15 +331,39 @@ Then the grid either:
   And peak/off-peak applies to both settled and forward rows
 ```
 
-**AC-L2-06: Rollup grid with no data for selected granularity**
+**AC-L2-06: Granularity hierarchy — upward-only aggregation**
+
+The granularity hierarchy is strictly upward-only. S7 materializes each
+granularity independently from the S5a 15-minute settlement cells (the finest
+source of truth). Wider granularities are never disaggregated into finer ones.
+
+```
+Hierarchy (each level aggregated directly from S5a 15-min cells):
+
+  S5a 15-min cells (source of truth)
+    ├── DAILY   ← TWA/sum of 15-min cells within each calendar day
+    ├── WEEKLY  ← TWA/sum of 15-min cells within each ISO week (Mon–Sun)
+    ├── MONTHLY ← TWA/sum of 15-min cells within each calendar month
+    └── YEARLY  ← TWA/sum of 15-min cells within each calendar year
+
+Rules:
+  - A wider granularity NEVER contains finer-grained data.
+    MONTHLY rollups cannot produce WEEKLY or DAILY breakdowns.
+  - The UI MAY offer sub-daily views (15/30/60-min) at L4 by querying
+    S5a cells directly — these are NOT S7 rollups.
+  - If a requested granularity has no materialized data for a period,
+    the grid shows an empty state. It does NOT attempt on-demand
+    aggregation from a different rollup granularity.
+```
 
 ```
 Given rollup cells exist at MONTHLY granularity but not at WEEKLY
   for portfolio "WIND_DE" in 2028
 When the portfolio manager selects WEEKLY granularity for 2028
 Then the grid displays an appropriate empty state message
-  And does NOT attempt to disaggregate MONTHLY cells into WEEKLY
-    (rollups are pre-materialized, not computed on demand)
+  And does NOT disaggregate MONTHLY cells into WEEKLY
+  And does NOT compute WEEKLY on-the-fly from DAILY rollups
+    (each granularity is pre-materialized independently from S5a)
 ```
 
 **AC-L2-07: Forward curve price display in forward periods**
@@ -1092,12 +1116,14 @@ intervals.
 
 **OQ-1: DAILY rollup materialization.**
 S7 currently materializes WEEKLY, MONTHLY, YEARLY. The L4 month view needs DAILY
-granularity. Should DAILY be added to the S7 materialization pipeline (FR-105
-step 4)? What is the storage impact? For a tenant with 300 deals, 12 months of
-DAILY rollups would add approximately 300 x 12 x 31 x 2 (peak/off-peak) =
-approximately 223,000 rollup rows -- modest. If DAILY rollups are added, they must
-cover both settled days (from S5a) and forward days (from S5b) to support the
-month view's dual nature. Decision required from solutions-architect.
+granularity. Per the upward-only hierarchy in AC-L2-06, DAILY would be a fourth
+independent aggregation from S5a 15-min cells — not derived from WEEKLY or
+MONTHLY. Storage impact: for a tenant with 300 deals, 12 months of DAILY rollups
+adds approximately 300 x 12 x 31 x 2 (peak/off-peak) = ~223,000 rollup rows —
+modest. **Recommendation:** add DAILY to the materialization pipeline alongside
+WEEKLY/MONTHLY/YEARLY, giving the full hierarchy (DAILY, WEEKLY, MONTHLY, YEARLY)
+all pre-materialized from S5a. Sub-daily views (15/30/60-min at L4 day view)
+query S5a cells directly, not S7. Decision required from solutions-architect.
 
 **OQ-2: 30-minute and 60-minute aggregation location.**
 Should sub-daily aggregation (15min to 30min/60min) happen in the backend (new
@@ -1189,14 +1215,37 @@ the mark refresh be:
 (c) Hybrid (near-term months are real-time, far-dated months are batch)?
 The answer affects the freshness promise the dashboard can make. Decision required.
 
-**OQ-12: Should S6b become bitemporal for forward position audit (new)?**
+**OQ-12: Should S6b become bitemporal for forward position audit?**
 S6b is currently a rebuildable cache with no history (D-12). For forward position
 audit purposes ("what was our open position as known on date X?"), would
-bitemporality on S6b be valuable? Arguments against: S6b is a derived cache,
-always rebuildable from S1 + volume series; bitemporality would significantly
-increase storage (FR-086d sizing); the position ledger (S1) already provides
-bitemporal trade-level audit. Recommendation: no. But flagging for product/risk
-decision.
+bitemporality on S6b be valuable?
+
+Regulatory analysis:
+- **REMIT Art. 8:** reports contracts (from S1), not internal position views.
+- **EMIR Art. 9:** reports contracts + daily MtM valuations (S1 + S4 market data).
+- **MiFID II RTS 25:** aggregate net position per contract/maturity, derived from S1.
+- None of these regulatory submissions use S6b. All derive from S1 (bitemporal)
+  + S4 (market data) + S3 (versioned volume series).
+
+Reconstruction capability: S3 volume series are versioned (append-only with
+`versionId` + `transactionTime`; intervals carry `version` + `supersedesId`
+chain). Given any knowledge date K: query S1 as-of K → get positions; query S3
+at version valid at K → get forecast volumes; multiply → forward position as-of
+K. This is exactly what S6b materialization does, just on-demand.
+
+**Recommendation: No bitemporality on S6b.** Rationale:
+1. Regulatory bodies never receive S6b — they receive S1 + S4 derived reports
+2. Historical forward position is reconstructable from S1 (bitemporal) + S3
+   (versioned) on demand
+3. "As-of forward exposure" is a rare dashboard query — most users view current
+   state. For the rare case, on-demand reconstruction from S1+S3 is acceptable
+4. Bitemporality on S6b would massively increase storage (D-12 explicitly marks
+   S6b as "optional, rebuildable") for marginal benefit
+
+If product/risk later requires frequent as-of forward position queries with
+sub-second latency, consider a periodic snapshot approach (daily EOD snapshot
+of S6b) rather than full bitemporality. Decision: **closed — no bitemporality
+on S6b**, but flagging the EOD snapshot option as a future enhancement.
 
 **OQ-13: Indicative vs official mark labeling (new).**
 The dashboard displays S5b forward marks, which are ephemeral and indicative. The
