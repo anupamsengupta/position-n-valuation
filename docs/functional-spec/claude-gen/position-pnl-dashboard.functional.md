@@ -359,25 +359,49 @@ Then the forwardMarkValue is displayed
 
 ### Level 3 -- Trade-Level View
 
-**AC-L3-01: Position ledger entries for a portfolio-month with settlement status**
+**AC-L3-01: Position contribution view for a portfolio-month**
 
 ```
 Given the portfolio manager clicks on the MONTHLY rollup row
   for portfolio "WIND_DE", period 2026-08 (periodStart = 2026-07-31T22:00:00Z)
 When the trade-level view loads
-Then it displays all PositionLedgerEntry rows from S1
+Then it displays one row per active PositionLedgerEntry from S1
   where portfolioId = "WIND_DE"
   and deliveryRange overlaps the month 2026-08 (CET/CEST day boundaries)
   and knownTo IS NULL (current knowledge)
   and status = "ACTIVE"
-  And columns are: tradeId, tradeLegId, tradeVersion, deliveryStart,
-    deliveryEnd, quantity, volumeUnit, priceExpressionId, portfolioId,
-    deliveryPointId, status, deliveryStatus
+  And each row shows BOTH position metadata AND aggregated volume/value data:
+
+    Position metadata (from S1):
+      tradeId, tradeLegId, tradeVersion, deliveryStart, deliveryEnd,
+      quantity (contractual nominal), volumeUnit, deliveryPointId,
+      deliveryStatus (SETTLED / PARTIAL / FORWARD)
+
+    Settled actuals (aggregated from S5a settlement cells for this position-month):
+      settledMw:    TWA of volumeMw across settled intervals (FR-035)
+      settledMwh:   sum of volumeMwh across settled intervals
+      avgPrice:     volume-weighted average (settledValue / settledMwh)
+      settledValue: sum of amount across settled intervals
+      marketValue:  sum of marketAmount across settled intervals
+      realizedPnl:  sum of pnl across settled intervals
+
+    Forward forecast (aggregated from S6b trade interval cache for this position-month):
+      forwardMw:    TWA of resolvedQty across unsettled intervals (FR-035)
+      forwardMwh:   sum of resolvedEnergy across unsettled intervals
+      forwardMarkValue: sum of S5b mark values for unsettled intervals
+      unrealizedMtm: forwardMarkValue (or null if no marks struck)
+
+    currency (from S5a or S5b)
+
   And rows are sorted by tradeId, tradeLegId
-  And each row carries a deliveryStatus indicator:
-    - "SETTLED" if all intervals in the delivery range for this month are settled
-    - "PARTIAL" if some intervals are settled and some are forward
-    - "FORWARD" if no intervals in the delivery range for this month are settled
+  And the contractual quantity is shown for reference but is secondary
+    to the actual/forecast volume columns
+  And for variable-profile trades (wind/solar PPAs), the settled/forward MW
+    will differ from the contractual quantity — this is expected and correct
+  And deliveryStatus is derived from the presence/absence of S5a and S6b data:
+    - "SETTLED" if S5a cells cover all intervals in this position-month
+    - "PARTIAL" if both S5a and S6b data exist for this position-month
+    - "FORWARD" if only S6b data exists (no settlement cells)
 ```
 
 **AC-L3-02: Multiple delivery points within a portfolio-month**
@@ -772,10 +796,10 @@ are stored in UTC.
 | Structure | Used by Level(s) | Access pattern |
 |-----------|-------------------|----------------|
 | `RollupCell` (S7) | L1 (realized + unrealized), L2, L4 (month view fallback) | `RollupRepository.findByRange(tenantId, deliveryPointId, portfolioId, rangeStart, rangeEnd, granularity)` |
-| `PositionLedgerEntry` (S1) | L3 | `PositionLedgerRepository.findAllByDeliveryRange(tenantId, deliveryStart, deliveryEnd)` -- filtered by portfolioId in application layer |
-| `SettlementCell` (S5a) | L4 settled day view, L4 month view (settled days) | `SettlementCellRepository.findByPosition(tenantId, positionId, rangeStart, rangeEnd)` |
-| `ForwardMark` (S5b) | L1 (via S7), L4 forward day view | `ForwardMarkStore.getRange(tenantId, positionId, rangeStart, rangeEnd)` |
-| `TradeIntervalCacheEntity` (S6b) | L1 (open position), L4 forward day view | By `tradeLegId` + interval range; or by `tenantId` + interval range for portfolio scope |
+| `PositionLedgerEntry` (S1) | L3 (position metadata) | `PositionLedgerRepository.findAllByDeliveryRange(tenantId, deliveryStart, deliveryEnd)` -- filtered by portfolioId in application layer |
+| `SettlementCell` (S5a) | L3 (settled actuals per position), L4 settled day view, L4 month view (settled days) | `SettlementCellRepository.findByPosition(tenantId, positionId, rangeStart, rangeEnd)` -- aggregated per position for L3 |
+| `ForwardMark` (S5b) | L1 (via S7), L3 (unrealized MtM per position), L4 forward day view | `ForwardMarkStore.getRange(tenantId, positionId, rangeStart, rangeEnd)` |
+| `TradeIntervalCacheEntity` (S6b) | L1 (open position), L3 (forward volume per position), L4 forward day view | By `tradeLegId` + interval range; or by `tenantId` + interval range for portfolio scope |
 
 ### New or modified query capabilities needed
 
@@ -809,6 +833,29 @@ Options:
   `portfolioId` on the settlement cell.
 - (b) First query L3 to get position IDs, then query S5a per position. Acceptable
   if position count per portfolio-month is small (typically 10--50).
+
+**Q-9: Per-position volume and value summaries for L3.**
+L3 now shows aggregated settled actuals and forward forecasts per position (not just
+the raw contractual quantity from S1). This requires, for each position in the
+portfolio-month:
+- Settled: aggregate S5a settlement cells → settledMw (TWA), settledMwh (sum),
+  settledValue (sum of amount), marketValue (sum of marketAmount), realizedPnl
+  (sum of pnl), avgPrice (settledValue / settledMwh).
+- Forward: aggregate S6b trade interval cache → forwardMw (TWA of resolvedQty),
+  forwardMwh (sum of resolvedEnergy). Plus sum of S5b forward marks →
+  forwardMarkValue.
+Options:
+- (a) Backend service method: a dedicated `PositionContributionQueryService` that,
+  given a list of position IDs and a month range, returns per-position summary
+  records by joining S5a, S5b, and S6b. This keeps FR-035 aggregation rules
+  server-side and avoids N+1 queries from the UI.
+- (b) Composite query: L3 fetches position IDs from S1, then issues parallel
+  queries to S5a (per position), S6b (per trade-leg), and S5b (per position) and
+  aggregates in the application layer. Acceptable for small position counts
+  (10--50 per portfolio-month).
+- Recommendation: option (a) for correctness and performance. The aggregation
+  rules (FR-035 TWA for MW, sum for MWh/amounts, volume-weighted avg for price)
+  are domain logic and should live in the domain service layer.
 
 **Q-4: Daily aggregation for L4 month view.**
 S7 currently materializes WEEKLY, MONTHLY, YEARLY granularities. DAILY is not
