@@ -300,6 +300,22 @@ List<TradeIntervalRecord> getForTradeLegIds(String tenantId,
 
 This avoids N+1 calls for the `getForTradeLeg()` method when L3/L4 queries involve multiple positions. The adapter can issue a single SQL query with an `IN` clause.
 
+### 5.4a Modified port: `SettlementCellRepository` (Pattern #18)
+
+New method on existing interface:
+
+```
+/** Bulk-fetch settlement cells for multiple positions within a range.
+ *  Replaces per-position findByPosition() N+1 pattern for L3 queries.
+ *  Adapter issues a single SQL query with position_id IN (...). */
+List<SettlementCell> findByPositionIds(String tenantId,
+                                        List<UUID> positionIds,
+                                        Instant rangeStart,
+                                        Instant rangeEnd);
+```
+
+This is the bulk counterpart to the existing `findByPosition()`. For L3 with ~200 positions, it collapses 200 indexed queries into 1. The adapter batches the `IN` clause into chunks of 100 to stay within PostgreSQL parameter limits (same pattern as `getForTradeLegIds()`). The service groups the returned cells by `positionId` in application memory and applies FR-035 aggregation per position.
+
 ### 5.5 Dependency: `ForwardMarkService` (ADR-002)
 
 Per ADR-002, the `ForwardMarkStore` port is **eliminated**. Forward marks are computed on demand by `ForwardMarkService` (defined in `pv-domain/port/service/ForwardMarkService.java`). The dashboard's `DashboardQueryService` depends on `ForwardMarkService` for:
@@ -332,6 +348,12 @@ Location: `pv-persistence/adapter/JpaTradeIntervalCache.java`
 
 JPQL query with `tradeLegId IN :tradeLegIds` clause. Uses existing index `idx_tic_trade_leg_time`. For >100 trade-leg IDs, the adapter should batch into chunks of 100 to avoid PostgreSQL parameter limits.
 
+### 6.3a `JpaSettlementCellRepository` -- new `findByPositionIds()` (Pattern #18)
+
+Location: `pv-persistence/adapter/JpaSettlementCellRepository.java`
+
+JPQL query with `positionId IN :positionIds` clause. Uses existing index `(tenant_id, position_id, interval_start)`. For >100 position IDs, the adapter batches into chunks of 100 (same pattern as `getForTradeLegIds()`). Returns raw `SettlementCell` entities; FR-035 aggregation (TWA for MW, sum for MWh/amounts, volume-weighted avg for prices) is applied in the service layer per position.
+
 ### 6.4 `ForwardMarkService` -- no new adapter needed (ADR-002)
 
 Per ADR-002, `ForwardMarkService` is a domain service (not a repository adapter). Its implementation evaluates price expressions against S4 curves and multiplies by S6b volumes. It caches evaluated monthly prices in Redis. The dashboard calls `ForwardMarkService` methods directly — no adapter work needed beyond what ADR-002 specifies.
@@ -353,18 +375,24 @@ Key domain logic in this service:
 
 1. **L1 `portfolioSummaries()`**: Reads rollup cells via `findByPortfolio()`, partitions into settled/forward based on `periodEnd` vs. `Instant.now()`, groups by currency, applies TWA for MW and sum for MWh/amounts per FR-035.
 
-2. **L3 `positionContributions()`**: Two-step query:
-   - Step 1: `PositionLedgerRepository.findByPortfolioAndDeliveryRange()` to get position metadata.
-   - Step 2a: For each position, aggregate S5a settlement cells via `SettlementCellRepository.findByPosition()` with FR-035 rules (TWA for MW, sum for MWh/amounts, volume-weighted avg for prices).
-   - Step 2b: Bulk-fetch S6b via `TradeIntervalCache.getForTradeLegIds()` for all trade-leg IDs, aggregate per position with FR-035 rules.
-   - Step 2c: Compute forward marks via `ForwardMarkService.computeMonthlyMark(tenantId, positionId, monthStart, monthEnd)` for each position with undelivered intervals. Returns `forwardMarkValue`, `totalMwh`, `avgPrice`, `curveId`, `curveVersion`.
-   - Step 3: Derive `deliveryStatus` per position: SETTLED if only S5a data exists for the month; FORWARD if only S6b data exists (all intervals undelivered); PARTIAL if both exist.
+2. **L3 `positionContributions()`**: Hybrid bulk-fetch + application-layer aggregation. Three bulk queries followed by in-memory grouping and FR-035 aggregation. No per-position queries.
+
+   - Step 1: `PositionLedgerRepository.findByPortfolioAndDeliveryRange()` → position metadata + list of position IDs and trade-leg IDs. **1 SQL query.**
+   - Step 2 (parallel bulk fetches — no dependencies between them):
+     - 2a: `SettlementCellRepository.findByPositionIds(tenantId, positionIds, rangeStart, rangeEnd)` → all S5a (Settlement Cells) for all positions in one query. Group by `positionId` in memory, then apply FR-035 rules per position (TWA for MW, sum for MWh/amounts, volume-weighted avg for prices). **1 SQL query** (replaces 200 per-position queries).
+     - 2b: `TradeIntervalCache.getForTradeLegIds(tenantId, tradeLegIds, rangeStart, rangeEnd)` → all S6b (Trade Interval Cache) records in one query. Group by `tradeLegId` → `positionId` in memory, aggregate per position with FR-035 rules. **1 SQL query.**
+     - 2c: `ForwardMarkService.computeMonthlyMark(tenantId, positionId, monthStart, monthEnd)` per position with undelivered intervals. Monthly curve prices are Redis-cached, so each call is O(1) on cache hit (~sub-ms). **~N Redis lookups** (not SQL). Returns `forwardMarkValue`, `totalMwh`, `avgPrice`, `curveId`, `curveVersion`.
+   - Step 3: Merge results per position. Derive `deliveryStatus`: SETTLED if only S5a data exists for the month; FORWARD if only S6b data exists (all intervals undelivered); PARTIAL if both exist.
+
+   **Round-trip budget for 200 positions:** 3 SQL queries + ~200 Redis cache lookups ≈ 20-50ms total (vs. ~402 round-trips / 200-500ms in a naive per-position design).
 
 3. **L4 `settledDayDetail()` with sub-daily aggregation (Q-5)**: Reads 15-min S5a cells, then if `subDailyGranularity` is MIN_30 or HOURLY, groups by target bucket boundaries and applies FR-035 aggregation: MW = TWA (weighted by interval duration), MWh = sum, amount/marketAmount/pnl = sum, price = settledValue / totalMwh, marketPrice = marketValue / totalMwh. All arithmetic via `NumericPrecision`.
 
 4. **L4 `forwardDayDetail()` with sub-daily aggregation**: Calls `ForwardMarkService.computeIntervalMarks(tenantId, positionId, dayStart, dayEnd)` per position. Returns `IntervalMark` records with `evaluatedPrice`, `markValue`, `resolvedQty`, `resolvedEnergy`. Same grouping logic for sub-daily aggregation (TWA for MW, sum for MWh/markValue, volume-weighted avg for price).
 
 5. **L4 `dailyAggregates()`**: Prefers DAILY rollup cells from S7 if materialized. Falls back to on-the-fly aggregation from S5a (for settled days) and ForwardMarkService-computed marks (for forward days), grouped by CET/CEST day boundaries. Day status derived from comparing day boundaries against `Instant.now()`.
+
+**Design rationale — why not a single SQL join across S1+S5a+S6b?** A `LATERAL JOIN` collapsing all three into one query would minimize round-trips to 1, but pushes FR-035 aggregation rules (TWA, volume-weighted average) into SQL. These rules are domain logic that must remain testable, auditable, and consistent with the rest of the platform. The hybrid approach (3 bulk fetches + Java aggregation) keeps domain logic in `pv-domain`, is trivially unit-testable with hand-mocked ports, and avoids coupling S1+S5a+S6b in a single adapter query. The 3 SQL queries are independent and can be parallelized if needed (virtual threads or `CompletableFuture`).
 
 ---
 
@@ -514,11 +542,12 @@ All within the <100KB target for interactive views.
 ### Query performance
 
 - **L1/L2** queries hit S7 `rollup_cell` with the new `idx_rollup_portfolio_granularity_time` index. Single index scan, no join.
-- **L3** requires:
-  - One index scan on S1 `idx_ple_portfolio_delivery` (partial index, highly selective).
-  - Bulk S5a queries: one per position, using existing `(tenant_id, position_id, interval_start)` index. For 200 positions, this is 200 indexed queries. If this proves too expensive, a single native SQL query with `position_id IN (...)` should be added as a performance optimization on `SettlementCellRepository`.
-  - Bulk S6b query: single query with `trade_leg_id IN (...)` -- new `getForTradeLegIds()`.
-  - ForwardMarkService: `computeMonthlyMark()` per position. Monthly curve prices are Redis-cached; computation is `O(1)` on cache hit. For 200 positions, ~200 Redis cache lookups + S6b volume aggregation.
+- **L3** uses bulk-fetch + application-layer aggregation (3 SQL queries total):
+  - One index scan on S1 (Position Ledger) `idx_ple_portfolio_delivery` (partial index, highly selective). **1 query.**
+  - Bulk S5a (Settlement Cells) query: `findByPositionIds()` with `position_id IN (...)`, using existing `(tenant_id, position_id, interval_start)` index. Returns all cells for all positions in one round-trip; grouped by `positionId` in memory. **1 query** (replaces 200 per-position queries).
+  - Bulk S6b (Trade Interval Cache) query: `getForTradeLegIds()` with `trade_leg_id IN (...)`. **1 query.**
+  - ForwardMarkService: `computeMonthlyMark()` per position. Monthly curve prices are Redis-cached; computation is `O(1)` on cache hit (~sub-ms). For 200 positions, ~200 Redis cache lookups. **No SQL — Redis only.**
+  - **Total for 200 positions: 3 SQL queries + ~200 Redis lookups ≈ 20-50ms.** FR-035 aggregation (TWA, volume-weighted avg, sum) applied in Java per position.
 - **L4 day view**: single-position queries call `ForwardMarkService.computeIntervalMarks()` which loads S6b intervals + evaluates (cached) monthly price + applies shaping. Expected latency: 1-5ms per position with warm cache, up to 50ms cold.
 
 ### Redis cache
@@ -601,6 +630,7 @@ Location: `pv-domain/src/test/java/.../service/DefaultDashboardQueryServiceTest.
 - Test sub-daily aggregation: verify that 15-min cells correctly aggregate to 30-min (2 cells per bucket) and 60-min (4 cells per bucket).
 - Test DST handling: provide 92 cells for spring-forward day, verify correct aggregation. Provide 100 cells for fall-back day, verify the duplicate hour aggregates into distinct buckets.
 - Test `deliveryStatus` derivation: SETTLED when only S5a data exists, FORWARD when only S6b/ForwardMarkService data exists, PARTIAL when both.
+- Test L3 bulk-fetch grouping: mock `findByPositionIds()` returning cells for 3 positions interleaved; verify service correctly groups by `positionId` before applying per-position FR-035 aggregation.
 - Test multi-currency grouping for `portfolioSummaries()`.
 - Test empty data scenarios: no rollup cells, no settlement cells, ForwardMarkService returns null/empty (curve or volume unavailable).
 
@@ -614,6 +644,7 @@ Location: `pv-integration-tests/src/test/java/.../DashboardQueryIT.java`
 - Verify that:
   - `findByPortfolio()` returns rollup cells across delivery points.
   - `findByPortfolioAndDeliveryRange()` returns only ACTIVE, current-knowledge entries for the specified portfolio.
+  - `findByPositionIds()` returns cells for all requested positions in one query; returns empty list for unknown position IDs; respects tenant isolation.
   - Sub-daily aggregation produces correct results against real data.
   - New indexes are used (verify via `EXPLAIN ANALYZE` if feasible).
   - DAILY rollup materialization produces correct cells.
@@ -622,6 +653,7 @@ Location: `pv-integration-tests/src/test/java/.../DashboardQueryIT.java`
 
 - `RollupRepository.findByPortfolio()` -- verify contract between port and JPA adapter: tenant isolation, granularity filter, date range overlap semantics.
 - `PositionLedgerRepository.findByPortfolioAndDeliveryRange()` -- verify partial index usage, current-knowledge filter, ACTIVE status filter.
+- `SettlementCellRepository.findByPositionIds()` -- verify bulk query returns same results as N individual `findByPosition()` calls. Verify >100 position IDs triggers batching. Verify tenant isolation.
 - `TradeIntervalCache.getForTradeLegIds()` -- verify bulk query returns same results as N individual `getForTradeLeg()` calls.
 - `ForwardMarkService` integration: verify `computeIntervalMarks()` returns correct `evaluatedPrice × resolvedEnergy = markValue` for known test data (mock S4 curve + S6b volumes).
 
@@ -648,15 +680,15 @@ Location: `pv-integration-tests/src/test/java/.../DashboardQueryIT.java`
 
 ## S14 -- Open Items
 
-| # | Item | Blocker? | Owner |
-|---|------|----------|-------|
+| # | Item | Blocker?         | Owner |
+|---|------|------------------|-------|
 | OI-1 | **`ForwardMarkService` implementation (ADR-002).** The `ForwardMarkService` port must be implemented before the dashboard can display forward data. Implementation evaluates price expressions against S4 curves, multiplies by S6b volumes, and caches evaluated monthly prices in Redis. The dashboard depends on `computeMonthlyMark()` (L3) and `computeIntervalMarks()` (L4). | Yes (dependency) | implementation-engineer (ADR-002 scope) |
-| OI-2 | **`MarketCalendar` availability.** Day boundary computation in `dailyAggregates()` uses `ZonedDateTime` directly. If a `MarketCalendar` service exists with richer logic (half-holidays, market-specific calendars), the dashboard service should delegate to it. If not, inline `ZonedDateTime` computation is acceptable for CET/CEST. | No | implementation-engineer |
-| OI-3 | **L3 N+1 query concern.** For portfolios with >100 positions, per-position S5a queries may be slow. A bulk `findByPositionIds()` method on `SettlementCellRepository` may be needed as a performance optimization. Monitor query times and add if latency exceeds 500ms for the L3 endpoint. | No | implementation-engineer to monitor |
-| OI-4 | **DAILY rollup storage impact.** Adding DAILY to the materialization pipeline increases `rollup_cell` row count by approximately 10x vs. MONTHLY-only (31 days per month). For 200 tenants x 300 positions x 24 months x 31 days x 2 (peak/off-peak), this is ~89M rows. Verify partition strategy on `rollup_cell` accommodates this volume. | Should-verify | solutions-architect |
-| OI-5 | **Staleness endpoint (AC-L1-08).** Deferred from this spec. With ADR-002, staleness is determined by comparing the S7 rollup cell's curve version against the current S4 curve version. A future service should expose this comparison. The dashboard API exposes the rollup cell's `versionHash` and computation timestamp so the UI can display it. | No (deferred) | solutions-architect (follow-up spec) |
-| OI-6 | **`forwardMarkValue` population on rollup cells — RESOLVED by ADR-002.** Per ADR-002, `forwardMarkValue` is populated by calling `ForwardMarkService.computePortfolioMtm(...)` during rollup materialization. The CurveTick handler invalidates Redis cache, identifies affected rollup cells via the dependency index (FR-103), and recomputes `forwardMarkValue` for each affected cell. This applies to all granularities (DAILY, WEEKLY, MONTHLY, YEARLY). The `ForwardMarkJob` is replaced by the CurveTick cache invalidation + rollup recomputation pipeline. | Resolved | solutions-architect (ADR-002) |
-| OI-7 | **Pagination for L3 `positionContributions()`.** The spec designs for offset-based pagination (bounded set of ~200). If tenant profiling reveals portfolios with >500 positions, cursor-based pagination (keyset on `positionId`) should be adopted. | No | implementation-engineer |
+| OI-2 | **`MarketCalendar` availability.** Day boundary computation in `dailyAggregates()` uses `ZonedDateTime` directly. If a `MarketCalendar` service exists with richer logic (half-holidays, market-specific calendars), the dashboard service should delegate to it. If not, inline `ZonedDateTime` computation is acceptable for CET/CEST. | Yes              | implementation-engineer |
+| OI-3 | **L3 N+1 query concern — RESOLVED.** Promoted from "monitor" to default design. `SettlementCellRepository.findByPositionIds()` bulk-fetches all S5a cells for all positions in 1 SQL query (§5.4a). L3 `positionContributions()` now uses 3 bulk SQL queries + ~N Redis lookups instead of ~N+2 per-position queries (§6.5). FR-035 aggregation remains in Java. | Resolved         | implementation-engineer |
+| OI-4 | **DAILY rollup storage impact.** Adding DAILY to the materialization pipeline increases `rollup_cell` row count by approximately 10x vs. MONTHLY-only (31 days per month). For 200 tenants x 300 positions x 24 months x 31 days x 2 (peak/off-peak), this is ~89M rows. Verify partition strategy on `rollup_cell` accommodates this volume. | Yes              | solutions-architect |
+| OI-5 | **Staleness endpoint (AC-L1-08).** Deferred from this spec. With ADR-002, staleness is determined by comparing the S7 rollup cell's curve version against the current S4 curve version. A future service should expose this comparison. The dashboard API exposes the rollup cell's `versionHash` and computation timestamp so the UI can display it. | Yes              | solutions-architect (follow-up spec) |
+| OI-6 | **`forwardMarkValue` population on rollup cells — RESOLVED by ADR-002.** Per ADR-002, `forwardMarkValue` is populated by calling `ForwardMarkService.computePortfolioMtm(...)` during rollup materialization. The CurveTick handler invalidates Redis cache, identifies affected rollup cells via the dependency index (FR-103), and recomputes `forwardMarkValue` for each affected cell. This applies to all granularities (DAILY, WEEKLY, MONTHLY, YEARLY). The `ForwardMarkJob` is replaced by the CurveTick cache invalidation + rollup recomputation pipeline. | Resolved         | solutions-architect (ADR-002) |
+| OI-7 | **Pagination for L3 `positionContributions()`.** The spec designs for offset-based pagination (bounded set of ~200). If tenant profiling reveals portfolios with >500 positions, cursor-based pagination (keyset on `positionId`) should be adopted. | Yes              | implementation-engineer |
 
 ---
 

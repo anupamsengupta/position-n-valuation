@@ -1837,12 +1837,12 @@ public record HotStoreRetentionPolicy(
 
 | Input event | Source | Affected subsystems | Index lookup |
 |-------------|--------|---------------------|-------------|
-| `VolumeSuperseded` (FORECAST) | S3 | S5b (forward marks), S6 (slot cache), S6b (trade interval cache) | `findAffectedCells(seriesKey, VOLUME, affectedRange)` |
+| `VolumeSuperseded` (FORECAST) | S3 (Volume Series) | S5b (forward marks), S6 (slot cache), S6b (trade interval cache) | `findAffectedCells(seriesKey, VOLUME, affectedRange)` |
 | `VolumeSuperseded` (METERED_ACTUAL) | S3 | S5a (settlement cells), S6b (trade interval cache) | `findAffectedCells(seriesKey, VOLUME, affectedRange)` |
-| `SettlementPublished` / `CurveTick` | S4 | S5a (settlement cells), S5b (forward marks), S5c (EOD struck) | `findAffectedCells(series, PRICE, affectedRange)` |
+| `SettlementPublished` / `CurveTick` | S4 (Market Data) | S5a (settlement cells), S5b (forward marks), S5c (EOD struck) | `findAffectedCells(series, PRICE, affectedRange)` |
 | `IndexRestated` (e.g., HICP) | S4 | S5a (settlement cells where CPI ∈ `active_leaves`) | `findAffectedCells(series, INDEX, affectedRange, "CPI")` |
 | `FxPublished` | S4 | S5a/S5b (cells with FxConvert in expression) | `findAffectedCells(series, FX, affectedRange)` |
-| `PositionCaptured` / `PositionAmended` | S1 | S5a, S5b, S6, S6b, S7 (full cascade) | Create new edges for the new position version |
+| `PositionCaptured` / `PositionAmended` | S1 (Position Ledger) | S5a, S5b, S6, S6b, S7 (full cascade) | Create new edges for the new position version |
 
 > **TR-031** — The blast-radius optimization (FR-103) applies to both price and volume inputs. For the reference deal (collar PPA): HICP restatement only recomputes cells where CPI ∈ `active_leaves` (floor/cap binding). Inside-collar cells (CPI inactive) are provably unaffected and are not rewritten (FR-074). The same logic applies to volume inputs: meter supersession only recomputes cells where METER ∈ `active_leaves` — gated intervals (DA < 0, amount = 0) where the meter is irrelevant are skipped (FR-057a). (Extends FR-103, FR-057a.)
 

@@ -4,7 +4,7 @@
 **Version:** 3.0 (revised to incorporate forward-looking risk/trading perspective)
 **Date:** 2026-08-12
 **Status:** DRAFT -- pending review
-**Spec references:** FR-035, FR-075, FR-086, FR-090, FR-105, D-1, D-3, D-6, D-11, D-12, S1, S4, S5a, S5c, S6b, S7, ADR-002
+**Spec references:** FR-035, FR-075, FR-086, FR-090, FR-105, D-1, D-3, D-6, D-11, D-12, S1 (Position Ledger), S4 (Forward Curves), S5a (Settlement Cells), S5c (EOD Mark Snapshot), S6b (Trade Interval Cache), S7 (Rollup Cells), ADR-002
 
 ---
 
@@ -28,13 +28,13 @@ views:
 
 | Subsystem | Role | Time Horizon | Persistence |
 |-----------|------|--------------|-------------|
-| **S7 Rollup Cells** | Coarse-grain aggregates (DAILY, WEEKLY, MONTHLY, YEARLY) per (delivery_point, portfolio) with peak/off-peak split. Carries both `settledValue` (from S5a) and `forwardMarkValue` (computed by `ForwardMarkService` from S4 × S6b). Per FR-090. | Past + Forward | Durable, versioned |
-| **S1 Position Ledger** | Bitemporal trade-leg-grained source of truth. Per D-1, FR-030. | Full contract life | Bitemporal |
-| **S5a Settlement Cells** | 15-minute interval-grained measures for delivered intervals with price, volume, amount, marketPrice, pnl. Per FR-070. | Past (delivered) | Bitemporal (knownFrom/knownTo) |
-| **S4 Forward Curves** | Forward curve prices at their published granularity (monthly, quarterly, yearly). Shared market reference data used by many positions. Versioned per curve tick. | Future | Versioned (per tick) |
+| **S7 — Rollup Cells** | Coarse-grain aggregates (DAILY, WEEKLY, MONTHLY, YEARLY) per (delivery_point, portfolio) with peak/off-peak split. Carries both `settledValue` (from S5a) and `forwardMarkValue` (computed by `ForwardMarkService` from S4 × S6b). Per FR-090. | Past + Forward | Durable, versioned |
+| **S1 — Position Ledger** | Bitemporal trade-leg-grained source of truth. Per D-1, FR-030. | Full contract life | Bitemporal |
+| **S5a — Settlement Cells** | 15-minute interval-grained measures for delivered intervals with price, volume, amount, marketPrice, pnl. Per FR-070. | Past (delivered) | Bitemporal (knownFrom/knownTo) |
+| **S4 — Forward Curves** | Forward curve prices at their published granularity (monthly, quarterly, yearly). Shared market reference data used by many positions. Versioned per curve tick. | Future | Versioned (per tick) |
 | **ForwardMarkService** | Compute-on-demand service that evaluates `price(S4 curve + expression) × volume(S6b)` at query time. Replaces the former S5b per-interval persistent storage. Caches evaluated monthly prices in Redis. Per ADR-002. | Future (undelivered) | Computed (not stored) |
-| **S5c EOD Snapshot** | Daily end-of-day snapshot of forward MtM at the grain of (position × delivery-month × business-date). Serves as-of queries, EMIR daily valuation, and PnL attribution. Per ADR-002. | Future | Append-only (daily) |
-| **S6b Trade Interval Cache** | Pre-multiplied resolved volume per trade-leg x interval for the FULL delivery window (including forward). Per FR-086, D-12. | Past + Forward | Rebuildable cache |
+| **S5c — EOD Mark Snapshot** | Daily end-of-day snapshot of forward MtM at the grain of (position × delivery-month × business-date). Serves as-of queries, EMIR daily valuation, and PnL attribution. Per ADR-002. | Future | Append-only (daily) |
+| **S6b — Trade Interval Cache** | Pre-multiplied resolved volume per trade-leg x interval for the FULL delivery window (including forward). Per FR-086, D-12. | Past + Forward | Rebuildable cache |
 
 **The two perspectives in tabular form:**
 
@@ -67,10 +67,10 @@ drill-down:
 
 | Level | Question | Settlement Source | Risk Source |
 |-------|----------|-------------------|-------------|
-| L1 -- Portfolio Cards | "What is my total portfolio value?" | S7 rollups (settledValue, pnl) | S7 rollups (forwardMarkValue) |
-| L2 -- Period Grid | "How does value distribute across time?" | S7 rollup cells (past periods) | S7 rollup cells (forward periods) |
-| L3 -- Trade-Level View | "Which trades contribute?" | S1 position ledger | S1 position ledger + settlement status |
-| L4 -- Interval Detail | "What are the interval-level details?" | S5a settlement cells (delivered days) | ForwardMarkService computed marks + S6b volumes (forward days) |
+| L1 -- Portfolio Cards | "What is my total portfolio value?" | S7 Rollup Cells (settledValue, pnl) | S7 Rollup Cells (forwardMarkValue) |
+| L2 -- Period Grid | "How does value distribute across time?" | S7 Rollup Cells (past periods) | S7 Rollup Cells (forward periods) |
+| L3 -- Trade-Level View | "Which trades contribute?" | S1 Position Ledger | S1 Position Ledger + settlement status |
+| L4 -- Interval Detail | "What are the interval-level details?" | S5a Settlement Cells (delivered days) | ForwardMarkService computed marks + S6b Trade Interval Cache volumes (forward days) |
 
 The dashboard is **read-only**. It does not trigger any write operations, event
 publications, or state changes. All data is pre-materialized by the existing
@@ -779,8 +779,8 @@ data.
 - L1/L2 date range filters: when the user selects "August 2026", the UTC
   boundaries are 2026-07-31T22:00:00Z to 2026-08-31T22:00:00Z (August is
   entirely within CEST).
-- These rules apply identically when querying S5a (settled), S5b (forward marks),
-  or S6b (trade interval cache).
+- These rules apply identically when querying S5a (settled), ForwardMarkService-computed
+  marks (forward, per ADR-002), or S6b (trade interval cache).
 
 ### Gate closure alignment
 
@@ -828,11 +828,11 @@ are stored in UTC.
 
 | Structure | Used by Level(s) | Access pattern |
 |-----------|-------------------|----------------|
-| `RollupCell` (S7) | L1 (realized + unrealized), L2, L4 (month view fallback) | `RollupRepository.findByRange(tenantId, deliveryPointId, portfolioId, rangeStart, rangeEnd, granularity)` |
-| `PositionLedgerEntry` (S1) | L3 (position metadata) | `PositionLedgerRepository.findAllByDeliveryRange(tenantId, deliveryStart, deliveryEnd)` -- filtered by portfolioId in application layer |
-| `SettlementCell` (S5a) | L3 (settled actuals per position), L4 settled day view, L4 month view (settled days) | `SettlementCellRepository.findByPosition(tenantId, positionId, rangeStart, rangeEnd)` -- aggregated per position for L3 |
-| `ForwardMarkService` (compute-on-demand, ADR-002) | L1 (via S7 `forwardMarkValue`), L3 (unrealized MtM per position), L4 forward day view | `ForwardMarkService.computeIntervalMarks(tenantId, positionId, dayStart, dayEnd)` for L4; `ForwardMarkService.computeMonthlyMark(...)` for L3; rollup pipeline calls `computePortfolioMtm(...)` for S7 |
-| `TradeIntervalCacheEntity` (S6b) | L1 (open position), L3 (forward volume per position), L4 forward day view | By `tradeLegId` + interval range; or by `tenantId` + interval range for portfolio scope |
+| `RollupCell` — S7 Rollup Cells | L1 (realized + unrealized), L2, L4 (month view fallback) | `RollupRepository.findByRange(tenantId, deliveryPointId, portfolioId, rangeStart, rangeEnd, granularity)` |
+| `PositionLedgerEntry` — S1 Position Ledger | L3 (position metadata) | `PositionLedgerRepository.findAllByDeliveryRange(tenantId, deliveryStart, deliveryEnd)` -- filtered by portfolioId in application layer |
+| `SettlementCell` — S5a Settlement Cells | L3 (settled actuals per position), L4 settled day view, L4 month view (settled days) | `SettlementCellRepository.findByPosition(tenantId, positionId, rangeStart, rangeEnd)` -- aggregated per position for L3 |
+| `ForwardMarkService` — compute-on-demand (ADR-002) | L1 (via S7 `forwardMarkValue`), L3 (unrealized MtM per position), L4 forward day view | `ForwardMarkService.computeIntervalMarks(tenantId, positionId, dayStart, dayEnd)` for L4; `ForwardMarkService.computeMonthlyMark(...)` for L3; rollup pipeline calls `computePortfolioMtm(...)` for S7 |
+| `TradeIntervalCacheEntity` — S6b Trade Interval Cache | L1 (open position), L3 (forward volume per position), L4 forward day view | By `tradeLegId` + interval range; or by `tenantId` + interval range for portfolio scope |
 
 ### New or modified query capabilities needed
 
@@ -880,7 +880,7 @@ portfolio-month:
 Options:
 - (a) Backend service method: a dedicated `PositionContributionQueryService` that,
   given a list of position IDs and a month range, returns per-position summary
-  records by joining S5a, S5b, and S6b. This keeps FR-035 aggregation rules
+  records by joining S5a, ForwardMarkService (per ADR-002), and S6b. This keeps FR-035 aggregation rules
   server-side and avoids N+1 queries from the UI.
 - (b) Composite query: L3 fetches position IDs from S1, then issues parallel
   queries to S5a (per position), S6b (per trade-leg), and ForwardMarkService (per position) and
@@ -1169,7 +1169,7 @@ A dedicated query is more efficient but adds a new port method. Decision require
 When L4 day view is scoped to a portfolio (not a single position), should data be:
 (a) displayed individually per position (one row per position per interval), or
 (b) netted across positions per interval (one row per interval)?
-This applies to both settled day view (S5a) and forward day view (S5b/S6b).
+This applies to both settled day view (S5a) and forward day view (ForwardMarkService/S6b, per ADR-002).
 Option (a) provides full transparency but may produce a large grid. Option (b)
 provides a cleaner summary but loses per-trade attribution. A toggle between the
 two modes may be ideal. Decision required from UX.

@@ -1287,7 +1287,7 @@ public class PositionLedgerEntryEntity {
 
 ---
 
-## §7 — PriceExpression: Sealed Hierarchy (S2)
+## §7 — PriceExpression: Sealed Hierarchy (S2 — PriceExpression)
 
 ### 7.1 Sealed Interface — Pattern #5, D-2, FR-048h, S2
 

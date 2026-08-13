@@ -845,11 +845,11 @@ MAR investigation:
 | Regulatory question | System component | Grain | Rows touched (15-year PPA) |
 |---|---|---|---|
 | REMIT trade report | Trade entity (external to volume module) | 1 row per trade | 1 |
-| EMIR daily valuation | S5c EOD struck mark | position × month-bucket × business day | ~180 (15yr × 12 months) |
-| Position reconstruction at date K | S1 Position Ledger (bitemporal) | trade-leg × delivery-month | ~720 (~180 blocks × ~4 versions) |
-| Settlement reproduction | S5a settlement cell + input-version-set | position × interval (delivered only) | ~526K intervals, but only for the specific period requested |
-| Position limits | S6/S7 rollups, or re-aggregate from ledger | aggregated net per contract | ~180 rows (monthly buckets) |
-| MAR full book reconstruction | S1 bitemporal filter at knowledge-time K | all positions as-of K | O(active trades × months), typically <100K rows |
+| EMIR daily valuation | S5c (EOD Struck Marks) | position × month-bucket × business day | ~180 (15yr × 12 months) |
+| Position reconstruction at date K | S1 (Position Ledger) bitemporal | trade-leg × delivery-month | ~720 (~180 blocks × ~4 versions) |
+| Settlement reproduction | S5a (Settlement Cells) + input-version-set | position × interval (delivered only) | ~526K intervals, but only for the specific period requested |
+| Position limits | S6 (Slot Cache) / S7 (Rollup Aggregates), or re-aggregate from ledger | aggregated net per contract | ~180 rows (monthly buckets) |
+| MAR full book reconstruction | S1 (Position Ledger) bitemporal filter at knowledge-time K | all positions as-of K | O(active trades × months), typically <100K rows |
 
 #### Why interval-level data is NOT regulatory — it's operational
 

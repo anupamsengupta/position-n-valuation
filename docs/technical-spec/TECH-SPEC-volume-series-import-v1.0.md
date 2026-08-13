@@ -7,7 +7,7 @@
 | **Status** | Draft |
 | **Date** | 2026-08-02 |
 | **Deciders** | Architecture team |
-| **Extends** | S3 (VolumeSeries), `TECH-SPEC-position-valuation-library_guice-v1.0` |
+| **Extends** | S3 (Volume Series), `TECH-SPEC-position-valuation-library_guice-v1.0` |
 | **Companion Specs** | `VOLUME_SERIES_SPEC-V3_0.md`, `VOLUME_SERIES_DATA_ARCHITECTURE-V2_0.md`, `functional-spec-position-valuation-v1.0.md` |
 
 ---
@@ -125,7 +125,7 @@ Import data is structured as two logical tables linked by `series_key`:
 package com.power.posval.domain.port.ingest;
 
 /**
- * Port interface for volume series import. Extends S3.
+ * Port interface for volume series import. Extends S3 (Volume Series).
  * Supports CSV, Excel, and programmatic ingestion.
  * FR-IMP-001, Pattern #18.
  */
@@ -597,8 +597,8 @@ This ensures memory usage scales with the largest single series, not the total f
 
 ### 12.2 Downstream Impact
 
-- `VolumeSuperseded` → triggers settlement cell revaluation (S5a) for all dependent positions
-- `VolumePublished` → triggers forward mark recalculation (S5b) and cache invalidation (S6)
+- `VolumeSuperseded` → triggers settlement cell revaluation (S5a — Settlement Cells) for all dependent positions
+- `VolumePublished` → triggers forward mark recalculation (S5b — Forward Marks) and cache invalidation (S6 — Slot Cache)
 - Events are written to the outbox table within the same transaction as series persistence (Pattern #24, TR-014)
 
 ---

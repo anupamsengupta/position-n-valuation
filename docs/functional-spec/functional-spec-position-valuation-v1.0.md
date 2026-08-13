@@ -265,7 +265,7 @@ The timings below are **not benchmarked**. They are structural estimates based o
 |---|---|---|---|
 | **`queryVolumeForTradeLeg` (1 day, 96 intervals)** — the hot-path query (FR-054) | 3-join: `volume_reference` (1 row, index over ~5K) → `volume_series` (1 row, index over ~5.5K) → `volume_interval` (96 rows, range scan). Total: 98 rows touched. B-tree depth: 2–3 levels per lookup. Design target: p95 = 15 ms. | Index lookup into snapshot table: 96 rows, but index is over **2.88B rows** (15-year deal). B-tree depth: 6–7 levels. | Index 3–4 levels deeper; working set unlikely to fit in buffer cache. Estimated 3–5× slower per lookup. |
 | **Regulatory as-of ("position on July 1")** — audit query (FR-007, FR-115) | Bitemporal filter on `position_ledger` (~720 rows) → version lookup on `volume_series` header (~5.5K rows) → full interval scan (526K rows). Ledger + version lookup: O(log n) on small tables. | Scan snapshot table for `snapshot_date = July 1, trade = T-7788` → 526K rows from a 2.88B-row table. Same interval count returned, but index lookup into a 2.88B-row table vs 720 + 5.5K-row tables. On warm/cold data (audit queries), snapshot index pages require disk I/O that the current design avoids. | Same result set; index entry point is ~6 orders of magnitude larger in the snapshot table. |
-| **Grid display (1 zone, 1 day)** — trader's primary screen | Direct read from S6/S6b cache (pre-built, 96 rows, no joins). Design target: p95 = 5 ms (S6b). | Snapshot table IS the cache — 11.5T rows platform-wide. No separation between hot-path and audit reads. Every grid query competes with audit scans. | Current design isolates hot-path reads in a purpose-built ~29M-row cache; snapshot approach merges hot and cold data. |
+| **Grid display (1 zone, 1 day)** — trader's primary screen | Direct read from S6 (Slot Cache) / S6b (Trade Interval Cache) (pre-built, 96 rows, no joins). Design target: p95 = 5 ms (S6b). | Snapshot table IS the cache — 11.5T rows platform-wide. No separation between hot-path and audit reads. Every grid query competes with audit scans. | Current design isolates hot-path reads in a purpose-built ~29M-row cache; snapshot approach merges hot and cold data. |
 
 **Important:** Actual performance depends on Aurora instance size, buffer pool hit rates, concurrent load, and query plan choices. The structural comparison demonstrates that the current design keeps hot-path index lookups over tables of thousands to millions of rows, while the snapshot approach forces the same lookups over tables of billions of rows — a qualitative difference in B-tree depth and cache residency that no amount of tuning can bridge.
 
@@ -280,9 +280,9 @@ The current design achieves the same as-of query capability by composing the bit
 | Regulation | Scope | Reporting grain | Frequency | System mapping |
 |---|---|---|---|---|
 | **REMIT** (EU 1227/2011) | Wholesale energy market integrity | **Trade-level**: parties, product, price, quantity, delivery period, execution venue | T+1 to ACER | Trade entity (external to S1/S3) |
-| **REMIT Art. 8** (market surveillance) | Position reconstruction on request | **Position-level**: net position by delivery period, counterparty, product, at any historical knowledge-date | Ad hoc (ACER investigation) | S1 bitemporal filter: `known_from ≤ K < known_to` (FR-007) |
+| **REMIT Art. 8** (market surveillance) | Position reconstruction on request | **Position-level**: net position by delivery period, counterparty, product, at any historical knowledge-date | Ad hoc (ACER investigation) | S1 (Position Ledger) bitemporal filter: `known_from ≤ K < known_to` (FR-007) |
 | **EMIR** (EU 648/2012) | OTC derivative clearing & reporting | **Trade-level** + **daily mark-to-market** per trade | T+1 (trade), daily (valuation) | Trade entity + S5c EOD struck mark (position × month-bucket × business day) |
-| **MiFID II / MiFIR** | Transaction reporting & position limits | **Trade-level** (T+1); **aggregated net position** per commodity derivative (daily to NCA, weekly public) | T+1 / daily / weekly | Trade entity + S6/S7 rollups from ledger |
+| **MiFID II / MiFIR** | Transaction reporting & position limits | **Trade-level** (T+1); **aggregated net position** per commodity derivative (daily to NCA, weekly public) | T+1 / daily / weekly | Trade entity + S6 (Slot Cache) / S7 (Rollup Aggregates) rollups from ledger |
 | **MAR** (EU 596/2014) | Market abuse prevention | **Reconstruct-on-demand**: full trading book state at any historical timestamp | Ad hoc (investigation) | S1 bitemporal filter at knowledge-time K |
 | **GDPR** | Data retention | **Retention ceiling**: delete after regulatory period | Ongoing | pg_partman partition drop (V2.0 §9); 7-year ceiling |
 
@@ -291,10 +291,10 @@ The current design achieves the same as-of query capability by composing the bit
 | Regulatory question | FR reference | System path | Grain | Rows (15-year PPA) |
 |---|---|---|---|---|
 | "Report all trades executed today" (REMIT T+1) | — (trade module) | Trade capture entity | 1 per trade | 1 |
-| "Mark-to-market of each position" (EMIR daily) | FR-079 | S5c: struck mark per position × month-bucket × business day | Monthly bucket | ~180 |
-| "Reconstruct position at date K" (REMIT Art. 8 / MAR) | FR-007 | S1: `valid_from ≤ B < valid_to AND known_from ≤ K < known_to` | Trade-leg × delivery-month | ~720 |
+| "Mark-to-market of each position" (EMIR daily) | FR-079 | S5c (EOD Struck Marks): struck mark per position × month-bucket × business day | Monthly bucket | ~180 |
+| "Reconstruct position at date K" (REMIT Art. 8 / MAR) | FR-007 | S1 (Position Ledger): `valid_from ≤ B < valid_to AND known_from ≤ K < known_to` | Trade-leg × delivery-month | ~720 |
 | "Reproduce settlement for delivery month M" (audit) | FR-072, FR-056 | S5a settlement cell → input-version-set → volume `version_id` → intervals | Interval-level (internal) | ~2,976 per month |
-| "Aggregate net position per contract" (MiFID II limits) | FR-085 | S6/S7 rollup from ledger, or re-aggregate on demand | Monthly aggregate | ~180 |
+| "Aggregate net position per contract" (MiFID II limits) | FR-085 | S6 (Slot Cache) / S7 (Rollup Aggregates) rollup from ledger, or re-aggregate on demand | Monthly aggregate | ~180 |
 | "Full book state at timestamp T" (MAR investigation) | FR-007, FR-115 | S1 bitemporal filter at knowledge-time T across all active trades | Trade-leg × delivery-month | O(active trades × months) |
 
 **FR-009h.** Interval-level data (the 526K quarter-hours in a 15-year PPA) is **operationally necessary but not regulatory-facing**. It serves four internal purposes:
@@ -420,21 +420,21 @@ The position/valuation model depends on four reference structures. Their interna
 
 ## 4. Structure Overview
 
-| # | Structure | Kind | Grain | Temporality | Density | Persistence |
-|---|---|---|---|---|---|---|
-| S1 | Position Ledger | Entity (source of truth) | Trade-leg obligation × delivery-month block | Bitemporal | Sparse | Durable, append-only |
-| S2 | PriceExpression | Entity | Expression version per trade leg | Bitemporal (with trade lifecycle) | Sparse | Durable, append-only |
-| S3 | Volume Series (interface) | Entity (external module) | Series × atomic interval, supersession-versioned | Versioned (supersession per series: VolumeSeries FORECAST/PROFILE, MeteredActualVolumeSeries) | Dense per series per delivered/forecast range | Owned by VolumeSeries module (V3.0); consumed via VolumeReference × multiplier (§7) |
-| S4 | Market Data Store | Shared reference facts | Series × interval × as-of | As-of / bitemporal per series | Dense per series | Durable |
-| S5a | Settlement valuation cells | Measure (derived) | Position × atomic interval | Bitemporal | Dense over delivered past only | Durable |
-| S5b | Forward/MtM marks | Measure (derived) | Position × atomic interval | None (current-state) | Dense over open future | **Ephemeral** (cache + overwrite) |
-| S5c | EOD struck marks | Measure (frozen projection) | Position × delivery-month bucket × business day | Uni-temporal (as-of strike) | Sparse | Durable, immutable |
-| S6 | Slot Cache | Measure (materialization) | (deliveryPoint × portfolio × positionType) × atomic interval | None (version-hashed current state) | Dense over hot window only | Rebuildable cache |
-| S6b | Trade Interval Cache | Measure (materialization, **optional**) | Trade-leg × atomic interval | None (version-hashed current state) | Dense over hot window, per trade | Rebuildable cache (opt-in) |
-| S7 | Rollup aggregates | Measure (materialization) | Aggregation level × period (hour/day/month, peak split) | None | Dense at coarse grain | Rebuildable |
-| S8 | Dependency index | Infrastructure | (input series → valuation cell) edges | None | Proportional to open exposure | Rebuildable |
+| Structure | Kind | Grain | Temporality | Density | Persistence |
+|---|---|---|---|---|---|
+| S1 — Position Ledger | Entity (source of truth) | Trade-leg obligation × delivery-month block | Bitemporal | Sparse | Durable, append-only |
+| S2 — PriceExpression | Entity | Expression version per trade leg | Bitemporal (with trade lifecycle) | Sparse | Durable, append-only |
+| S3 — Volume Series (interface) | Entity (external module) | Series × atomic interval, supersession-versioned | Versioned (supersession per series: VolumeSeries FORECAST/PROFILE, MeteredActualVolumeSeries) | Dense per series per delivered/forecast range | Owned by VolumeSeries module (V3.0); consumed via VolumeReference × multiplier (§7) |
+| S4 — Market Data Store | Shared reference facts | Series × interval × as-of | As-of / bitemporal per series | Dense per series | Durable |
+| S5a — Settlement Cells | Measure (derived) | Position × atomic interval | Bitemporal | Dense over delivered past only | Durable |
+| S5b — Forward Marks | Measure (derived) | Position × atomic interval | None (current-state) | Dense over open future | **Ephemeral** (cache + overwrite) |
+| S5c — EOD Struck Marks | Measure (frozen projection) | Position × delivery-month bucket × business day | Uni-temporal (as-of strike) | Sparse | Durable, immutable |
+| S6 — Slot Cache | Measure (materialization) | (deliveryPoint × portfolio × positionType) × atomic interval | None (version-hashed current state) | Dense over hot window only | Rebuildable cache |
+| S6b — Trade Interval Cache | Measure (materialization, **optional**) | Trade-leg × atomic interval | None (version-hashed current state) | Dense over hot window, per trade | Rebuildable cache (opt-in) |
+| S7 — Rollup Aggregates | Measure (materialization) | Aggregation level × period (hour/day/month, peak split) | None | Dense at coarse grain | Rebuildable |
+| S8 — Dependency Index | Infrastructure | (input series → valuation cell) edges | None | Proportional to open exposure | Rebuildable |
 
-The dependency direction is strictly one-way: S1/S2 (+S3, S4 as inputs) ⇒ S5 ⇒ S6/S6b/S7. Any derived structure can be dropped and rebuilt from the structures to its left. The technical spec must preserve this rebuildability.
+The dependency direction is strictly one-way: S1 (Position Ledger) / S2 (PriceExpression) (+S3, S4 as inputs) ⇒ S5 (Valuation) ⇒ S6 (Slot Cache) / S6b (Trade Interval Cache) / S7 (Rollup Aggregates). Any derived structure can be dropped and rebuilt from the structures to its left. The technical spec must preserve this rebuildability.
 
 ---
 
@@ -469,7 +469,7 @@ The Position Ledger is the bitemporal, append-only source of truth for **trade-d
 | `cascade_parent_id`, `cascade_generation` | Cascade lineage (Cal→Q→M→…) | §5.6 |
 | `signed quantity` / `quantity_ref` | Signed rate (long +, short −) for flat blocks; volume-series reference for shaped | FR-034/035 |
 | `volume_unit` | MW_CAPACITY or MWH_PER_PERIOD | FR-035 |
-| `price_expression_ref` | Reference to S2 | FR-040; fixed price = degenerate expression |
+| `price_expression_ref` | Reference to S2 (PriceExpression) | FR-040; fixed price = degenerate expression |
 | `currency` | Settlement currency of the leg | FX conversion is an expression concern (§6) |
 | `delivery_range` | Half-open range [block start, block end) in market-local semantics | FR-036 |
 | `native_granularity` | Tenor as traded (YEAR/QUARTER/MONTH/DAY/HOUR/QH…) | Attribute, not grain multiplier |
@@ -585,7 +585,7 @@ Demonstrates that the same business date returns different answers as knowledge 
 | **Simple collar PPA** | `Clamp(ConstantLeaf(40), ConstantLeaf(90), MarketDataLeaf("DA15"))` | 3 | 1 | 1 curve |
 | **Collar + CPI escalation** | `Clamp(Escalate(ConstantLeaf(42), Divide(IndexLeaf("HICP"), ConstantLeaf(105.2))), Escalate(ConstantLeaf(95), same_ratio), MarketDataLeaf("DA15"))` | 5 | 4 | 1 curve + 1 index |
 | **Full PPA (reference deal)** | `ConditionalGate(DA<0→0, Clamp(escalated_floor, escalated_cap, DA15))` | 6 | 5 | 1 curve + 1 index (+ degenerate FX) |
-| **Multi-curve PPA** | Same structure but with different `MarketDataLeaf` per valuation purpose: forward curve for S5b, DA settlement for S5a | 6+ | 5+ | 2+ curves + 1+ indices |
+| **Multi-curve PPA** | Same structure but with different `MarketDataLeaf` per valuation purpose: forward curve for S5b (Forward Marks), DA settlement for S5a (Settlement Cells) | 6+ | 5+ | 2+ curves + 1+ indices |
 
 **FR-048e.** Forward vs settlement curve selection. Some PPAs use different market data series depending on whether the interval is being valued for forward marks (undelivered, S5b) or settlement (delivered, S5a). This is modeled by the valuation layer's **purpose-based leaf resolution**, not by having two separate expression trees:
 
@@ -971,7 +971,7 @@ All monetary rollups are **per settlement currency** — positions with differen
 **FR-100.** All derivation (resolution, netting, rollup) is defined once and invoked at two cadences:
 
 - **Event path** — incremental, targeted, low-latency: keeps hot cells fresh (seconds) after fills, amendments, fixings, meter supersessions, curve movement. Scope is always "affected cells only," located via the dependency index. The event path is a freshness optimization and is **never authoritative**.
-- **Batch path** — scheduled, whole-book, authoritative: EOD strike (S5c), rolling cascade, rollup refresh, full reconciliation of derived layers against S1/S2/S4, retention/archival. Batch reads in bulk by query.
+- **Batch path** — scheduled, whole-book, authoritative: EOD strike (S5c — EOD Struck Marks), rolling cascade, rollup refresh, full reconciliation of derived layers against S1 (Position Ledger) / S2 (PriceExpression) / S4 (Market Data), retention/archival. Batch reads in bulk by query.
 
 **FR-101.** Authority ordering is fixed: batch is the source of correctness and self-heals the event path (a dropped/late event leaves a cell stale at worst until the next reconcile — never wrong in the durable record). If the platform ships in stages, batch-only is a valid first stage; the event path is additive.
 
@@ -1031,11 +1031,11 @@ All monetary rollups are **per settlement currency** — positions with differen
 
 **FR-120.** Every structure is tenant-scoped; no query may cross tenants. Tenant isolation composes with the platform's existing isolation stack (per-tenant pooling, bulkheads, WFQ, tiered topics); nothing in this model may require cross-tenant scans.
 
-**FR-121.** Time-partitionability is a functional requirement: S1 and S5a are organized by **delivery month** (which is why the ledger decomposes to month blocks, FR-030/031); S5c by **strike (as-of) month** — its access pattern is observation-dated, not delivery-dated, and the two axes must not be conflated. Any delivery-window or strike-window query must be prunable to the relevant months for one tenant.
+**FR-121.** Time-partitionability is a functional requirement: S1 (Position Ledger) and S5a (Settlement Cells) are organized by **delivery month** (which is why the ledger decomposes to month blocks, FR-030/031); S5c (EOD Struck Marks) by **strike (as-of) month** — its access pattern is observation-dated, not delivery-dated, and the two axes must not be conflated. Any delivery-window or strike-window query must be prunable to the relevant months for one tenant.
 
 **FR-122.** Tenant dimension default: shared partition sets with tenant as the leading isolation key (pruning by index/policy), avoiding partition-count explosion (36 retained months, not 200×36). Large tenants are promotable to dedicated clusters with unchanged schema. Sub-partitioning by tenant is not the default and requires a demonstrated per-tenant month-slice scan problem.
 
-**FR-123.** Retention follows the platform's quality-driven regulatory model: hot store holds open exposure plus the regulatory working window (12–14 months post-delivery for settlement detail); aged delivery months move to warm (compliance archive) then cold tiers, remaining reproducible for the full REMIT/MiFID retention horizon. Ephemeral forward marks (S5b) have no retention at all; struck marks (S5c) retain for the full horizon (they are tiny).
+**FR-123.** Retention follows the platform's quality-driven regulatory model: hot store holds open exposure plus the regulatory working window (12–14 months post-delivery for settlement detail); aged delivery months move to warm (compliance archive) then cold tiers, remaining reproducible for the full REMIT/MiFID retention horizon. Ephemeral forward marks (S5b — Forward Marks) have no retention at all; struck marks (S5c — EOD Struck Marks) retain for the full horizon (they are tiny).
 
 **FR-124.** Rebuildability across tiers: any archived derived data must be re-derivable from archived S1/S2/S4 alone; archives of derived layers are a convenience, not a dependency.
 
@@ -1077,7 +1077,7 @@ Rows = (total trade-legs) × hot-window intervals. Reference fleet: (P + T×Bf) 
 
 ### 15.8 Dependency index (S8)
 
-Edges ≈ open (position × interval) cells × ~4 leaves, bounded by FR-104 pruning to open exposure — same order as the open slice of S5, not lifetime history.
+Edges ≈ open (position × interval) cells × ~4 leaves, bounded by FR-104 pruning to open exposure — same order as the open slice of S5 (Valuation), not lifetime history.
 
 ---
 
@@ -1091,7 +1091,7 @@ The technical spec inherits the platform's technology decisions. These are not r
 
 | # | Decision |
 |---|---|
-| D-1 | Ledger grain = trade-leg × delivery-month block; signed quantity; no direction enum; no interval fan-out in S1 |
+| D-1 | Ledger grain = trade-leg × delivery-month block; signed quantity; no direction enum; no interval fan-out in S1 (Position Ledger) |
 | D-2 | Price is an expression reference; fixed price is the degenerate expression; per-interval prices are derived measures |
 | D-3 | Forward marks ephemeral; settlement bitemporal; official MtM = per-month-bucket EOD strike with input-version stamps |
 | D-4 | Optimized version-binding on restatement (unaffected cells not rewritten); `active_leaves` captured at first resolution |
@@ -1099,7 +1099,7 @@ The technical spec inherits the platform's technology decisions. These are not r
 | D-6 | Dual units (MW+MWh) materialized only in cache/rollups; single canonical in ledger |
 | D-7 | Batch authoritative, events additive freshness; re-derive-not-delta idempotency |
 | D-8 | Entity/measure distinction: position-ledger block is entity (lifecycle-bearing); zone×portfolio net is measure (projection/materialization policy). Netting is projection policy; default cache nets by (point, portfolio, type); drill-down mandatory |
-| D-9 | Shared monthly partitions with tenant as leading isolation key; S5c on strike-month axis |
+| D-9 | Shared monthly partitions with tenant as leading isolation key; S5c (EOD Struck Marks) on strike-month axis |
 | D-10 | All interval structure via MarketCalendar; no timestamp arithmetic anywhere |
 | D-11 | Unified volume resolution: every trade via VolumeReference → VolumeSeries × multiplier; fixed-profile = degenerate case (multiplier=1.0, per-trade PROFILE series); no category branching in code |
 | D-12 | S6b trade_interval_cache: optional, rebuildable, event-driven per-trade pre-multiplied volume cache; not source of truth; commodity-neutral (resolved_qty/energy columns generalize across power/gas/oil/ags); indexed by (trade_leg_id, interval_start) |
