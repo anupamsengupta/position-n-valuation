@@ -8,7 +8,7 @@
 | Status | DRAFT |
 | Version | 1.0 |
 | Date | 2026-08-13 |
-| Depends On | `position-pnl-dashboard-v1.0.md` (backend tech spec), `position-pnl-dashboard.functional.md` v3.0 (functional spec) |
+| Depends On | `position-pnl-dashboard-v1.0.md` (backend tech spec), `position-pnl-dashboard.functional.md` v3.0 (functional spec), ADR-002 (Forward Mark Compute-on-Demand) |
 | Linked Functional Spec | AC-L1-01 through AC-L1-08, AC-L2-01 through AC-L2-07, AC-L3-01 through AC-L3-05, AC-L4-01 through AC-L4-14, AC-TOTAL-01, AC-TOTAL-02 |
 | Frontend Project | `pv-ui/` (new -- bootstrapped by this spec) |
 
@@ -180,7 +180,7 @@ Each level deeper adds search params to the URL. Clearing a param collapses that
   <IntervalDetailPanel>                      -- L4 (conditional)
     <IntervalDetailHeader />                 -- tabs (settled/forward), sub-granularity toggle
     <SettledDayGrid />                       -- TanStack Table for S5a data
-    <ForwardDayGrid />                       -- TanStack Table for S5b/S6b data
+    <ForwardDayGrid />                       -- TanStack Table for ForwardMarkService/S6b data
     <MonthViewGrid />                        -- daily aggregate rows
   </IntervalDetailPanel>
 </DashboardPage>
@@ -674,11 +674,14 @@ interface ForwardIntervalDetailDto {
   intervalEnd: string;
   positionId: string | null;
   tradeLegId: string | null;
-  resolvedQty: string;
-  resolvedEnergy: string;
+  resolvedQty: string;          // MW from S6b
+  resolvedEnergy: string;       // MWh from S6b
   multiplier: string;
   seriesKey: string;
-  markValue: string | null;
+  evaluatedPrice: string | null; // from ForwardMarkService (S4 curve + shaping)
+  markValue: string | null;      // evaluatedPrice × resolvedEnergy
+  curveId: string | null;        // curve used for price evaluation
+  curveVersion: number | null;   // curve version at computation time
   currency: string | null;
 }
 ```
@@ -723,6 +726,8 @@ The As-Of Toggle UI is built but disabled. The `useAsOfClock` Zustand slice is w
 1. Backend endpoints accept `knowledgeTime` and `businessTime` parameters.
 2. Remove the `disabled` prop from the As-Of Toggle component.
 3. The query keys already include the as-of dimensions, so cache invalidation works automatically.
+
+**Note on forward mark as-of (ADR-002):** Forward marks are computed on demand by ForwardMarkService from current S4 × S6b. Historical forward MtM is available via S5c EOD snapshots (daily batch) at the grain of `(position × delivery-month × business-date)`. When the as-of toggle is enabled, forward mark as-of queries should be routed to S5c snapshots rather than recomputing from historical S4/S6b versions. This routing logic is a backend concern.
 
 ### 8.3 Staleness Indicators
 
@@ -1412,7 +1417,7 @@ This appears as:
 - A column header annotation on L2: "Forward Mark Value (indicative)".
 - A section header on L4 forward day view: "Forward Mark Data (Unrealized -- Indicative Only)".
 
-This distinguishes S5b forward marks (displayed) from S5c EOD struck marks (not displayed -- official EMIR daily valuation). Per backend spec S11.
+This distinguishes ForwardMarkService-computed marks (indicative, computed on demand from current S4 × S6b per ADR-002) from S5c EOD snapshots (not displayed -- official EMIR Art. 9 daily valuation). Per backend spec S11.
 
 ### Trade Reference Display
 
@@ -1427,7 +1432,7 @@ L3 position ledger always shows `tradeId` and `tradeLegId` columns to support cr
 | UI-OI-1 | **Auth mechanism.** The API client needs to know how to authenticate. JWT via `Authorization: Bearer` header is assumed. The actual token acquisition flow (login page, OAuth redirect, etc.) is not designed in this spec. | Yes (for production) | Platform team |
 | UI-OI-2 | **Portfolio list API.** This spec assumes the user navigates to `/dashboard/:portfolioId` directly. A portfolio list/selector page requires a `GET /api/portfolios` endpoint that is not in the backend tech spec. | No (for v1.0) | solutions-architect |
 | UI-OI-3 | **As-of toggle backend support.** The As-Of Toggle UI is built but disabled. Backend must add `knowledgeTime` and `businessTime` query parameters to all dashboard endpoints. | No (deferred) | solutions-architect |
-| UI-OI-4 | **Staleness endpoint.** AC-L1-08 requires comparing `inputVersionSet` against current market data versions. Backend OI-5 defers this. The UI reserves space for the staleness badge but does not compute or display staleness. | No (deferred) | solutions-architect |
+| UI-OI-4 | **Staleness endpoint.** AC-L1-08 requires comparing the S7 rollup cell's curve/volume versions against current S4 curve versions (per ADR-002). Backend OI-5 defers this. The UI reserves space for the staleness badge but does not compute or display staleness. | No (deferred) | solutions-architect |
 | UI-OI-5 | **Peak/off-peak toggle.** Backend currently sets `isPeak = false`. When `MarketCalendar` is implemented and peak data is materialized, the UI needs a toggle in L2. The column and filter infrastructure is built but the toggle is hidden until data exists. | No (deferred) | solutions-architect |
 | UI-OI-6 | **i18n library selection.** The spec calls for all strings through an i18n layer. The recommended stack suggests `@lingui/react` or `react-intl`. Selection should happen at project bootstrap. For v1.0, English-only with i18n keys in place is acceptable. | No | ui-architect |
 | UI-OI-7 | **Monospace font licensing.** JetBrains Mono is open source (SIL OFL). Verify that corporate licensing policy permits bundling it. Fallback: `ui-monospace`. | No | ui-architect |

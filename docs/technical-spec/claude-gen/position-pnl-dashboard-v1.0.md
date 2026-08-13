@@ -8,11 +8,12 @@
 | Status | DRAFT |
 | Version | 1.0 |
 | Date | 2026-08-13 |
-| Depends On | `position-pnl-dashboard.functional.md` v3.0, ADR-001 (pattern catalog), `functional-spec-position-valuation-v1.0.md` |
+| Depends On | `position-pnl-dashboard.functional.md` v3.0, ADR-001 (pattern catalog), ADR-002 (Forward Mark Compute-on-Demand), `functional-spec-position-valuation-v1.0.md` |
 | Layer | **Library-scope** (new ports in `pv-domain`, new adapter methods in `pv-persistence`) + **Simulator-scope** (new REST controllers and DTOs in `pv-app`) |
-| Subsystems Touched | S1 (Position Ledger, read-only), S5a (Settlement Cells, read-only), S5b (Forward Marks, read-only), S6b (Trade Interval Cache, read-only), S7 (Rollups, read + write for DAILY materialization) |
+| Subsystems Touched | S1 (Position Ledger, read-only), S4 (Forward Curves, read-only via ForwardMarkService), S5a (Settlement Cells, read-only), S5c (EOD Snapshot, read-only), S6b (Trade Interval Cache, read-only), S7 (Rollups, read + write for DAILY materialization) |
+| ADR References | ADR-002 (Forward Mark Compute-on-Demand with EOD Snapshot) |
 
-Five subsystems touched. All are read-only from the dashboard's perspective except S7, which gains DAILY granularity materialization. This is below the cross-cutting threshold of concern because the dashboard introduces no new write paths to S1, S5a, S5b, or S6b -- it consumes existing materialized data.
+Six subsystems touched. All are read-only from the dashboard's perspective except S7, which gains DAILY granularity materialization. Forward marks are computed on demand by `ForwardMarkService` (ADR-002) from S4 curves × S6b volumes — there is no persistent S5b store. S5c EOD snapshots serve as-of/EMIR queries but are not displayed on this dashboard.
 
 ---
 
@@ -24,7 +25,7 @@ Five subsystems touched. All are read-only from the dashboard's perspective exce
 2. **New repository methods** on existing ports: `RollupRepository.findByPortfolio()` (Q-1), `PositionLedgerRepository.findByPortfolioAndDeliveryRange()` (Q-2). Pattern #18.
 3. **New domain value objects** (records) for dashboard query results: `PortfolioSummary`, `PositionContribution`, `DailyAggregate`, `ForwardIntervalDetail`. Pattern #3 (Value Object).
 4. **DAILY granularity** added to S7 materialization pipeline in `RollupMaterializationService`. Extends existing Pattern #15 (Template Method).
-5. **Sub-daily aggregation service** for 30-min and 60-min rollup of S5a settlement cells and S5b/S6b forward data. Domain logic (FR-035 TWA rules) stays server-side. Pattern #9 (Strategy).
+5. **Sub-daily aggregation service** for 30-min and 60-min rollup of S5a settlement cells and ForwardMarkService-computed/S6b forward data. Domain logic (FR-035 TWA rules) stays server-side. Pattern #9 (Strategy).
 6. **Simulator-scope REST endpoints** in `pv-app` for dashboard API. New `DashboardController` with endpoints mapping to L1--L4. DTOs in `pv-app/dto/dashboard/`.
 7. **New adapter method** on `TradeIntervalCache` port: `getForPortfolioAndRange()` for portfolio-scoped S6b queries (Q-7).
 
@@ -33,7 +34,7 @@ Five subsystems touched. All are read-only from the dashboard's perspective exce
 1. **S5a bitemporality** -- the functional spec notes this as a prerequisite. The dashboard queries current-knowledge settlement cells (no `knownTo` filter needed on the current delete-and-recreate model). When S5a gains bitemporality, the dashboard query will add `knownTo IS NULL` naturally. This spec does not design the S5a bitemporality change.
 2. **S6b bitemporality** -- per OQ-12 resolution: no bitemporality on S6b. Dashboard reads current cache state.
 3. **Peak/off-peak calendar (FR-026)** -- `isPeak` on rollup cells is currently always `false`. When `MarketCalendar` is implemented, peak/off-peak split will flow through existing rollup materialization. No dashboard-specific work needed beyond passing the `isPeak` filter.
-4. **Staleness detection (AC-L1-08, Q-8)** -- requires comparing `inputVersionSet` on S5b marks against current market data versions. This is a cross-cutting concern (touches S4 market data versioning) and is deferred to a follow-up spec. The dashboard API will return the `inputVersionSet` and `computedAt`/mark timestamp so the UI or a future service can compute staleness client-side or via a dedicated staleness endpoint.
+4. **Staleness detection (AC-L1-08, Q-8)** -- requires comparing the S7 rollup cell's curve/volume versions against current S4 curve versions (per ADR-002). This is a cross-cutting concern and is deferred to a follow-up spec. The dashboard API will return the rollup cell's `versionHash` and computation timestamp so the UI or a future service can determine staleness.
 5. **Real-time push (OQ-7)** -- deferred. The dashboard will rely on REST polling. SSE/WebSocket push is a separate enhancement once the production hosting layer exists.
 6. **Cross-currency aggregation** -- per functional spec: out of scope. Separate subtotals per currency.
 7. **Production hosting layer** -- all REST endpoints designed here are simulator-scope (`pv-app`). The production host must supply tenant propagation, RLS, and connection routing. The library-scope ports are production-ready.
@@ -44,11 +45,11 @@ Five subsystems touched. All are read-only from the dashboard's perspective exce
 
 | # | Assumption / Gap | Impact |
 |---|------------------|--------|
-| A-1 | Rollup cells carry both `settledValue`/`pnl` and `forwardMarkValue` on the same row. The existing `RollupCell` record already has `forwardMarkValue`. The `RollupMaterializationService` currently sets `forwardMarkValue = BigDecimal.ZERO`. The `ForwardMarkJob` pipeline is responsible for populating `forwardMarkValue`. This spec assumes that pipeline exists or will exist. | If `forwardMarkValue` is never populated, L1/L2 forward data will be zero. |
+| A-1 | Rollup cells carry both `settledValue`/`pnl` and `forwardMarkValue` on the same row. The existing `RollupCell` record already has `forwardMarkValue`. Per ADR-002, `forwardMarkValue` is populated by calling `ForwardMarkService.computePortfolioMtm(...)` during rollup materialization (triggered by CurveTick via cache invalidation + targeted rollup recomputation). This spec assumes that pipeline exists or will exist. | If `forwardMarkValue` is never populated, L1/L2 forward data will be zero. |
 | A-2 | The number of positions per portfolio per month is bounded at ~200 (per OQ-8). L3 and L4 portfolio-scoped queries are designed for this cardinality. | If a tenant has >500 positions per portfolio-month, cursor-based pagination is needed on L3. |
 | A-3 | S6b `trade_interval_cache` rows are keyed by `(tenant_id, trade_leg_id, interval_start)`. Portfolio-scoped S6b queries require a two-step lookup: position IDs from S1, then trade-leg IDs, then S6b per trade-leg. No `portfolioId` denormalization on S6b (per OQ-10 -- avoid write-time cost). | Acceptable for ~200 positions. |
 | A-4 | `MarketCalendar` service exists or will exist for CET/CEST day boundary computation. The dashboard queries accept `timezone` parameter (default `Europe/Berlin`) and compute UTC boundaries server-side. | If `MarketCalendar` does not exist, day-boundary computation must be implemented inline (utility method). |
-| G-1 | **Open:** The `ForwardMarkStore` port currently stores marks per 15-min interval per position. For L4 forward day view scoped to a portfolio, we need marks for multiple positions. The two-step approach (get position IDs, then query S5b per position) is acceptable if `ForwardMarkStore` is backed by Redis with pipeline batching. If it is backed by PostgreSQL, a new bulk method may be needed on the port. | Monitor performance; add bulk method if needed. |
+| G-1 | **Resolved by ADR-002:** Forward marks are computed on demand by `ForwardMarkService`, not read from a persistent S5b store. For L4 forward day view, `ForwardMarkService.computeIntervalMarks(tenantId, positionId, dayStart, dayEnd)` is called per position. Monthly curve prices are Redis-cached with short TTL. Performance depends on Redis cache hit rate and S6b query speed, not on a persistent mark store. | Acceptable for ~200 positions per portfolio. Monitor Redis cache hit rate. |
 | G-2 | **Open:** The functional spec (OQ-4) defers the decision on L4 portfolio-day netting (individual per position vs. netted). This spec designs for individual-per-position display (option a) as the default, with netting as a future enhancement. | No netting logic designed. |
 
 ---
@@ -99,10 +100,10 @@ record PositionContribution(
     BigDecimal marketValue,           // sum of marketAmount
     BigDecimal realizedPnl,           // sum of pnl
 
-    // Forward forecast (from S6b + S5b)
+    // Forward forecast (from S6b + ForwardMarkService, per ADR-002)
     BigDecimal forwardMw,             // TWA of resolvedQty
     BigDecimal forwardMwh,            // sum of resolvedEnergy
-    BigDecimal forwardMarkValue,      // sum of S5b markValue
+    BigDecimal forwardMarkValue,      // computed by ForwardMarkService (S4 × S6b)
     BigDecimal unrealizedMtm,         // = forwardMarkValue
 
     String currency
@@ -131,7 +132,7 @@ record DailyAggregate(
     // Forward data (null for SETTLED days)
     BigDecimal forwardMw,
     BigDecimal forwardMwh,
-    BigDecimal curvePrice,            // volume-weighted avg from S5b
+    BigDecimal curvePrice,            // volume-weighted avg from ForwardMarkService
     BigDecimal forwardMarkValue,
 
     String currency
@@ -152,8 +153,11 @@ record ForwardIntervalDetail(
     BigDecimal resolvedEnergy,        // MWh from S6b
     BigDecimal multiplier,
     String seriesKey,
-    BigDecimal markValue,             // from S5b, nullable if no mark struck
-    String currency                   // from S5b, nullable
+    BigDecimal evaluatedPrice,        // from ForwardMarkService (S4 curve + shaping)
+    BigDecimal markValue,             // computed: evaluatedPrice × resolvedEnergy
+    String curveId,                   // curve used for price evaluation
+    long curveVersion,                // curve version at computation time
+    String currency                   // from price expression evaluation
 )
 ```
 
@@ -200,7 +204,7 @@ interface DashboardQueryService {
 
     /** Q-2 + Q-9: Position contributions for a portfolio within a delivery range.
      *  Joins S1 positions with S5a settlement summaries, S6b forward volumes,
-     *  and S5b forward marks per position. */
+     *  and ForwardMarkService-computed marks per position (ADR-002). */
     List<PositionContribution> positionContributions(
         String tenantId,
         String portfolioId,
@@ -212,7 +216,7 @@ interface DashboardQueryService {
 
     /** Q-4: Daily aggregates for a position or portfolio within a month.
      *  Uses DAILY rollup cells (S7) when available, falls back to on-the-fly
-     *  aggregation from S5a + S5b + S6b. */
+     *  aggregation from S5a + ForwardMarkService + S6b. */
     List<DailyAggregate> dailyAggregates(
         String tenantId,
         String portfolioId,
@@ -250,7 +254,7 @@ interface DashboardQueryService {
 }
 ```
 
-Justification for a single facade rather than extending existing query services: The dashboard queries are composite reads that span multiple subsystems (S1 + S5a + S5b + S6b + S7). Existing query services (`PositionQueryService`, `SettlementQueryService`, `RollupQueryService`) are single-subsystem. A composite service avoids N+1 API calls from controllers and keeps FR-035 aggregation logic server-side.
+Justification for a single facade rather than extending existing query services: The dashboard queries are composite reads that span multiple subsystems (S1 + S4/ForwardMarkService + S5a + S6b + S7). Existing query services (`PositionQueryService`, `SettlementQueryService`, `RollupQueryService`) are single-subsystem. A composite service avoids N+1 API calls from controllers and keeps FR-035 aggregation logic server-side.
 
 ### 5.2 Modified port: `RollupRepository` (Pattern #18)
 
@@ -296,19 +300,15 @@ List<TradeIntervalRecord> getForTradeLegIds(String tenantId,
 
 This avoids N+1 calls for the `getForTradeLeg()` method when L3/L4 queries involve multiple positions. The adapter can issue a single SQL query with an `IN` clause.
 
-### 5.5 Modified port: `ForwardMarkStore` (Pattern #18)
+### 5.5 Dependency: `ForwardMarkService` (ADR-002)
 
-New method on existing interface:
+Per ADR-002, the `ForwardMarkStore` port is **eliminated**. Forward marks are computed on demand by `ForwardMarkService` (defined in `pv-domain/port/service/ForwardMarkService.java`). The dashboard's `DashboardQueryService` depends on `ForwardMarkService` for:
 
-```
-/** Q-6: Forward marks for multiple positions within an interval range. */
-List<ForwardMark> getForPositions(String tenantId,
-                                    List<UUID> positionIds,
-                                    Instant rangeStart,
-                                    Instant rangeEnd);
-```
+- **L3** `positionContributions()`: calls `ForwardMarkService.computeMonthlyMark(tenantId, positionId, monthStart, monthEnd)` per position to get `forwardMarkValue`.
+- **L4** `forwardDayDetail()`: calls `ForwardMarkService.computeIntervalMarks(tenantId, positionId, dayStart, dayEnd)` per position to get per-interval `evaluatedPrice` and `markValue`.
+- **L4** `dailyAggregates()` for forward days: calls `ForwardMarkService.computeMonthlyMark(...)` scoped to each day's boundaries.
 
-Same rationale as S5.4 -- avoids N+1 calls. Adapter implementation depends on backing store (Redis pipeline or SQL `IN` clause).
+No new methods are added to `ForwardMarkService` — the existing ADR-002 interface serves all dashboard needs. The dashboard is a consumer, not a modifier, of this service.
 
 ---
 
@@ -332,12 +332,9 @@ Location: `pv-persistence/adapter/JpaTradeIntervalCache.java`
 
 JPQL query with `tradeLegId IN :tradeLegIds` clause. Uses existing index `idx_tic_trade_leg_time`. For >100 trade-leg IDs, the adapter should batch into chunks of 100 to avoid PostgreSQL parameter limits.
 
-### 6.4 `ForwardMarkStore` adapter -- new `getForPositions()` (Pattern #18)
+### 6.4 `ForwardMarkService` -- no new adapter needed (ADR-002)
 
-If backed by JPA (`JpaForwardMarkStore` or similar): SQL `IN` clause on `positionId`.
-If backed by Redis: Redis pipeline `MGET` across position-keyed entries.
-
-Implementation-engineer must determine which adapter exists. The port interface change is the same regardless.
+Per ADR-002, `ForwardMarkService` is a domain service (not a repository adapter). Its implementation evaluates price expressions against S4 curves and multiplies by S6b volumes. It caches evaluated monthly prices in Redis. The dashboard calls `ForwardMarkService` methods directly — no adapter work needed beyond what ADR-002 specifies.
 
 ### 6.5 `DefaultDashboardQueryService` -- new service implementation
 
@@ -348,7 +345,7 @@ Implements `DashboardQueryService`. Constructor-injected dependencies (all via `
 - `RollupRepository` -- for L1, L2, L4 month view (DAILY rollups)
 - `PositionLedgerRepository` -- for L3 position lookup
 - `SettlementCellRepository` -- for L3 settled summaries, L4 settled day view
-- `ForwardMarkStore` -- for L3 forward mark aggregation, L4 forward day view
+- `ForwardMarkService` -- for L3 forward mark computation, L4 forward day view (ADR-002)
 - `TradeIntervalCache` -- for L3 forward volume, L4 forward day view
 - `NumericPrecision` -- for FR-035 aggregation arithmetic
 
@@ -360,14 +357,14 @@ Key domain logic in this service:
    - Step 1: `PositionLedgerRepository.findByPortfolioAndDeliveryRange()` to get position metadata.
    - Step 2a: For each position, aggregate S5a settlement cells via `SettlementCellRepository.findByPosition()` with FR-035 rules (TWA for MW, sum for MWh/amounts, volume-weighted avg for prices).
    - Step 2b: Bulk-fetch S6b via `TradeIntervalCache.getForTradeLegIds()` for all trade-leg IDs, aggregate per position with FR-035 rules.
-   - Step 2c: Bulk-fetch S5b via `ForwardMarkStore.getForPositions()` for all position IDs, sum `markValue` per position.
-   - Step 3: Derive `deliveryStatus` per position: SETTLED if only S5a data exists for the month; FORWARD if only S6b/S5b data exists; PARTIAL if both exist.
+   - Step 2c: Compute forward marks via `ForwardMarkService.computeMonthlyMark(tenantId, positionId, monthStart, monthEnd)` for each position with undelivered intervals. Returns `forwardMarkValue`, `totalMwh`, `avgPrice`, `curveId`, `curveVersion`.
+   - Step 3: Derive `deliveryStatus` per position: SETTLED if only S5a data exists for the month; FORWARD if only S6b data exists (all intervals undelivered); PARTIAL if both exist.
 
 3. **L4 `settledDayDetail()` with sub-daily aggregation (Q-5)**: Reads 15-min S5a cells, then if `subDailyGranularity` is MIN_30 or HOURLY, groups by target bucket boundaries and applies FR-035 aggregation: MW = TWA (weighted by interval duration), MWh = sum, amount/marketAmount/pnl = sum, price = settledValue / totalMwh, marketPrice = marketValue / totalMwh. All arithmetic via `NumericPrecision`.
 
-4. **L4 `forwardDayDetail()` with sub-daily aggregation**: Same grouping logic but on S6b `resolvedQty`/`resolvedEnergy` and S5b `markValue`.
+4. **L4 `forwardDayDetail()` with sub-daily aggregation**: Calls `ForwardMarkService.computeIntervalMarks(tenantId, positionId, dayStart, dayEnd)` per position. Returns `IntervalMark` records with `evaluatedPrice`, `markValue`, `resolvedQty`, `resolvedEnergy`. Same grouping logic for sub-daily aggregation (TWA for MW, sum for MWh/markValue, volume-weighted avg for price).
 
-5. **L4 `dailyAggregates()`**: Prefers DAILY rollup cells from S7 if materialized. Falls back to on-the-fly aggregation from S5a (for settled days) and S5b + S6b (for forward days), grouped by CET/CEST day boundaries. Day status derived from comparing day boundaries against `Instant.now()`.
+5. **L4 `dailyAggregates()`**: Prefers DAILY rollup cells from S7 if materialized. Falls back to on-the-fly aggregation from S5a (for settled days) and ForwardMarkService-computed marks (for forward days), grouped by CET/CEST day boundaries. Day status derived from comparing day boundaries against `Instant.now()`.
 
 ---
 
@@ -400,9 +397,15 @@ idx_ple_portfolio_delivery
 
 Purpose: supports `findByPortfolioAndDeliveryRange()` (Q-2). Partial index on current-knowledge active entries only.
 
-### 7.3 S5a, S5b, S6b -- no schema changes
+### 7.3 S5a, S6b -- no schema changes
 
-No denormalization of `portfolioId` onto S5a, S5b, or S6b (per OQ-10 decision). The two-step query pattern (S1 for position IDs, then per-position queries) is acceptable for the expected cardinality (~200 positions per portfolio-month).
+No denormalization of `portfolioId` onto S5a or S6b (per OQ-10 decision). The two-step query pattern (S1 for position IDs, then per-position queries) is acceptable for the expected cardinality (~200 positions per portfolio-month).
+
+S5b (forward mark persistent storage) is **eliminated** per ADR-002. No `forward_mark` table or `ForwardMarkStore` port exists. Forward marks are computed on demand by `ForwardMarkService`.
+
+### 7.4a S5c EOD Snapshot -- new table (ADR-002)
+
+The S5c `forward_mark_snapshot` table (defined in ADR-002) stores daily end-of-day forward MtM snapshots at the grain of `(position × delivery-month × business-date)`. This table is **not directly queried by the dashboard** — it serves as-of queries, EMIR daily valuation, and PnL attribution. The schema is defined in ADR-002 and its migration is managed separately from this spec.
 
 ### 7.4 Flyway migration outline
 
@@ -457,13 +460,13 @@ No `new` call. Delegates to `injector.getInstance()` per D-13.
 
 ### 10.1 Tenant handling (P1, Pattern #32)
 
-Every method on `DashboardQueryService` accepts `tenantId` as the first parameter. Every downstream repository and cache call passes `tenantId`. In the production host, RLS policies on `rollup_cell`, `position_ledger_entry`, `settlement_cell`, `trade_interval_cache` enforce tenant isolation at the database level. The `ForwardMarkStore` implementations must also scope by `tenantId`.
+Every method on `DashboardQueryService` accepts `tenantId` as the first parameter. Every downstream repository, cache, and `ForwardMarkService` call passes `tenantId`. In the production host, RLS policies on `rollup_cell`, `position_ledger_entry`, `settlement_cell`, `trade_interval_cache` enforce tenant isolation at the database level. `ForwardMarkService` inherits tenant scoping from its S4 and S6b data sources.
 
 ### 10.2 Bitemporal invariants
 
 - S1 queries use `knownTo IS NULL AND status = 'ACTIVE'` to read current knowledge.
 - S5a queries read current cells (no bitemporal filter needed until S5a gains bitemporality; when it does, add `knownTo IS NULL`).
-- S5b is ephemeral -- no bitemporal concern (D-3).
+- Forward marks: computed on demand by ForwardMarkService (ADR-002). No persistent store, no bitemporal concern.
 - S6b is a rebuildable cache -- no bitemporal concern (D-12).
 - S7 rollup cells are upserted, not versioned bitemporally. `versionHash` tracks staleness.
 - **No bitemporal entities are mutated by this feature.** All access is read-only.
@@ -474,13 +477,14 @@ All dashboard queries are **read-only**. They require a transaction for JPA enti
 
 ### 10.4 Cache invalidation
 
-The dashboard reads materialized data. Cache invalidation is handled by existing pipelines:
+The dashboard reads materialized data (S7 rollup cells) and computes forward marks on demand (ForwardMarkService). Cache invalidation is handled by existing/ADR-002 pipelines:
 
-- S7 rollup cells: invalidated/refreshed by `RollupMaterializationService` on `SettlementComputed` events.
-- S5b forward marks: overwritten by `ForwardMarkJob` on `CurveTick` events.
+- S7 rollup cells (settled): invalidated/refreshed by `RollupMaterializationService` on `SettlementComputed` events.
+- S7 rollup cells (forward): `forwardMarkValue` recomputed by `ForwardMarkService` on `CurveTick` events via cache invalidation + targeted rollup recomputation (ADR-002).
+- ForwardMarkService Redis cache: evaluated monthly prices cached with short TTL, invalidated on `CurveTick` for affected curve IDs (ADR-002).
 - S6b trade interval cache: rebuilt by `TradeIntervalCacheRebuilder` on `VolumeSuperseded` events.
 
-No new cache keys or invalidation triggers are introduced.
+No new cache keys or invalidation triggers are introduced by the dashboard itself.
 
 ---
 
@@ -514,12 +518,12 @@ All within the <100KB target for interactive views.
   - One index scan on S1 `idx_ple_portfolio_delivery` (partial index, highly selective).
   - Bulk S5a queries: one per position, using existing `(tenant_id, position_id, interval_start)` index. For 200 positions, this is 200 indexed queries. If this proves too expensive, a single native SQL query with `position_id IN (...)` should be added as a performance optimization on `SettlementCellRepository`.
   - Bulk S6b query: single query with `trade_leg_id IN (...)` -- new `getForTradeLegIds()`.
-  - Bulk S5b query: single query with `position_id IN (...)` -- new `getForPositions()`.
-- **L4 day view**: single-position queries hit existing indexes. Portfolio-scoped uses the two-step approach (position IDs from S1, then per-position or bulk queries).
+  - ForwardMarkService: `computeMonthlyMark()` per position. Monthly curve prices are Redis-cached; computation is `O(1)` on cache hit. For 200 positions, ~200 Redis cache lookups + S6b volume aggregation.
+- **L4 day view**: single-position queries call `ForwardMarkService.computeIntervalMarks()` which loads S6b intervals + evaluates (cached) monthly price + applies shaping. Expected latency: 1-5ms per position with warm cache, up to 50ms cold.
 
 ### Redis cache
 
-No new Redis cache keys. The dashboard reads through existing repository ports. If a Redis-backed `ForwardMarkStore` is in use, the new `getForPositions()` method should use Redis pipeline (`MGET`) for batching (Pattern #31).
+The dashboard leverages the `ForwardMarkService` Redis cache for evaluated monthly prices (ADR-002). Cache keys are `(expressionId, curveVersionHash, month)` with short TTL (~60s), invalidated on CurveTick. No new Redis cache keys are introduced by the dashboard itself — it consumes the cache indirectly through `ForwardMarkService`.
 
 ### Connection pooling
 
@@ -533,7 +537,7 @@ No new DataSource or connection path. All queries use the existing writer Entity
 
 When a real-time push path is introduced in a future version:
 - It should use SSE for one-way server-to-client position/MtM updates.
-- The Kafka topic source would be `posval.SettlementComputed` (for settlement updates) and a future `posval.ForwardMarksRefreshed` (for MtM updates).
+- The Kafka topic source would be `posval.SettlementComputed` (for settlement updates) and `posval.RollupRefreshed` (for forward MtM updates, emitted after CurveTick → rollup recomputation per ADR-002).
 - Tenant isolation on the push path must filter events by `tenantId` before sending.
 - Graceful degradation: REST polling via TanStack Query `refetchInterval` as fallback.
 
@@ -579,7 +583,7 @@ Not directly applicable (read-only dashboard). No gate closure filters.
 | Regulation | Impact |
 |------------|--------|
 | **REMIT** (Regulation 1227/2011) | None. The dashboard is a read-only view of existing data. It does not generate, modify, or report any data. Timestamps displayed are UTC-convertible for cross-reference with REMIT reports. |
-| **EMIR** | **Labeling requirement.** The dashboard displays S5b forward marks (indicative, ephemeral) -- NOT S5c EOD struck marks (official EMIR daily valuation). The API response must include a field or metadata indicating that MtM values are "indicative current marks" not "official EOD marks." The DTO design includes this distinction. |
+| **EMIR** | **Labeling requirement.** The dashboard displays ForwardMarkService-computed marks (indicative, computed on demand from current S4 × S6b per ADR-002) -- NOT S5c EOD snapshots (official EMIR Art. 9 daily valuation). The API response must include a field or metadata indicating that MtM values are "indicative current marks" not "official EOD marks." The DTO design includes this distinction. |
 | **MiFID II** (RTS 22) | None. L3 trade-level view displays `tradeId` and `tradeLegId` to support cross-reference with RTS 22 transaction reports, but does not itself report. |
 
 No new regulatory obligations arise from this feature.
@@ -592,13 +596,13 @@ No new regulatory obligations arise from this feature.
 
 Location: `pv-domain/src/test/java/.../service/DefaultDashboardQueryServiceTest.java`
 
-- Hand-mock all repository ports (`RollupRepository`, `PositionLedgerRepository`, `SettlementCellRepository`, `ForwardMarkStore`, `TradeIntervalCache`).
+- Hand-mock all repository ports and services (`RollupRepository`, `PositionLedgerRepository`, `SettlementCellRepository`, `ForwardMarkService`, `TradeIntervalCache`).
 - Test FR-035 aggregation logic: TWA for MW, sum for MWh, volume-weighted average for prices. Use `DefaultNumericPrecision` for scale assertions.
 - Test sub-daily aggregation: verify that 15-min cells correctly aggregate to 30-min (2 cells per bucket) and 60-min (4 cells per bucket).
 - Test DST handling: provide 92 cells for spring-forward day, verify correct aggregation. Provide 100 cells for fall-back day, verify the duplicate hour aggregates into distinct buckets.
-- Test `deliveryStatus` derivation: SETTLED when only S5a data exists, FORWARD when only S6b/S5b, PARTIAL when both.
+- Test `deliveryStatus` derivation: SETTLED when only S5a data exists, FORWARD when only S6b/ForwardMarkService data exists, PARTIAL when both.
 - Test multi-currency grouping for `portfolioSummaries()`.
-- Test empty data scenarios: no rollup cells, no settlement cells, no forward marks.
+- Test empty data scenarios: no rollup cells, no settlement cells, ForwardMarkService returns null/empty (curve or volume unavailable).
 
 ### 12.2 Integration tests (`*IT.java`)
 
@@ -619,6 +623,7 @@ Location: `pv-integration-tests/src/test/java/.../DashboardQueryIT.java`
 - `RollupRepository.findByPortfolio()` -- verify contract between port and JPA adapter: tenant isolation, granularity filter, date range overlap semantics.
 - `PositionLedgerRepository.findByPortfolioAndDeliveryRange()` -- verify partial index usage, current-knowledge filter, ACTIVE status filter.
 - `TradeIntervalCache.getForTradeLegIds()` -- verify bulk query returns same results as N individual `getForTradeLeg()` calls.
+- `ForwardMarkService` integration: verify `computeIntervalMarks()` returns correct `evaluatedPrice × resolvedEnergy = markValue` for known test data (mock S4 curve + S6b volumes).
 
 ---
 
@@ -628,7 +633,7 @@ Location: `pv-integration-tests/src/test/java/.../DashboardQueryIT.java`
 |------------|--------|
 | **D-1** (Ledger grain = trade-leg x delivery-month) | Compatible. L3 reads position ledger entries at their native grain. No interval fan-out in S1. |
 | **D-2** (Price = expression reference) | Not applicable. Dashboard does not evaluate prices. |
-| **D-3** (Forward marks ephemeral) | Compatible. Dashboard reads S5b marks as ephemeral current-state. No history, no bitemporality assumed. |
+| **D-3** (Forward marks ephemeral) | Compatible. Per ADR-002, forward marks are computed on demand by ForwardMarkService — even more ephemeral than before (not stored at all). S5c EOD snapshots provide daily as-of marks but are not queried by this dashboard. |
 | **D-11** (Unified volume) | Not applicable. Dashboard reads pre-resolved volumes from S6b. |
 | **D-12** (S6b optional, rebuildable) | Compatible. Dashboard reads S6b as a cache. If S6b is empty, forward volume data is unavailable -- the service returns null/zero for forward fields. |
 | **D-13** (Library-first, Spring-free) | Compatible. All new ports (`DashboardQueryService`), value objects (`PortfolioSummary`, etc.), and the service implementation (`DefaultDashboardQueryService`) reside in `pv-domain`. No Spring types. REST controllers and DTOs reside in `pv-app` only. |
@@ -645,12 +650,12 @@ Location: `pv-integration-tests/src/test/java/.../DashboardQueryIT.java`
 
 | # | Item | Blocker? | Owner |
 |---|------|----------|-------|
-| OI-1 | **`ForwardMarkStore` backing store.** The port interface gains `getForPositions()`. If the adapter is Redis-backed, implementation uses pipeline `MGET`. If JPA-backed, uses SQL `IN`. Implementation-engineer must determine which adapter(s) exist and implement accordingly. | No | implementation-engineer |
+| OI-1 | **`ForwardMarkService` implementation (ADR-002).** The `ForwardMarkService` port must be implemented before the dashboard can display forward data. Implementation evaluates price expressions against S4 curves, multiplies by S6b volumes, and caches evaluated monthly prices in Redis. The dashboard depends on `computeMonthlyMark()` (L3) and `computeIntervalMarks()` (L4). | Yes (dependency) | implementation-engineer (ADR-002 scope) |
 | OI-2 | **`MarketCalendar` availability.** Day boundary computation in `dailyAggregates()` uses `ZonedDateTime` directly. If a `MarketCalendar` service exists with richer logic (half-holidays, market-specific calendars), the dashboard service should delegate to it. If not, inline `ZonedDateTime` computation is acceptable for CET/CEST. | No | implementation-engineer |
 | OI-3 | **L3 N+1 query concern.** For portfolios with >100 positions, per-position S5a queries may be slow. A bulk `findByPositionIds()` method on `SettlementCellRepository` may be needed as a performance optimization. Monitor query times and add if latency exceeds 500ms for the L3 endpoint. | No | implementation-engineer to monitor |
 | OI-4 | **DAILY rollup storage impact.** Adding DAILY to the materialization pipeline increases `rollup_cell` row count by approximately 10x vs. MONTHLY-only (31 days per month). For 200 tenants x 300 positions x 24 months x 31 days x 2 (peak/off-peak), this is ~89M rows. Verify partition strategy on `rollup_cell` accommodates this volume. | Should-verify | solutions-architect |
-| OI-5 | **Staleness endpoint (AC-L1-08).** Deferred from this spec. A future `ForwardMarkStalenessService` should compare `inputVersionSet` against current market data versions. The dashboard API exposes `inputVersionSet` data so the UI can display it, but staleness computation is not in this spec. | No (deferred) | solutions-architect (follow-up spec) |
-| OI-6 | **`RollupMaterializationService` DAILY granularity and `ForwardMarkValue` population.** The existing `materialize()` method only aggregates S5a settlement cells. It does not populate `forwardMarkValue` from S5b marks. The `ForwardMarkJob` pipeline must write `forwardMarkValue` into rollup cells for DAILY granularity as well. Verify that this pipeline exists or is planned. | Yes (dependency) | solutions-architect to confirm |
+| OI-5 | **Staleness endpoint (AC-L1-08).** Deferred from this spec. With ADR-002, staleness is determined by comparing the S7 rollup cell's curve version against the current S4 curve version. A future service should expose this comparison. The dashboard API exposes the rollup cell's `versionHash` and computation timestamp so the UI can display it. | No (deferred) | solutions-architect (follow-up spec) |
+| OI-6 | **`forwardMarkValue` population on rollup cells — RESOLVED by ADR-002.** Per ADR-002, `forwardMarkValue` is populated by calling `ForwardMarkService.computePortfolioMtm(...)` during rollup materialization. The CurveTick handler invalidates Redis cache, identifies affected rollup cells via the dependency index (FR-103), and recomputes `forwardMarkValue` for each affected cell. This applies to all granularities (DAILY, WEEKLY, MONTHLY, YEARLY). The `ForwardMarkJob` is replaced by the CurveTick cache invalidation + rollup recomputation pipeline. | Resolved | solutions-architect (ADR-002) |
 | OI-7 | **Pagination for L3 `positionContributions()`.** The spec designs for offset-based pagination (bounded set of ~200). If tenant profiling reveals portfolios with >500 positions, cursor-based pagination (keyset on `positionId`) should be adopted. | No | implementation-engineer |
 
 ---
@@ -779,7 +784,7 @@ The existing `materialize()` method already supports `TimeGranularity.DAILY` via
 |---------------|-----------|-----------------|
 | `DashboardQueryService` (port interface) | #18 (Repository Port + Adapter) | ADR-001 S2.5 |
 | `DefaultDashboardQueryService` (domain service) | #18 adapter, implements port | ADR-001 S2.5 |
-| `PortfolioSummary`, `PositionContribution`, `DailyAggregate`, `ForwardIntervalDetail` | #3 (Value Object, Java record) | ADR-001 S2.1 |
+| `PortfolioSummary`, `PositionContribution`, `DailyAggregate`, `ForwardIntervalDetail` | #3 (Value Object, Java record) | ADR-001 S2.1, ADR-002 (IntervalMark, MonthlyMark) |
 | `RollupRepository.findByPortfolio()` | #18 (Repository) | ADR-001 S2.5 |
 | `PositionLedgerRepository.findByPortfolioAndDeliveryRange()` | #18 (Repository) | ADR-001 S2.5 |
 | Sub-daily aggregation logic | #9 (Strategy -- aggregation rules) | ADR-001 S2.3 |

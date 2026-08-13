@@ -4,7 +4,7 @@
 **Version:** 3.0 (revised to incorporate forward-looking risk/trading perspective)
 **Date:** 2026-08-12
 **Status:** DRAFT -- pending review
-**Spec references:** FR-035, FR-075, FR-086, FR-090, FR-105, D-1, D-3, D-6, D-11, D-12, S1, S5a, S5b, S6b, S7
+**Spec references:** FR-035, FR-075, FR-086, FR-090, FR-105, D-1, D-3, D-6, D-11, D-12, S1, S4, S5a, S5c, S6b, S7, ADR-002
 
 ---
 
@@ -28,10 +28,12 @@ views:
 
 | Subsystem | Role | Time Horizon | Persistence |
 |-----------|------|--------------|-------------|
-| **S7 Rollup Cells** | Coarse-grain aggregates (WEEKLY, MONTHLY, YEARLY) per (delivery_point, portfolio) with peak/off-peak split. Carries both `settledValue` (from S5a) and `forwardMarkValue` (from S5b). Per FR-090. | Past + Forward | Durable, versioned |
+| **S7 Rollup Cells** | Coarse-grain aggregates (DAILY, WEEKLY, MONTHLY, YEARLY) per (delivery_point, portfolio) with peak/off-peak split. Carries both `settledValue` (from S5a) and `forwardMarkValue` (computed by `ForwardMarkService` from S4 × S6b). Per FR-090. | Past + Forward | Durable, versioned |
 | **S1 Position Ledger** | Bitemporal trade-leg-grained source of truth. Per D-1, FR-030. | Full contract life | Bitemporal |
 | **S5a Settlement Cells** | 15-minute interval-grained measures for delivered intervals with price, volume, amount, marketPrice, pnl. Per FR-070. | Past (delivered) | Bitemporal (knownFrom/knownTo) |
-| **S5b Forward Marks** | Ephemeral current-state marks per position x interval for undelivered periods. Curve price x forecast volume through the price expression. Per FR-075, D-3. | Future (undelivered) | Ephemeral (overwrite) |
+| **S4 Forward Curves** | Forward curve prices at their published granularity (monthly, quarterly, yearly). Shared market reference data used by many positions. Versioned per curve tick. | Future | Versioned (per tick) |
+| **ForwardMarkService** | Compute-on-demand service that evaluates `price(S4 curve + expression) × volume(S6b)` at query time. Replaces the former S5b per-interval persistent storage. Caches evaluated monthly prices in Redis. Per ADR-002. | Future (undelivered) | Computed (not stored) |
+| **S5c EOD Snapshot** | Daily end-of-day snapshot of forward MtM at the grain of (position × delivery-month × business-date). Serves as-of queries, EMIR daily valuation, and PnL attribution. Per ADR-002. | Future | Append-only (daily) |
 | **S6b Trade Interval Cache** | Pre-multiplied resolved volume per trade-leg x interval for the FULL delivery window (including forward). Per FR-086, D-12. | Past + Forward | Rebuildable cache |
 
 **The two perspectives in tabular form:**
@@ -40,7 +42,7 @@ views:
 |---|---|---|
 | Time horizon | Past -- settled/delivered intervals | Future -- unsettled forward periods |
 | Volumes | Actuals (from S5a settlement cells) | Forecasts (from S6b trade interval cache) |
-| Prices | Settled fixings, trade prices | Forward curves, marks (from S5b forward marks) |
+| Prices | Settled fixings, trade prices | Forward curves (S4), computed on demand via `ForwardMarkService` (ADR-002) |
 | Key metric | Realized PnL | Unrealized Mark-to-Market |
 | Update frequency | Batch / on settlement event | Near real-time (on curve update) |
 
@@ -48,9 +50,10 @@ views:
 
 - **Realized PnL** = settlement cell pnl summed over delivered intervals (S5a/S7
   `settledValue` minus `marketValue`, or equivalently S7 `pnl`).
-- **Unrealized MtM** = forward mark value summed over undelivered intervals (S5b
-  marks aggregated into S7 `forwardMarkValue`). Represents current curve price x
-  forecast volume for each open position.
+- **Unrealized MtM** = forward mark value summed over undelivered intervals
+  (computed on demand by `ForwardMarkService` from S4 × S6b, aggregated into S7
+  `forwardMarkValue`; per ADR-002). Represents current curve price × forecast
+  volume for each open position.
 - **Total Portfolio Value** = Realized PnL + Unrealized MtM. This is the headline
   metric for portfolio managers.
 - **Open Position** = net MW exposure across all trades in a portfolio for future
@@ -67,7 +70,7 @@ drill-down:
 | L1 -- Portfolio Cards | "What is my total portfolio value?" | S7 rollups (settledValue, pnl) | S7 rollups (forwardMarkValue) |
 | L2 -- Period Grid | "How does value distribute across time?" | S7 rollup cells (past periods) | S7 rollup cells (forward periods) |
 | L3 -- Trade-Level View | "Which trades contribute?" | S1 position ledger | S1 position ledger + settlement status |
-| L4 -- Interval Detail | "What are the interval-level details?" | S5a settlement cells (delivered days) | S5b forward marks + S6b volumes (forward days) |
+| L4 -- Interval Detail | "What are the interval-level details?" | S5a settlement cells (delivered days) | ForwardMarkService computed marks + S6b volumes (forward days) |
 
 The dashboard is **read-only**. It does not trigger any write operations, event
 publications, or state changes. All data is pre-materialized by the existing
@@ -100,10 +103,9 @@ It consumes data produced by the following existing business events:
 |-------|---------|-------------------|
 | `SettlementComputed` | Settlement materialization job completes for a position | L4 settled day-view data becomes available or updated; L1/L2 data updates after rollup refresh |
 | `SettlementRevaluationRequested` | Market data or volume supersession (delivered intervals) | Settlement cells recomputed; dashboard reflects updated values on next query |
-| `ForwardMarkJob` completion | Curve tick, volume supersession, or batch cycle (undelivered intervals) | S5b forward marks overwritten; S7 `forwardMarkValue` updated on next rollup refresh; L1/L2/L4 forward data refreshes |
-| `VolumeSuperseded` | New forecast published for an asset | S6b trade interval cache rebuilt for affected intervals; S5b marks re-struck; forward volume and MtM values update |
-| `VolumePublished` | First publication of a volume series | S6b populated; S5b marks created for newly available forward intervals |
-| `CurveTick` | Forward curve update | Triggers `ForwardMarkJob` for affected positions via dependency index (FR-103); S5b marks overwritten |
+| `CurveTick` | Forward curve update | Redis cache for evaluated monthly prices invalidated; affected rollup cells recomputed via `ForwardMarkService` (ADR-002); S7 `forwardMarkValue` updated; L1/L2 forward data refreshes |
+| `VolumeSuperseded` | New forecast published for an asset | S6b trade interval cache rebuilt for affected intervals; `ForwardMarkService` returns updated values on next query; forward volume and MtM values update |
+| `VolumePublished` | First publication of a volume series | S6b populated; `ForwardMarkService` can now compute forward marks for newly available intervals |
 | Rollup refresh (FR-105 step 4) | Batch cycle | L1 portfolio cards and L2 rollup grid reflect current aggregates for both settled and forward values |
 | Trade capture / amendment / cancellation | Upstream trade lifecycle | New or changed position ledger entries appear in L3; downstream settlement, forward mark, and rollup pipelines eventually update all levels |
 
@@ -114,12 +116,15 @@ cadence.
 For **settlement data** (backward-looking): freshness tracks `computedAt` on
 settlement cells and `versionHash` on rollup cells.
 
-For **forward mark data** (forward-looking): freshness tracks the `inputVersionSet`
-on S5b marks (which records the curve version, volume version, FX version, and
-expression version used to strike the mark). The UI should display:
-- A "data as of" timestamp derived from the most recent mark strike.
-- A staleness indicator when the mark's input versions differ from the current
-  versions of the underlying curves or volumes (see AC-L1-08).
+For **forward mark data** (forward-looking): marks are computed on demand by
+`ForwardMarkService` from S4 (forward curves) × S6b (volumes) per ADR-002.
+Freshness tracks the curve version and volume version used in the computation.
+The UI should display:
+- A "data as of" timestamp derived from the S7 rollup cell's last recomputation.
+- A staleness indicator when the rollup cell's curve/volume versions differ from
+  the current versions of the underlying curves or volumes (see AC-L1-08).
+- For EOD/regulatory purposes, S5c daily snapshots capture the official mark
+  (not displayed on this dashboard — see OQ-13).
 
 ---
 
@@ -127,14 +132,15 @@ expression version used to strike the mark). The UI should display:
 
 | Regulation | Applicability | Notes |
 |------------|--------------|-------|
-| **REMIT** (Regulation 1227/2011) | **Indirect.** The dashboard displays data that is reportable (trade-level positions, settlement values). It does not itself generate REMIT reports. Timestamps displayed must be convertible to UTC for reporting purposes (FR-007). Forward marks displayed are ephemeral (FR-075) and are NOT reportable under REMIT -- only the EOD struck mark (S5c) is the EMIR-reportable valuation. | No new reporting obligation. |
-| **EMIR** | **Indirect.** The unrealized MtM displayed on the dashboard is derived from S5b forward marks, which feed the EOD struck mark (S5c, FR-079). S5c is the EMIR daily valuation. The dashboard does NOT display S5c; it displays the current (potentially intraday) S5b mark, which is for trading/risk purposes only, not regulatory valuation. | The dashboard must not be misconstrued as showing the official EMIR mark. A label such as "Current MtM (indicative)" should distinguish from the official EOD mark. |
+| **REMIT** (Regulation 1227/2011) | **Indirect.** The dashboard displays data that is reportable (trade-level positions, settlement values). It does not itself generate REMIT reports. Timestamps displayed must be convertible to UTC for reporting purposes (FR-007). Forward marks displayed are computed on demand by ForwardMarkService (ADR-002) and are indicative — NOT reportable under REMIT. Only the S5c EOD snapshot is the EMIR-reportable valuation. | No new reporting obligation. |
+| **EMIR** | **Indirect.** The unrealized MtM displayed on the dashboard is computed on demand by ForwardMarkService from S4 × S6b (ADR-002). S5c EOD snapshots (daily batch) are the EMIR Art. 9 daily valuation. The dashboard does NOT display S5c; it displays the current (potentially intraday) computed mark, which is for trading/risk purposes only, not regulatory valuation. | The dashboard must not be misconstrued as showing the official EMIR mark. A label such as "Current MtM (indicative)" should distinguish from the official EOD mark. |
 | **MiFID II** (RTS 22) | **Indirect.** L3 trade-level view shows data that feeds MiFID II transaction reports. The dashboard does not itself report. | The L3 view must show tradeId and tradeLegId to support cross-reference with RTS 22 reports. |
 
 No new regulatory obligations arise from this feature. The dashboard displays
 existing regulated data in a consolidated view. The distinction between indicative
-forward marks (S5b, displayed) and official marks (S5c, not displayed) must be
-clearly communicated in the UI to avoid regulatory confusion.
+forward marks (computed on demand by ForwardMarkService, displayed) and official
+marks (S5c EOD snapshots, not displayed on this dashboard) must be clearly
+communicated in the UI to avoid regulatory confusion.
 
 ---
 
@@ -151,7 +157,7 @@ Given a tenant "TN_0042" with portfolio "WIND_DE"
   And rollup cells for past periods (before 2026-08-12) carry
     settledValue, marketValue, and pnl from S5a settlement cells
   And rollup cells for future periods (2026-09 onward) carry
-    forwardMarkValue from S5b forward marks
+    forwardMarkValue computed by ForwardMarkService (S4 × S6b, per ADR-002)
   And the current month (2026-08) is a transition month with both
     settledValue (for delivered days) and forwardMarkValue (for undelivered days)
 When the portfolio manager opens the Position & PnL Dashboard
@@ -207,7 +213,7 @@ Then the portfolio card aggregates only rollup cells whose period falls within
 ```
 Given portfolio "NEW_WIND" has trades with delivery starting 2027-01
   And no settlement cells exist (delivery has not begun)
-  And forward marks (S5b) have been struck and rolled into S7 forwardMarkValue
+  And ForwardMarkService has computed forward MtM and rolled into S7 forwardMarkValue
 When the portfolio card renders
 Then Realized PnL = 0 (or null, with a "no settled data" indicator)
   And Unrealized MtM shows the sum of forwardMarkValue
@@ -274,7 +280,7 @@ Then the grid displays one row per rollup cell for portfolio "WIND_DE"
   And the totalValue column = settledValue + forwardMarkValue (or pnl + forwardMarkValue
     depending on the chosen value metric)
   And settled periods show pnl derived from S5a; forward periods show forwardMarkValue
-    derived from S5b
+    computed by ForwardMarkService (S4 × S6b)
 ```
 
 **AC-L2-02: Visual distinction between settled and forward periods**
@@ -412,10 +418,10 @@ Then it displays one row per active PositionLedgerEntry from S1
     Forward forecast (aggregated from S6b trade interval cache for this position-month):
       forwardMw:    TWA of resolvedQty across unsettled intervals (FR-035)
       forwardMwh:   sum of resolvedEnergy across unsettled intervals
-      forwardMarkValue: sum of S5b mark values for unsettled intervals
-      unrealizedMtm: forwardMarkValue (or null if no marks struck)
+      forwardMarkValue: computed by ForwardMarkService (S4 × S6b) for unsettled intervals
+      unrealizedMtm: forwardMarkValue (or null if curve/volume unavailable)
 
-    currency (from S5a or S5b)
+    currency (from S5a or ForwardMarkService)
 
   And rows are sorted by tradeId, tradeLegId
   And the contractual quantity is shown for reference but is secondary
@@ -552,9 +558,10 @@ When the interval detail view loads with sub-daily granularity = MIN_15
 Then the view displays forward data for that CET/CEST day:
   - volumeMw, volumeMwh: from S6b trade interval cache (resolvedQty, resolvedEnergy)
     for the relevant trade-leg(s) in the selected portfolio/position scope
-  - curvePrice: the forward curve price used in the S5b mark calculation
-  - markValue: the S5b forward mark value per interval
-  - currency: from the forward mark
+  - curvePrice: the forward curve price evaluated by ForwardMarkService from S4
+    (monthly price shaped to interval granularity via profile coefficients)
+  - markValue: computed on demand by ForwardMarkService (curvePrice × resolvedEnergy)
+  - currency: from the ForwardMarkService computation
   And there are exactly 96 rows for a normal day
   And rows are sorted by intervalStart ascending
   And the view header indicates "Forward Mark Data (Unrealized)"
@@ -582,7 +589,7 @@ Then for each 15-minute interval, the view shows:
 
 ```
 Given the user selects a future day 2027-06-15
-  And no forward marks (S5b) have been struck for positions in portfolio "WIND_DE"
+  And ForwardMarkService cannot compute marks for positions in portfolio "WIND_DE"
     for this day (e.g., forward curve not yet available for this delivery period)
   But S6b trade interval cache contains volume data for this day
 When the interval detail view loads
@@ -596,8 +603,9 @@ Then volume data (from S6b) is displayed: resolvedQty, resolvedEnergy per interv
 
 ```
 Given the user selects a future day 2028-01-15
-  And neither S5b forward marks nor S6b trade interval cache data exists
+  And neither S4 forward curve data nor S6b trade interval cache data exists
     for positions in portfolio "WIND_DE" for this day
+    (ForwardMarkService cannot compute marks without both inputs)
 When the interval detail view loads
 Then the view displays an empty state with a message:
   "No volume forecast or forward marks available for this delivery day"
@@ -611,7 +619,7 @@ Given the user views a forward day with sub-daily granularity = HOURLY
 When the interval detail view loads
 Then S6b volumes are aggregated: resolvedQty = TWA across constituent intervals,
   resolvedEnergy = sum (FR-035)
-  And S5b markValue is summed across constituent intervals
+  And ForwardMarkService-computed markValue is summed across constituent intervals
   And curvePrice is volume-weighted average (sum(markValue) / sum(resolvedEnergy))
   And the aggregation rules mirror those for settled day view
 ```
@@ -634,7 +642,8 @@ Then the view displays one row per CET/CEST delivery day within 2026-08
   And settled rows show: volumeMw (TWA), volumeMwh (sum), price, amount,
     marketPrice, marketAmount, pnl -- from S5a settlement cells
   And forward rows show: volumeMw (TWA from S6b), volumeMwh (sum from S6b),
-    curvePrice (volume-weighted avg from S5b), markValue (sum from S5b) -- no pnl
+    curvePrice (volume-weighted avg from ForwardMarkService), markValue (sum from
+    ForwardMarkService) -- no pnl
   And the columns adapt based on day status or show both settled and forward
     columns with nulls where inapplicable
 ```
@@ -693,7 +702,7 @@ Then Total Portfolio Value = EUR 1,234,567 + EUR 89,000 + EUR 45,000 + EUR 3,456
 ```
 Given a position has delivery month 2026-08 (transition month)
   And settlement cells (S5a) exist for 2026-08-01 through 2026-08-11
-  And forward marks (S5b) exist for 2026-08-12 through 2026-08-31
+  And ForwardMarkService computes marks for 2026-08-12 through 2026-08-31
   And the S7 rollup cell for 2026-08 carries both settledValue and forwardMarkValue
 When the dashboard renders
 Then the settled intervals are counted in Realized PnL
@@ -717,13 +726,13 @@ data.
 - The CET/CEST day has 23 hours = **92 quarter-hour intervals**.
 - The hour 02:00--03:00 CET does not exist.
 - L4 day view at MIN_15: 92 rows. At MIN_30: 46 rows. At HOURLY: 23 rows.
-- Applies to both settled day view (S5a) and forward day view (S5b/S6b).
+- Applies to both settled day view (S5a) and forward day view (ForwardMarkService/S6b).
 
 **Fall-back day** (last Sunday of October; e.g., 2026-10-25):
 - The CET/CEST day has 25 hours = **100 quarter-hour intervals**.
 - The hour 02:00--03:00 CET occurs twice (once in CEST, once in CET).
 - L4 day view at MIN_15: 100 rows. At MIN_30: 50 rows. At HOURLY: 25 rows.
-- Applies to both settled day view (S5a) and forward day view (S5b/S6b).
+- Applies to both settled day view (S5a) and forward day view (ForwardMarkService/S6b).
 
 **Normal days:** 96 intervals at MIN_15, 48 at MIN_30, 24 at HOURLY.
 
@@ -731,8 +740,8 @@ data.
 
 - Settlement cells (S5a) for the non-existent hour 02:00--03:00 CET will not exist
   (the interval generator correctly produces 92 intervals for this day).
-- S5b forward marks and S6b trade interval cache entries for this hour will also
-  not exist (same interval generator).
+- ForwardMarkService will not compute marks for this hour (S6b has no entries
+  for non-existent intervals).
 - The L4 day view grid (both settled and forward) must skip this hour. The UI must
   display a visual indicator (e.g., a collapsed row or banner) explaining that this
   hour does not exist due to DST spring-forward.
@@ -754,8 +763,8 @@ data.
   intervals spanning the duplicate hour (4 in CEST, 4 in CET) aggregate into
   2 distinct hourly rows or 4 distinct 30-min rows. They must NOT be collapsed
   into a single row.
-- This applies equally to S5a settlement cells, S5b forward marks, and S6b
-  trade interval cache entries.
+- This applies equally to S5a settlement cells, ForwardMarkService-computed
+  marks, and S6b trade interval cache entries.
 
 ### Day boundaries for aggregation
 
@@ -790,8 +799,8 @@ are stored in UTC.
 
 ### Persistence layer implications (hand off to solutions-architect)
 
-- All settlement cell, forward mark, and trade interval cache `intervalStart`/
-  `intervalEnd` are stored as UTC.
+- All settlement cell and trade interval cache `intervalStart`/`intervalEnd` are
+  stored as UTC. ForwardMarkService computes marks at UTC interval boundaries.
 - Queries for "delivery day" must compute correct UTC boundaries for the requested
   CET/CEST day, including DST-aware boundary shifts.
 - The existing `MarketCalendar` service is the sole authority for interval
@@ -822,7 +831,7 @@ are stored in UTC.
 | `RollupCell` (S7) | L1 (realized + unrealized), L2, L4 (month view fallback) | `RollupRepository.findByRange(tenantId, deliveryPointId, portfolioId, rangeStart, rangeEnd, granularity)` |
 | `PositionLedgerEntry` (S1) | L3 (position metadata) | `PositionLedgerRepository.findAllByDeliveryRange(tenantId, deliveryStart, deliveryEnd)` -- filtered by portfolioId in application layer |
 | `SettlementCell` (S5a) | L3 (settled actuals per position), L4 settled day view, L4 month view (settled days) | `SettlementCellRepository.findByPosition(tenantId, positionId, rangeStart, rangeEnd)` -- aggregated per position for L3 |
-| `ForwardMark` (S5b) | L1 (via S7), L3 (unrealized MtM per position), L4 forward day view | `ForwardMarkStore.getRange(tenantId, positionId, rangeStart, rangeEnd)` |
+| `ForwardMarkService` (compute-on-demand, ADR-002) | L1 (via S7 `forwardMarkValue`), L3 (unrealized MtM per position), L4 forward day view | `ForwardMarkService.computeIntervalMarks(tenantId, positionId, dayStart, dayEnd)` for L4; `ForwardMarkService.computeMonthlyMark(...)` for L3; rollup pipeline calls `computePortfolioMtm(...)` for S7 |
 | `TradeIntervalCacheEntity` (S6b) | L1 (open position), L3 (forward volume per position), L4 forward day view | By `tradeLegId` + interval range; or by `tenantId` + interval range for portfolio scope |
 
 ### New or modified query capabilities needed
@@ -866,15 +875,15 @@ portfolio-month:
   settledValue (sum of amount), marketValue (sum of marketAmount), realizedPnl
   (sum of pnl), avgPrice (settledValue / settledMwh).
 - Forward: aggregate S6b trade interval cache → forwardMw (TWA of resolvedQty),
-  forwardMwh (sum of resolvedEnergy). Plus sum of S5b forward marks →
-  forwardMarkValue.
+  forwardMwh (sum of resolvedEnergy). Plus ForwardMarkService-computed marks →
+  forwardMarkValue (per ADR-002).
 Options:
 - (a) Backend service method: a dedicated `PositionContributionQueryService` that,
   given a list of position IDs and a month range, returns per-position summary
   records by joining S5a, S5b, and S6b. This keeps FR-035 aggregation rules
   server-side and avoids N+1 queries from the UI.
 - (b) Composite query: L3 fetches position IDs from S1, then issues parallel
-  queries to S5a (per position), S6b (per trade-leg), and S5b (per position) and
+  queries to S5a (per position), S6b (per trade-leg), and ForwardMarkService (per position) and
   aggregates in the application layer. Acceptable for small position counts
   (10--50 per portfolio-month).
 - Recommendation: option (a) for correctness and performance. The aggregation
@@ -886,14 +895,15 @@ S7 currently materializes WEEKLY, MONTHLY, YEARLY granularities. DAILY is not
 materialized. For L4 month view:
 - (a) Add DAILY to S7 materialization (FR-105 step 4). This is the cleanest
   solution but increases rollup storage.
-- (b) Aggregate S5a settlement cells (for settled days) and S5b forward marks
-  (for forward days) on the fly, grouped by CET/CEST day boundaries.
+- (b) Aggregate S5a settlement cells (for settled days) and ForwardMarkService
+  computed marks (for forward days) on the fly, grouped by CET/CEST day boundaries.
 - (c) Hybrid: materialize DAILY rollups for delivered months only; aggregate on the
   fly for the current/forward months.
 
 **Q-5: 30-minute and 60-minute aggregation for L4 day view.**
-S5a stores 15-minute cells. S5b stores 15-minute marks. S6b stores 15-minute
-intervals. Aggregation to 30min or 60min requires:
+S5a stores 15-minute cells. ForwardMarkService computes marks at 15-minute
+granularity (from S4 monthly prices shaped via profile coefficients × S6b
+15-minute volumes). Aggregation to 30min or 60min requires:
 - (a) Backend aggregation: add a query or service method that groups cells/marks
   by 30-min or 60-min boundaries and applies FR-035 rules (TWA for MW, sum
   for MWh/amounts).
@@ -901,15 +911,15 @@ intervals. Aggregation to 30min or 60min requires:
   aggregate. Acceptable for a single day (max 100 cells), but pushes domain logic
   (FR-035) to the client.
 
-**Q-6: Forward marks for a portfolio-day (new).**
-L4 forward day view when scoped to a portfolio requires fetching S5b marks across
-all positions in that portfolio for a single day. The current
-`ForwardMarkStore.getRange()` takes a single `positionId`. Options:
-- (a) Add `getByPortfolioAndRange(tenantId, portfolioId, rangeStart, rangeEnd)` --
-  requires a join or denormalization similar to Q-3.
-- (b) First query L3 to get position IDs, then query S5b per position.
-- (c) Since S5b is ephemeral and may be in Redis or an in-memory cache, bulk
-  retrieval patterns differ from S5a. The port interface may need extension.
+**Q-6: Forward marks for a portfolio-day (resolved by ADR-002).**
+L4 forward day view when scoped to a portfolio requires computing forward marks
+across all positions in that portfolio for a single day. With the compute-on-demand
+model (ADR-002), `ForwardMarkService.computeIntervalMarks(tenantId, positionId,
+dayStart, dayEnd)` is called per position. The query pattern is:
+- First query L3 to get position IDs for the portfolio-month.
+- Then call `ForwardMarkService.computeIntervalMarks(...)` per position for the day.
+- No persistent S5b store to query. Monthly curve prices are Redis-cached by
+  `(expressionId, curveVersionHash, month)` with short TTL.
 
 **Q-7: S6b trade interval cache for a portfolio-day (new).**
 L4 forward day view and L1 open position require S6b data scoped by portfolio.
@@ -921,12 +931,14 @@ The current entity is indexed by `(trade_leg_id, interval_start)` and
 - (c) Accept the two-step query: L3 gives trade-leg IDs; S6b is queried per leg.
 
 **Q-8: Staleness detection for forward marks (new).**
-L1 staleness indicator (AC-L1-08) requires comparing S5b `inputVersionSet` against
-current versions of market data series. Options:
-- (a) A dedicated service method that, given a portfolio's forward marks, checks
-  each curve/volume/FX version against the latest known version.
-- (b) A lightweight "is stale" flag maintained by the mark pipeline itself -- set
-  when a CurveTick arrives but the mark has not yet been re-struck.
+L1 staleness indicator (AC-L1-08) requires determining whether the S7
+`forwardMarkValue` reflects the latest curve and volume versions. With the
+compute-on-demand model (ADR-002), options are:
+- (a) Compare the S7 rollup cell's `curveVersion` against the current S4 curve
+  version. If they differ, the rollup cell is stale (curve updated but rollup
+  not yet recomputed).
+- (b) A lightweight "is stale" flag on the rollup cell, set when a CurveTick
+  arrives but the rollup cell has not yet been recomputed.
 
 ### Prerequisite: S5a bitemporality
 
@@ -979,9 +991,11 @@ intervals.
   the dashboard reflects the latest values on the next query. With S5a
   bitemporality, prior versions are closed (knownTo set) but the dashboard
   always queries current knowledge (knownTo IS NULL).
-- When forward marks are re-struck (e.g., after a curve tick), the dashboard
-  reflects the new mark on the next query. S5b is ephemeral -- there is no
-  history of prior mark values.
+- When forward curve prices change (curve tick), the Redis-cached monthly prices
+  are invalidated and affected rollup cells are recomputed via ForwardMarkService
+  (ADR-002). The dashboard reflects updated values on the next query. Forward marks
+  are computed on demand — there is no persistent storage of prior mark values.
+  S5c EOD snapshots provide historical as-of marks at daily granularity.
 - The dashboard does not show historical versions of settlement cells. If
   bitemporal as-of viewing is needed (e.g., "what was the PnL as known on
   2026-08-10?"), that is a separate audit feature, not part of this dashboard.
@@ -992,8 +1006,9 @@ intervals.
 - Settlement cells for cancelled positions: with S5a bitemporality, cancellation
   closes the settlement cells (sets knownTo) rather than deleting them. The
   dashboard's knownTo IS NULL filter naturally excludes them.
-- Forward marks for cancelled positions: `ForwardMarkStore.removeAll()` is called
-  on cancellation (per existing implementation). The dashboard will show no
+- Forward marks for cancelled positions: with the compute-on-demand model
+  (ADR-002), ForwardMarkService will not compute marks for cancelled positions
+  (they are excluded from position lookups). The dashboard will show no
   forward data for cancelled positions.
 - S6b entries for cancelled positions: should be removed on cancellation. The
   dashboard will show no forward volume for cancelled positions.
@@ -1005,13 +1020,14 @@ intervals.
   once materialization completes.
 - L3 will show the backdated trade's position ledger entry with the current
   `knownFrom` timestamp (reflecting when the system learned about it).
-- Forward marks will be generated only for undelivered intervals of the backdated
-  trade; delivered intervals will be handled by the settlement pipeline.
+- ForwardMarkService will compute marks only for undelivered intervals of the
+  backdated trade; delivered intervals will be handled by the settlement pipeline.
 
 ### Multi-currency
 
-- Rollup cells (S7), settlement cells (S5a), and forward marks (S5b) carry a
-  `currency` field.
+- Rollup cells (S7) and settlement cells (S5a) carry a `currency` field.
+  ForwardMarkService-computed marks inherit currency from the position's price
+  expression evaluation.
 - L1 portfolio cards: separate subtotals per currency for both realized PnL and
   unrealized MtM. No cross-currency netting.
 - L2 rollup grid: each row has its own currency. Rows in different currencies are
@@ -1019,7 +1035,8 @@ intervals.
 - L4 interval detail (settled): all cells for a single position share the same
   currency (currency is a property of the trade). Cross-position views
   (portfolio-day) may show mixed currencies.
-- L4 interval detail (forward): forward marks carry currency. Same rules apply.
+- L4 interval detail (forward): ForwardMarkService-computed marks carry currency.
+  Same rules apply.
 - Cross-currency aggregation (e.g., converting GBP positions to EUR at a chosen
   FX rate for a single portfolio total) is a display-time enhancement, not part
   of the initial dashboard scope.
@@ -1028,8 +1045,9 @@ intervals.
 
 - Every query includes `tenantId` as a leading filter.
 - The dashboard must not leak data across tenants under any circumstance.
-- S5b forward marks, S6b trade interval cache, S5a settlement cells, S7 rollup
-  cells, and S1 position ledger entries are all tenant-scoped.
+- S4 forward curves, S6b trade interval cache, S5a settlement cells, S5c EOD
+  snapshots, S7 rollup cells, and S1 position ledger entries are all tenant-scoped.
+  ForwardMarkService inherits tenant scoping from its input data.
 - In the production host, Row-Level Security (RLS) policies enforce this at the
   database level. In the simulator, the hardcoded `"default"` tenant provides
   implicit isolation.
@@ -1041,13 +1059,16 @@ intervals.
   single day. Pagination or lazy loading may be necessary.
 - L3 for a portfolio with hundreds of positions in a single month: pagination
   is recommended.
-- Forward marks (S5b) for large portfolios: if marks are stored in Redis, bulk
-  retrieval across many positions may require pipeline optimization.
+- Forward marks for large portfolios: ForwardMarkService computes marks on demand.
+  For a portfolio with hundreds of positions, computing all L4 interval marks
+  requires Redis-cached monthly price lookups per position. Bulk computation is
+  bounded by the number of unique (expressionId, month) combinations, not by the
+  number of intervals (ADR-002).
 
 ### Empty date ranges
 
 - If the selected date range produces no rollup cells (L2), no settlement
-  cells (L4 settled), or no forward marks (L4 forward), the dashboard displays
+  cells (L4 settled), or no computed forward marks (L4 forward), the dashboard displays
   an appropriate empty state, not an error.
 
 ### Transition month (partially settled, partially forward)
@@ -1056,23 +1077,24 @@ intervals.
   for delivered days; forward marks exist for undelivered days. The boundary moves
   daily as intervals are delivered and settled.
 - L2: The rollup cell for the transition month carries BOTH `settledValue`
-  (accumulated from S5a) and `forwardMarkValue` (remaining from S5b). The sum
-  gives the month's total estimated value.
+  (accumulated from S5a) and `forwardMarkValue` (computed by ForwardMarkService
+  for remaining undelivered intervals). The sum gives the month's total estimated
+  value.
 - L4 month view: Each day row is independently classified as SETTLED, TODAY, or
   FORWARD. The grid shows a clear visual boundary.
 - L4 day view for today: May show a mix of settled intervals (past gate closure)
   and forward intervals (future gate closure). The display must handle this
   intra-day boundary. Options: (a) show settled cells from S5a for past intervals
-  and forward marks from S5b for future intervals on the same grid, or (b) show
-  the day entirely from one source with a note that it will transition during the
+  and ForwardMarkService-computed marks for future intervals on the same grid,
+  or (b) show the day entirely from one source with a note that it will transition during the
   day. Decision deferred to UI specification.
 
 ### Forward curve not yet available for a delivery period
 
 - Long-dated PPAs may have delivery periods beyond the liquid forward curve
   horizon (e.g., delivery in 2035 but the forward curve only extends to 2030).
-- In this case, S5b forward marks will not be struck for those intervals
-  (ForwardMarkJob cannot evaluate the price expression without curve data).
+- In this case, ForwardMarkService cannot compute marks for those intervals
+  (the price expression cannot be evaluated without curve data).
 - S6b volume data may still exist (forecast volumes are independent of curve
   availability).
 - L4 forward day view for such periods: show volume data from S6b, mark values
@@ -1083,31 +1105,32 @@ intervals.
 ### Volume forecast not yet published for a future period
 
 - If a trade's asset has no forecast volume series for a future delivery period,
-  S6b will have no entries, and S5b marks cannot be computed (no volume input).
+  S6b will have no entries, and ForwardMarkService cannot compute marks (no volume input).
 - L4 forward view: empty with "Volume forecast not published" message.
 - L1: the position's contribution to Unrealized MtM is zero until the forecast
   arrives. This may cause the total portfolio value to understate true exposure.
   The staleness indicator should flag positions with missing forecast data.
 
-### Stale forward marks (curve updated but marks not re-struck)
+### Stale forward marks (curve updated but rollup cells not yet recomputed)
 
-- After a CurveTick event, there is a latency window before ForwardMarkJob
-  re-strikes affected positions. During this window, the displayed MtM is stale.
-- The staleness indicator (AC-L1-08) addresses this at L1. At L4, each forward
-  mark's `inputVersionSet` can be compared against current curve versions.
-- The dashboard does NOT attempt to compute marks on the fly. It reads
-  pre-materialized marks. Staleness is communicated, not remedied, by the
-  dashboard.
+- After a CurveTick event, there is a latency window before the curve tick handler
+  invalidates the Redis cache and recomputes affected rollup cells (ADR-002). During
+  this window, the S7 `forwardMarkValue` is stale.
+- The staleness indicator (AC-L1-08) addresses this at L1 by comparing the rollup
+  cell's curve version against the current S4 curve version.
+- At L4, ForwardMarkService always computes with the latest curve version (the Redis
+  cache is invalidated on curve tick), so L4 forward day views are never stale — only
+  the pre-aggregated S7 rollup values may lag briefly.
 
-### Position amended after forward mark struck -- mark invalidation
+### Position amended after rollup cell computed -- rollup invalidation
 
 - When a position is amended (quantity change, price expression change, volume
-  reference change), existing forward marks for that position become invalid.
-- The amendment event triggers ForwardMarkJob to re-strike marks for the
-  affected position. Until re-striking completes, old marks remain in S5b.
-- The dashboard should detect this via version mismatch: the mark's
-  `inputVersionSet` references an older expression or volume version than the
-  current position ledger entry.
+  reference change), existing S7 rollup cells' `forwardMarkValue` may be stale.
+- The amendment event triggers rollup cell recomputation via ForwardMarkService
+  for affected positions. Until recomputation completes, old rollup values remain.
+- At L4, ForwardMarkService computes marks on demand from the latest position
+  metadata (S1), current curve (S4), and current volumes (S6b), so L4 views are
+  always current.
 - This is a specific case of the general staleness pattern (AC-L1-08).
 
 ---
@@ -1127,8 +1150,8 @@ query S5a cells directly, not S7. Decision required from solutions-architect.
 
 **OQ-2: 30-minute and 60-minute aggregation location.**
 Should sub-daily aggregation (15min to 30min/60min) happen in the backend (new
-query service method) or the frontend? This now applies to both S5a settlement
-cells and S5b/S6b forward data. Arguments for backend: domain logic (FR-035 TWA
+query service method) or the frontend? This applies to both S5a settlement
+cells and ForwardMarkService-computed/S6b forward data. Arguments for backend: domain logic (FR-035 TWA
 rules) stays server-side; consistent across clients. Arguments for frontend:
 max 100 cells per day is trivial to aggregate; avoids new backend endpoints.
 Recommendation: backend, to keep FR-035 enforcement in the domain layer.
@@ -1159,14 +1182,16 @@ Should L2 display:
 (c) a toggle to switch between peak/off-peak/combined views?
 Decision required from UX.
 
-**OQ-6: Forward mark granularity for risk grid (new).**
-Should forward marks be struck at DAILY granularity (aggregated from 15-min) for
-the risk grid, or only MONTHLY? The current S5b model stores marks per 15-min
-interval per position, which is very granular for a risk overview but correct for
-the interval-level L4 view. For L2 and L1, the rollup pipeline aggregates S5b
-into `forwardMarkValue` on the rollup cell. If risk users need daily-grain forward
-marks in L4 month view, the 15-min marks must be aggregated (on the fly or via
-DAILY rollups -- see OQ-1). Decision required from product/risk.
+**OQ-6: Forward mark granularity for risk grid — RESOLVED by ADR-002.**
+With the compute-on-demand model (ADR-002), forward marks are not stored at any
+pre-defined granularity. `ForwardMarkService` computes marks at the requested
+granularity: `computeIntervalMarks()` for 15-min L4 views,
+`computeMonthlyMark()` for monthly L3/L2 views. S7 rollup cells store
+`forwardMarkValue` at their materialized granularity (DAILY, WEEKLY, MONTHLY,
+YEARLY). For L4 month view, daily forward MtM is either served from DAILY rollup
+cells (if materialized per OQ-1) or computed on the fly by
+`ForwardMarkService.computeMonthlyMark()` scoped to each day's boundaries.
+**Decision: closed — no fixed forward mark granularity; computed on demand.**
 
 **OQ-7: Real-time refresh vs. poll-based.**
 Should the dashboard auto-refresh when new settlement or forward mark data is
@@ -1201,19 +1226,24 @@ Query Q-3 (settlement cells for a portfolio-day) currently requires a join from
 S5a to S1 to resolve `portfolioId`. Should `portfolioId` be denormalized onto
 the settlement cell for query efficiency? This trades write-time cost
 (maintaining the denormalization on portfolio reassignment) for read-time
-efficiency. The same question applies to S5b forward marks and S6b trade interval
+efficiency. The same question applies to S6b trade interval
 cache entries. Decision required from solutions-architect.
 
-**OQ-11: Forward mark refresh strategy on curve update (new).**
-When a forward curve updates (CurveTick event), forward marks are re-struck via
-ForwardMarkJob. For a large portfolio with hundreds of positions across years of
-forward delivery, re-striking all marks can be computationally expensive. Should
-the mark refresh be:
-(a) Real-time (triggered by each CurveTick, processed via dependency index for
-    targeted positions only -- the current design per FR-103),
-(b) Batch (accumulated curve updates are processed in a scheduled batch cycle),
-(c) Hybrid (near-term months are real-time, far-dated months are batch)?
-The answer affects the freshness promise the dashboard can make. Decision required.
+**OQ-11: Forward mark refresh strategy on curve update — RESOLVED by ADR-002.**
+With the compute-on-demand model (ADR-002), there is no `ForwardMarkJob` to
+re-strike marks. On CurveTick:
+1. Redis cache for the affected curve's evaluated monthly prices is invalidated.
+2. Affected rollup cells are identified via the dependency index (FR-103).
+3. Each affected rollup cell's `forwardMarkValue` is recomputed by calling
+   `ForwardMarkService.computePortfolioMtm(...)` — this evaluates the price
+   expression against the new curve version and multiplies by S6b volumes.
+4. The recomputed rollup cells are upserted.
+
+Write volume: O(affected rollup cells) — typically ~4,800 upserts for 50 positions
+× 24 months × 4 granularities, vs. ~3.5M interval inserts under the old model.
+This is fast enough for real-time processing on each CurveTick (option a).
+**Decision: closed — real-time, via cache invalidation + targeted rollup cell
+recomputation.**
 
 **OQ-12: Should S6b become bitemporal for forward position audit?**
 S6b is currently a rebuildable cache with no history (D-12). For forward position
@@ -1248,8 +1278,9 @@ of S6b) rather than full bitemporality. Decision: **closed — no bitemporality
 on S6b**, but flagging the EOD snapshot option as a future enhancement.
 
 **OQ-13: Indicative vs official mark labeling (new).**
-The dashboard displays S5b forward marks, which are ephemeral and indicative. The
-official EMIR mark is S5c (EOD struck mark), which the dashboard does NOT display.
+The dashboard displays ForwardMarkService-computed marks, which are indicative
+(computed on demand from current S4 × S6b). The official EMIR mark is the S5c EOD
+snapshot (daily batch), which the dashboard does NOT display.
 What labeling convention should the UI use to make this distinction clear? E.g.,
 "Current MtM (indicative)" vs. "EOD Mark (official)". Decision required from
 compliance/product.
