@@ -123,6 +123,43 @@ public class JpaRollupRepository implements RollupRepository {
         }
     }
 
+    /**
+     * Q-1: Rollup cells for a portfolio across ALL delivery points.
+     * Uses index {@code idx_rollup_portfolio_granularity_time} (§7.1).
+     * Pattern #18, §6.1.
+     */
+    @Override
+    public List<RollupCell> findByPortfolio(String tenantId,
+                                              String portfolioId,
+                                              Instant rangeStart,
+                                              Instant rangeEnd,
+                                              TimeGranularity granularity) {
+        return emProvider.get()
+            .createNativeQuery("""
+                SELECT tenant_id, delivery_point_id, portfolio_id,
+                       interval_start, interval_end, granularity,
+                       net_mw, net_mwh, is_peak, price, market_price,
+                       settled_value, market_value, pnl, forward_mark_value,
+                       calendar_version, version_hash, currency
+                FROM volume_series.rollup_cell
+                WHERE tenant_id = :tenantId
+                  AND portfolio_id = :portfolioId
+                  AND interval_start < :rangeEnd
+                  AND interval_end > :rangeStart
+                  AND granularity = :granularity
+                ORDER BY interval_start
+                """)
+            .setParameter("tenantId", tenantId)
+            .setParameter("portfolioId", portfolioId)
+            .setParameter("rangeStart", rangeStart)
+            .setParameter("rangeEnd", rangeEnd)
+            .setParameter("granularity", granularity.name())
+            .getResultList()
+            .stream()
+            .map(row -> mapToRollupCell((Object[]) row))
+            .toList();
+    }
+
     private RollupCell mapToRollupCell(Object[] row) {
         // Column order matches SELECT: tenant_id[0], delivery_point_id[1], portfolio_id[2],
         // interval_start[3], interval_end[4], granularity[5], net_mw[6], net_mwh[7],

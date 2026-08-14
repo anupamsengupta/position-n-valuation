@@ -28,7 +28,8 @@
       "Bash(winget install:*)",
       "Bash(\"/c/Program Files/GitHub CLI/gh.exe\":*)",
       "Bash(\"/c/Program Files/GitHub CLI/gh.exe\" auth:*)",
-      "Bash(PGPASSWORD=posval psql:*)"
+      "Bash(PGPASSWORD=posval psql:*)",
+      "Bash(echo EXIT:$?:*)"
     ]
   }
 }

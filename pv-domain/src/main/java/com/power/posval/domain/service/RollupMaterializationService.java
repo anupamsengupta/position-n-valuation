@@ -118,9 +118,12 @@ public class RollupMaterializationService {
             rollupCells.size(), tenantId, rangeStart, rangeEnd, granularity);
     }
 
-    /** Granularities materialized on every settlement event for portfolio views. */
+    /**
+     * Granularities materialized on every settlement event for portfolio views.
+     * DAILY added to support L4 month-view daily aggregates (§Appendix B, dashboard spec v1.0).
+     */
     private static final List<TimeGranularity> PORTFOLIO_GRANULARITIES = List.of(
-        TimeGranularity.WEEKLY, TimeGranularity.MONTHLY, TimeGranularity.YEARLY);
+        TimeGranularity.DAILY, TimeGranularity.WEEKLY, TimeGranularity.MONTHLY, TimeGranularity.YEARLY);
 
     /**
      * Materialize rollup for a single position (triggered by settlement events).
@@ -136,14 +139,22 @@ public class RollupMaterializationService {
             return;
         }
 
-        // Widen to the coarsest boundary (YEARLY) so all three granularities are covered
-        Instant wideStart = truncateToPeriod(rangeStart, TimeGranularity.YEARLY);
-        Instant wideEnd = advancePeriod(truncateToPeriod(rangeEnd, TimeGranularity.YEARLY), TimeGranularity.YEARLY);
-        if (!wideEnd.isAfter(rangeEnd)) {
-            wideEnd = advancePeriod(wideEnd, TimeGranularity.YEARLY);
-        }
-
+        // Use granularity-specific widening to avoid over-materialization.
+        // DAILY/WEEKLY widen to the affected month (not full year) to limit blast radius.
+        // MONTHLY/YEARLY widen to the affected year.
+        // Per tech spec Appendix B performance note.
         for (TimeGranularity granularity : PORTFOLIO_GRANULARITIES) {
+            TimeGranularity wideningGranularity = switch (granularity) {
+                case DAILY, WEEKLY -> TimeGranularity.MONTHLY;
+                case MONTHLY, YEARLY -> TimeGranularity.YEARLY;
+                default -> TimeGranularity.YEARLY;
+            };
+            Instant wideStart = truncateToPeriod(rangeStart, wideningGranularity);
+            Instant wideEnd = advancePeriod(
+                truncateToPeriod(rangeEnd, wideningGranularity), wideningGranularity);
+            if (!wideEnd.isAfter(rangeEnd)) {
+                wideEnd = advancePeriod(wideEnd, wideningGranularity);
+            }
             materialize(tenantId, wideStart, wideEnd, granularity);
         }
     }
@@ -164,12 +175,15 @@ public class RollupMaterializationService {
             netMwByInterval.merge(ik, mw, BigDecimal::add);
         }
 
-        // 2. TWA across distinct intervals
+        // 2. TWA across distinct intervals (use INTERMEDIATE precision for accumulation)
         BigDecimal weightedMwSum = BigDecimal.ZERO;
         long totalMinutes = 0;
         for (var entry : netMwByInterval.entrySet()) {
             long minutes = Duration.between(entry.getKey().start(), entry.getKey().end()).toMinutes();
-            weightedMwSum = weightedMwSum.add(entry.getValue().multiply(BigDecimal.valueOf(minutes)));
+            BigDecimal weighted = np.round(
+                entry.getValue().multiply(BigDecimal.valueOf(minutes)),
+                NumericPrecision.Domain.INTERMEDIATE);
+            weightedMwSum = weightedMwSum.add(weighted);
             totalMinutes += minutes;
         }
 

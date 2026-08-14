@@ -76,4 +76,27 @@ public interface PositionLedgerRepository {
      */
     void supersede(List<PositionLedgerEntry> entriesToClose,
                    List<PositionLedgerEntry> newEntries);
+
+    /**
+     * Q-2: Current-knowledge ACTIVE positions for a portfolio within a delivery range.
+     *
+     * <p>Filters: {@code knownTo IS NULL AND status = 'ACTIVE'} and delivery range
+     * overlap. Uses partial index {@code idx_ple_portfolio_delivery} for performance.
+     *
+     * <p>Pattern #18 (Repository Port + Adapter), §5.3.
+     *
+     * @param tenantId      tenant identifier (D-14, Pattern #32)
+     * @param portfolioId   portfolio identifier
+     * @param deliveryStart delivery range start (UTC, inclusive)
+     * @param deliveryEnd   delivery range end (UTC, exclusive)
+     * @return current-knowledge ACTIVE position entries ordered by tradeLegId,
+     *         deliveryStart
+     */
+    default List<PositionLedgerEntry> findByPortfolioAndDeliveryRange(String tenantId,
+                                                                        String portfolioId,
+                                                                        Instant deliveryStart,
+                                                                        Instant deliveryEnd) {
+        throw new UnsupportedOperationException(
+            "findByPortfolioAndDeliveryRange not implemented");
+    }
 }

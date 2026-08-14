@@ -15,7 +15,11 @@ import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.YearMonth;
 import java.time.ZoneOffset;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 
 /**
  * JPA adapter for SettlementCellRepository. §11.1, Pattern #18.
@@ -91,6 +95,48 @@ public class JpaSettlementCellRepository implements SettlementCellRepository {
             .getResultStream()
             .map(this::toDomain)
             .toList();
+    }
+
+    /**
+     * Bulk-fetch settlement cells for multiple positions within a range.
+     * Batches the IN clause into chunks of 100 to avoid PostgreSQL parameter limits.
+     * Uses existing index {@code (tenant_id, position_id, interval_start)}.
+     * Returns results ordered by positionId then intervalStart.
+     * Pattern #18, §6.3a.
+     */
+    @Override
+    public List<SettlementCell> findByPositionIds(String tenantId,
+                                                   List<UUID> positionIds,
+                                                   Instant rangeStart,
+                                                   Instant rangeEnd) {
+        if (positionIds == null || positionIds.isEmpty()) {
+            return List.of();
+        }
+
+        List<SettlementCell> result = new ArrayList<>();
+        // Batch into chunks of 100 to avoid PostgreSQL IN clause parameter limits
+        int chunkSize = 100;
+        for (int i = 0; i < positionIds.size(); i += chunkSize) {
+            List<UUID> chunk = positionIds.subList(i, Math.min(i + chunkSize, positionIds.size()));
+            List<SettlementCell> chunkResult = emProvider.get()
+                .createQuery("""
+                    SELECT e FROM SettlementCellEntity e
+                    WHERE e.tenantId   = :tenantId
+                      AND e.positionId IN :positionIds
+                      AND e.intervalStart < :rangeEnd
+                      AND e.intervalEnd > :rangeStart
+                    ORDER BY e.positionId, e.intervalStart
+                    """, SettlementCellEntity.class)
+                .setParameter("tenantId", tenantId)
+                .setParameter("positionIds", chunk)
+                .setParameter("rangeStart", rangeStart)
+                .setParameter("rangeEnd", rangeEnd)
+                .getResultStream()
+                .map(this::toDomain)
+                .toList();
+            result.addAll(chunkResult);
+        }
+        return result;
     }
 
     @Override

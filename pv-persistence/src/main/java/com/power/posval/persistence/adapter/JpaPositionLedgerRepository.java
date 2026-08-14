@@ -200,6 +200,37 @@ public class JpaPositionLedgerRepository implements PositionLedgerRepository {
             .toList();
     }
 
+    /**
+     * Q-2: Current-knowledge ACTIVE positions for a portfolio within a delivery range.
+     * Filters: knownTo IS NULL AND status = 'ACTIVE' and delivery overlap.
+     * Uses partial index {@code idx_ple_portfolio_delivery} (§7.2).
+     * Pattern #18, §6.2.
+     */
+    @Override
+    public List<PositionLedgerEntry> findByPortfolioAndDeliveryRange(String tenantId,
+                                                                       String portfolioId,
+                                                                       Instant deliveryStart,
+                                                                       Instant deliveryEnd) {
+        return emProvider.get()
+            .createQuery("""
+                SELECT e FROM PositionLedgerEntryEntity e
+                WHERE e.tenantId    = :tenantId
+                  AND e.portfolioId = :portfolioId
+                  AND e.deliveryStart < :deliveryEnd
+                  AND e.deliveryEnd > :deliveryStart
+                  AND e.knownTo IS NULL
+                  AND e.status = 'ACTIVE'
+                ORDER BY e.tradeLegId, e.deliveryStart
+                """, PositionLedgerEntryEntity.class)
+            .setParameter("tenantId", tenantId)
+            .setParameter("portfolioId", portfolioId)
+            .setParameter("deliveryStart", deliveryStart)
+            .setParameter("deliveryEnd", deliveryEnd)
+            .getResultStream()
+            .map(this::toDomain)
+            .toList();
+    }
+
     @Override
     public void supersede(List<PositionLedgerEntry> entriesToClose,
                           List<PositionLedgerEntry> newEntries) {

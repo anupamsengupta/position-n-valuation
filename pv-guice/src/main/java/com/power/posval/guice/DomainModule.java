@@ -52,6 +52,12 @@ public class DomainModule extends AbstractModule {
         bind(MarketDataService.class).to(DefaultMarketDataService.class).in(Singleton.class);
         bind(VolumeSeriesQueryService.class).to(DefaultVolumeSeriesQueryService.class).in(Singleton.class);
         bind(RollupQueryService.class).to(DefaultRollupQueryService.class).in(Singleton.class);
+
+        // Dashboard query facade — Pattern #18, §9.1.
+        // Binds DashboardQueryService → DefaultDashboardQueryService (Singleton).
+        bind(DashboardQueryService.class)
+            .to(DefaultDashboardQueryService.class)
+            .in(Singleton.class);
     }
 
     /**

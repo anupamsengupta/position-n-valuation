@@ -101,4 +101,13 @@ public class DomainServiceConfig {
     public SettlementMaterializationJob settlementMaterializationJob(Injector injector) {
         return injector.getInstance(SettlementMaterializationJob.class);
     }
+
+    /**
+     * Dashboard query facade — D-13: delegates to injector.getInstance().
+     * §9.2.
+     */
+    @Bean
+    public DashboardQueryService dashboardQueryService(Injector injector) {
+        return injector.getInstance(DashboardQueryService.class);
+    }
 }
