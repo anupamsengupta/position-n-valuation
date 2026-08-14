@@ -71,4 +71,6 @@ desktop.ini
 *.key
 credentials.json
 
+# ==== UI ====
+pv-ui/node_modules
 

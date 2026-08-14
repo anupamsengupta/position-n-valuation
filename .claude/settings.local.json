@@ -29,7 +29,14 @@
       "Bash(\"/c/Program Files/GitHub CLI/gh.exe\":*)",
       "Bash(\"/c/Program Files/GitHub CLI/gh.exe\" auth:*)",
       "Bash(PGPASSWORD=posval psql:*)",
-      "Bash(echo EXIT:$?:*)"
+      "Bash(echo EXIT:$?:*)",
+      "Bash(pnpm install:*)",
+      "Bash(node:*)",
+      "Bash(npm install:*)",
+      "Bash(pnpm approve-builds:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx vitest:*)",
+      "Bash(npx vite:*)"
     ]
   }
 }
