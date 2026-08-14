@@ -210,10 +210,16 @@ public class JpaDependencyIndex implements DependencyIndex {
             (String) row[2],                                                // cellType
             (String) row[3],                                                // inputSeriesKey
             (String) row[4],                                                // inputType
-            ((java.sql.Timestamp) row[5]).toInstant(),                      // affectedRangeStart
-            ((java.sql.Timestamp) row[6]).toInstant(),                      // affectedRangeEnd
+            toInstant(row[5]),                                              // affectedRangeStart
+            toInstant(row[6]),                                              // affectedRangeEnd
             parseJsonArray(row[7] != null ? row[7].toString() : "[]"),     // activeLeaves
-            ((java.sql.Timestamp) row[8]).toInstant(),                      // createdAt
-            row[9] != null ? ((java.sql.Timestamp) row[9]).toInstant() : null); // prunedAt
+            toInstant(row[8]),                                              // createdAt
+            row[9] != null ? toInstant(row[9]) : null);                    // prunedAt
+    }
+
+    private static java.time.Instant toInstant(Object v) {
+        if (v instanceof java.time.Instant i) return i;
+        if (v instanceof java.sql.Timestamp ts) return ts.toInstant();
+        throw new IllegalArgumentException("Cannot convert " + v.getClass().getName() + " to Instant");
     }
 }

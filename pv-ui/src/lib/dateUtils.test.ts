@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { localDateToUtcBoundary, getDstInfo, formatIntervalTime } from './dateUtils';
+import {
+  localDateToUtcBoundary,
+  getDstInfo,
+  formatIntervalTime,
+  getMonthRange,
+  getYearRange,
+  getYearSpanRange,
+  getCurrentQuarterRange,
+  adjustRangeForGranularity,
+} from './dateUtils';
 
 describe('localDateToUtcBoundary', () => {
   it('converts a CET winter date correctly', () => {
@@ -49,5 +58,89 @@ describe('formatIntervalTime', () => {
     const result = formatIntervalTime('2026-08-01T12:00:00Z', 'Europe/Berlin');
     expect(result.local).toContain('14:00');
     expect(result.utc).toContain('12:00');
+  });
+});
+
+describe('getMonthRange', () => {
+  it('returns first and last day of a 31-day month', () => {
+    expect(getMonthRange(2026, 8)).toEqual({
+      rangeStart: '2026-08-01',
+      rangeEnd: '2026-08-31',
+    });
+  });
+
+  it('returns first and last day of February (non-leap)', () => {
+    expect(getMonthRange(2026, 2)).toEqual({
+      rangeStart: '2026-02-01',
+      rangeEnd: '2026-02-28',
+    });
+  });
+
+  it('returns first and last day of February (leap year)', () => {
+    expect(getMonthRange(2028, 2)).toEqual({
+      rangeStart: '2028-02-01',
+      rangeEnd: '2028-02-29',
+    });
+  });
+
+  it('handles single-digit months with zero-padding', () => {
+    expect(getMonthRange(2026, 1)).toEqual({
+      rangeStart: '2026-01-01',
+      rangeEnd: '2026-01-31',
+    });
+  });
+});
+
+describe('getYearRange', () => {
+  it('returns Jan 1 to Dec 31', () => {
+    expect(getYearRange(2026)).toEqual({
+      rangeStart: '2026-01-01',
+      rangeEnd: '2026-12-31',
+    });
+  });
+});
+
+describe('getYearSpanRange', () => {
+  it('returns start of first year to end of last year', () => {
+    expect(getYearSpanRange(2024, 2028)).toEqual({
+      rangeStart: '2024-01-01',
+      rangeEnd: '2028-12-31',
+    });
+  });
+});
+
+describe('getCurrentQuarterRange', () => {
+  it('returns a valid quarter range', () => {
+    const range = getCurrentQuarterRange();
+    expect(range.rangeStart).toMatch(/^\d{4}-\d{2}-01$/);
+    expect(range.rangeEnd).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    // Start month should be 01, 04, 07, or 10
+    const startMonth = Number(range.rangeStart.split('-')[1]);
+    expect([1, 4, 7, 10]).toContain(startMonth);
+  });
+});
+
+describe('adjustRangeForGranularity', () => {
+  const monthRange = { rangeStart: '2026-08-01', rangeEnd: '2026-08-31' };
+  const yearRange = { rangeStart: '2026-01-01', rangeEnd: '2026-12-31' };
+
+  it('DAILY snaps to month range', () => {
+    const result = adjustRangeForGranularity(yearRange, 'DAILY');
+    expect(result).toEqual({ rangeStart: '2026-01-01', rangeEnd: '2026-01-31' });
+  });
+
+  it('WEEKLY snaps to month range', () => {
+    const result = adjustRangeForGranularity(monthRange, 'WEEKLY');
+    expect(result).toEqual({ rangeStart: '2026-08-01', rangeEnd: '2026-08-31' });
+  });
+
+  it('MONTHLY snaps to year range', () => {
+    const result = adjustRangeForGranularity(monthRange, 'MONTHLY');
+    expect(result).toEqual({ rangeStart: '2026-01-01', rangeEnd: '2026-12-31' });
+  });
+
+  it('YEARLY snaps to 5-year span', () => {
+    const result = adjustRangeForGranularity(monthRange, 'YEARLY');
+    expect(result).toEqual({ rangeStart: '2024-01-01', rangeEnd: '2028-12-31' });
   });
 });

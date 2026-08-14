@@ -228,8 +228,8 @@ public class JpaSettlementCellRepository implements SettlementCellRepository {
         String tenant = (String) row[1];
         String tradeId = (String) row[2];
         String tradeLegId = (String) row[3];
-        java.sql.Timestamp monthTs = (java.sql.Timestamp) row[4];
-        YearMonth month = YearMonth.from(monthTs.toInstant().atOffset(ZoneOffset.UTC));
+        Instant monthInstant = toInstant(row[4]);
+        YearMonth month = YearMonth.from(monthInstant.atOffset(ZoneOffset.UTC));
         BigDecimal totalMwh = toBigDecimal(row[5]);
         BigDecimal avgMw = toBigDecimal(row[6]);
         BigDecimal totalAmount = toBigDecimal(row[7]);
@@ -248,6 +248,12 @@ public class JpaSettlementCellRepository implements SettlementCellRepository {
             posId, tenant, tradeId, tradeLegId, month,
             totalMwh, avgMw, totalAmount, totalMarketAmount, totalPnl,
             avgPrice, avgMarketPrice, currency, cellCount);
+    }
+
+    private static Instant toInstant(Object v) {
+        if (v instanceof Instant i) return i;
+        if (v instanceof java.sql.Timestamp ts) return ts.toInstant();
+        throw new IllegalArgumentException("Cannot convert " + v.getClass().getName() + " to Instant");
     }
 
     private static BigDecimal toBigDecimal(Object v) {

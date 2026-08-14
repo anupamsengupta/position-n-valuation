@@ -166,8 +166,8 @@ public class JpaRollupRepository implements RollupRepository {
         // is_peak[8], price[9], market_price[10], settled_value[11], market_value[12],
         // pnl[13], forward_mark_value[14], calendar_version[15], version_hash[16], currency[17]
         return new RollupCell(
-            ((java.sql.Timestamp) row[3]).toInstant(),          // periodStart
-            ((java.sql.Timestamp) row[4]).toInstant(),          // periodEnd
+            toInstant(row[3]),                                  // periodStart
+            toInstant(row[4]),                                  // periodEnd
             TimeGranularity.valueOf((String) row[5]),           // granularity
             (String) row[1],                                    // deliveryPointId
             (String) row[2],                                    // portfolioId
@@ -184,6 +184,12 @@ public class JpaRollupRepository implements RollupRepository {
             (String) row[15],                                   // calendarVersion
             (String) row[16]                                    // versionHash
         );
+    }
+
+    private static Instant toInstant(Object v) {
+        if (v instanceof Instant i) return i;
+        if (v instanceof java.sql.Timestamp ts) return ts.toInstant();
+        throw new IllegalArgumentException("Cannot convert " + v.getClass().getName() + " to Instant");
     }
 
     private static BigDecimal toBigDecimal(Object v) {

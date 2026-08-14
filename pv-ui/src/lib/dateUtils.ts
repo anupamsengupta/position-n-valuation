@@ -220,3 +220,75 @@ export function getDefaultDateRange(): { rangeStart: string; rangeEnd: string } 
   const yearEnd = `${now.getFullYear() + 1}-12-31`;
   return { rangeStart: yearStart, rangeEnd: yearEnd };
 }
+
+// ---------------------------------------------------------------------------
+// Date range helpers for dashboard filters
+// ---------------------------------------------------------------------------
+
+type DateRange = { rangeStart: string; rangeEnd: string };
+
+function pad(n: number): string {
+  return n.toString().padStart(2, '0');
+}
+
+function daysInMonth(year: number, month: number): number {
+  return new Date(year, month, 0).getDate();
+}
+
+/** Range for a single calendar month (1-indexed). */
+export function getMonthRange(year: number, month: number): DateRange {
+  return {
+    rangeStart: `${year}-${pad(month)}-01`,
+    rangeEnd: `${year}-${pad(month)}-${pad(daysInMonth(year, month))}`,
+  };
+}
+
+/** Range for a full calendar year. */
+export function getYearRange(year: number): DateRange {
+  return { rangeStart: `${year}-01-01`, rangeEnd: `${year}-12-31` };
+}
+
+/** Range spanning multiple years (inclusive). */
+export function getYearSpanRange(startYear: number, endYear: number): DateRange {
+  return { rangeStart: `${startYear}-01-01`, rangeEnd: `${endYear}-12-31` };
+}
+
+/** Range for the current calendar quarter. */
+export function getCurrentQuarterRange(): DateRange {
+  const now = new Date();
+  const year = now.getFullYear();
+  const q = Math.floor(now.getMonth() / 3); // 0-based quarter index
+  const startMonth = q * 3 + 1;
+  const endMonth = startMonth + 2;
+  return {
+    rangeStart: `${year}-${pad(startMonth)}-01`,
+    rangeEnd: `${year}-${pad(endMonth)}-${pad(daysInMonth(year, endMonth))}`,
+  };
+}
+
+/**
+ * Auto-snap a date range when granularity changes.
+ * Uses the midpoint of the current range to determine the "anchor" period,
+ * then returns the natural range for the new granularity.
+ */
+export function adjustRangeForGranularity(
+  currentRange: DateRange,
+  newGranularity: string,
+): DateRange {
+  // Parse the midpoint to anchor the new range
+  const startParts = currentRange.rangeStart.split('-');
+  const year = Number(startParts[0]);
+  const month = Number(startParts[1]);
+
+  switch (newGranularity) {
+    case 'DAILY':
+    case 'WEEKLY':
+      return getMonthRange(year, month);
+    case 'MONTHLY':
+      return getYearRange(year);
+    case 'YEARLY':
+      return getYearSpanRange(year - 2, year + 2);
+    default:
+      return currentRange;
+  }
+}

@@ -1,9 +1,9 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useEffect, useRef } from 'react';
 import { PortfolioSummarySection } from './PortfolioSummarySection';
 import { RollupGrid, type RollupGridRow } from './RollupGrid';
 import { PositionLedger } from './PositionLedger';
 import { IntervalDetailPanel } from './IntervalDetailPanel';
-import { GranularityToggle } from '@/components/primitives/GranularityToggle';
+import { DashboardFilterBar } from './DashboardFilterBar';
 import { ErrorBoundary } from '@/components/primitives/ErrorBoundary';
 import {
   usePortfolioSummary,
@@ -11,9 +11,9 @@ import {
   usePositionContributions,
 } from '@/hooks/useDashboardQueries';
 import { useDashboardSelection } from '@/hooks/useDashboardSelection';
+import { useDashboardFilters } from '@/hooks/useDashboardFilters';
 import { useUserPreferences } from '@/hooks/useUserPreferences';
-import { localDateToUtcBoundary, getDefaultDateRange, formatPeriodLabel } from '@/lib/dateUtils';
-import type { TimeGranularity } from '@/schemas/types';
+import { localDateToUtcBoundary, formatPeriodLabel } from '@/lib/dateUtils';
 import type { PositionContributionDto } from '@/schemas/api';
 
 export interface DashboardPageProps {
@@ -33,22 +33,29 @@ export function DashboardPage({ portfolioId }: DashboardPageProps) {
     setSelectedPosition,
   } = useDashboardSelection();
 
-  const [granularity, setGranularity] = useState<TimeGranularity>('MONTHLY');
+  // Read filter state from store
+  const granularity = useDashboardFilters((s) => s.granularity);
+  const dateRange = useDashboardFilters((s) => s.dateRange);
+  const storePortfolioId = useDashboardFilters((s) => s.portfolioId);
+  const setPortfolioId = useDashboardFilters((s) => s.setPortfolioId);
 
-  // Date range defaults
-  const { rangeStart: defaultStart, rangeEnd: defaultEnd } = useMemo(
-    () => getDefaultDateRange(),
-    [],
-  );
+  // Sync route param → store (with loop guard)
+  const syncRef = useRef(false);
+  useEffect(() => {
+    if (portfolioId !== storePortfolioId) {
+      syncRef.current = true;
+      setPortfolioId(portfolioId);
+    }
+  }, [portfolioId, storePortfolioId, setPortfolioId]);
 
   // Convert local dates to UTC boundaries for API calls
   const rangeStartUtc = useMemo(
-    () => localDateToUtcBoundary(defaultStart, timezone),
-    [defaultStart, timezone],
+    () => localDateToUtcBoundary(dateRange.rangeStart, timezone),
+    [dateRange.rangeStart, timezone],
   );
   const rangeEndUtc = useMemo(
-    () => localDateToUtcBoundary(defaultEnd, timezone),
-    [defaultEnd, timezone],
+    () => localDateToUtcBoundary(dateRange.rangeEnd, timezone),
+    [dateRange.rangeEnd, timezone],
   );
 
   // L1: Portfolio summary
@@ -120,16 +127,13 @@ export function DashboardPage({ portfolioId }: DashboardPageProps) {
 
   return (
     <div className="space-y-4" onKeyDown={handleKeyDown}>
-      {/* Dashboard header with controls */}
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-text-primary">
-          Position &amp; PnL Dashboard
-          <span className="ml-2 text-sm font-normal text-text-muted">{portfolioId}</span>
-        </h2>
-        <div className="flex items-center gap-3">
-          <GranularityToggle value={granularity} onChange={setGranularity} />
-        </div>
-      </div>
+      {/* Dashboard header */}
+      <h2 className="text-lg font-semibold text-text-primary">
+        Position &amp; PnL Dashboard
+      </h2>
+
+      {/* Filter toolbar */}
+      <DashboardFilterBar />
 
       {/* L1: Portfolio Summary Cards */}
       <ErrorBoundary>
