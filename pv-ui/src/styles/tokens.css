@@ -1,0 +1,64 @@
+:root {
+  /* Backgrounds */
+  --color-bg-primary: #ffffff;
+  --color-bg-secondary: #f8f9fa;
+  --color-bg-tertiary: #f1f3f5;
+  --color-bg-grid-row-even: #f8f9fa;
+
+  /* Text */
+  --color-text-primary: #1a1a2e;
+  --color-text-secondary: #495057;
+  --color-text-muted: #636b74;
+
+  /* Status */
+  --color-status-settled: #2b8a3e;
+  --color-status-transition: #c56200;
+  --color-status-forward: #1971c2;
+  --color-status-today: #c56200;
+
+  /* Numeric */
+  --color-negative: #c92a2a;
+  --color-positive: #2b8a3e;
+
+  /* Borders */
+  --color-border-default: #dee2e6;
+  --color-border-grid: #e9ecef;
+
+  /* Interactive */
+  --color-focus-ring: #1971c2;
+  --color-row-selected: #e7f5ff;
+  --color-row-hover: #f1f3f5;
+
+  /* Flash (live update indicators -- reserved for future SSE) */
+  --color-flash-up: rgba(43, 138, 62, 0.3);
+  --color-flash-down: rgba(201, 42, 42, 0.3);
+}
+
+[data-theme="dark"] {
+  --color-bg-primary: #0f0f23;
+  --color-bg-secondary: #18181b;
+  --color-bg-tertiary: #27272a;
+  --color-bg-grid-row-even: #1c1c2e;
+
+  --color-text-primary: #e4e4e7;
+  --color-text-secondary: #a1a1aa;
+  --color-text-muted: #71717a;
+
+  --color-status-settled: #4ade80;
+  --color-status-transition: #fbbf24;
+  --color-status-forward: #60a5fa;
+  --color-status-today: #fbbf24;
+
+  --color-negative: #f87171;
+  --color-positive: #4ade80;
+
+  --color-border-default: #3f3f46;
+  --color-border-grid: #27272a;
+
+  --color-focus-ring: #60a5fa;
+  --color-row-selected: #1e3a5f;
+  --color-row-hover: #27272a;
+
+  --color-flash-up: rgba(74, 222, 128, 0.3);
+  --color-flash-down: rgba(248, 113, 113, 0.3);
+}
