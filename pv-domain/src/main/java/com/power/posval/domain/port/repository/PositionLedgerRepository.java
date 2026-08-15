@@ -99,4 +99,16 @@ public interface PositionLedgerRepository {
         throw new UnsupportedOperationException(
             "findByPortfolioAndDeliveryRange not implemented");
     }
+
+    /**
+     * Distinct portfolio IDs from current-knowledge ACTIVE entries for a tenant.
+     * Used by the dashboard portfolio selector.
+     *
+     * @param tenantId tenant identifier (D-14, Pattern #32)
+     * @return distinct portfolio IDs, ordered alphabetically
+     */
+    default List<String> findDistinctPortfolios(String tenantId) {
+        throw new UnsupportedOperationException(
+            "findDistinctPortfolios not implemented");
+    }
 }

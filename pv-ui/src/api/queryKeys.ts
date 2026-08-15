@@ -7,6 +7,9 @@ import type { SubDailyGranularity, TimeGranularity } from '@/schemas/types';
 export const dashboardKeys = {
   all: ['dashboard'] as const,
 
+  portfolios: (tenantId: string) =>
+    [...dashboardKeys.all, 'portfolios', tenantId] as const,
+
   portfolioSummary: (
     tenantId: string,
     portfolioId: string,

@@ -1,0 +1,148 @@
+import { useMemo } from 'react';
+import {
+  type ColumnDef,
+  flexRender,
+  getCoreRowModel,
+  useReactTable,
+} from '@tanstack/react-table';
+import { NumericCell } from '@/components/primitives/NumericCell';
+import { SkeletonTable } from '@/components/primitives/SkeletonRow';
+import { EmptyState } from '@/components/primitives/EmptyState';
+import { getDstInfo } from '@/lib/dateUtils';
+import { pivotForwardIntervals, type PivotRow } from '@/lib/pivotIntervals';
+import { cn } from '@/lib/cn';
+import type { ForwardDayGridProps } from './ForwardDayGrid';
+
+/**
+ * Horizontal forward day grid: measures as rows, time intervals as columns.
+ * Same data as ForwardDayGrid, pivoted client-side.
+ */
+export function HorizontalForwardGrid({
+  data,
+  isLoading,
+  timezone,
+  expectedIntervalCount,
+}: ForwardDayGridProps) {
+  const pivoted = useMemo(
+    () => pivotForwardIntervals(data ?? [], timezone),
+    [data, timezone],
+  );
+
+  const columns = useMemo<ColumnDef<PivotRow, unknown>[]>(() => {
+    const cols: ColumnDef<PivotRow, unknown>[] = [
+      {
+        id: 'measure',
+        header: 'Measure',
+        accessorFn: (row) => row.measure,
+        cell: (info) => (
+          <span className="text-text-primary font-medium whitespace-nowrap">
+            {info.getValue() as string}
+          </span>
+        ),
+        size: 110,
+      },
+    ];
+
+    for (const label of pivoted.timeLabels) {
+      cols.push({
+        id: `t_${label}`,
+        header: label,
+        accessorFn: (row) => row[label],
+        cell: (info) => {
+          const row = info.row.original;
+          return (
+            <NumericCell
+              value={info.getValue() as string | number | null | undefined}
+              precision={row.precision}
+              currency={row.currency as string | undefined}
+            />
+          );
+        },
+        size: 72,
+      });
+    }
+
+    return cols;
+  }, [pivoted.timeLabels]);
+
+  const table = useReactTable({
+    data: pivoted.rows,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+    getRowId: (row) => row.measure,
+  });
+
+  const dstInfo = useMemo(
+    () => (expectedIntervalCount ? getDstInfo(expectedIntervalCount) : null),
+    [expectedIntervalCount],
+  );
+
+  if (isLoading) {
+    return <SkeletonTable rows={4} columns={[11, 7, 7, 7, 7, 7, 7, 7]} />;
+  }
+
+  if (pivoted.rows.length === 0) {
+    return (
+      <EmptyState message="No forward mark data for this day. This may mean no volume is forecasted or no forward curve is available." />
+    );
+  }
+
+  return (
+    <div>
+      <div className="mb-2 px-3 py-1.5 text-xs text-status-transition bg-status-transition/10 rounded font-medium">
+        Forward Mark Data (Unrealized -- Indicative Only)
+      </div>
+
+      {dstInfo?.isDstDay && (
+        <div className="mb-2 px-3 py-1.5 text-xs text-text-secondary bg-bg-tertiary rounded" role="status">
+          {dstInfo.label}
+        </div>
+      )}
+
+      <div className="overflow-x-auto border border-border-grid rounded max-h-[300px]">
+        <table className="border-collapse" aria-label="Forward interval data (horizontal)">
+          <thead className="sticky top-0 z-10 bg-bg-secondary">
+            {table.getHeaderGroups().map((headerGroup) => (
+              <tr key={headerGroup.id} className="h-7">
+                {headerGroup.headers.map((header) => (
+                  <th
+                    key={header.id}
+                    className={cn(
+                      'px-2 py-1 text-xs font-semibold text-text-secondary text-left whitespace-nowrap border-b border-border-grid',
+                      header.column.id === 'measure' &&
+                        'sticky left-0 z-20 bg-bg-secondary',
+                    )}
+                    style={{ width: header.getSize() }}
+                  >
+                    {flexRender(header.column.columnDef.header, header.getContext())}
+                  </th>
+                ))}
+              </tr>
+            ))}
+          </thead>
+          <tbody>
+            {table.getRowModel().rows.map((row, rowIndex) => (
+              <tr
+                key={row.id}
+                className={cn('h-6', rowIndex % 2 === 1 && 'bg-bg-grid-even')}
+              >
+                {row.getVisibleCells().map((cell) => (
+                  <td
+                    key={cell.id}
+                    className={cn(
+                      'px-2 py-0.5 text-xs whitespace-nowrap',
+                      cell.column.id === 'measure' &&
+                        'sticky left-0 z-10 bg-bg-primary',
+                    )}
+                  >
+                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}

@@ -1,7 +1,10 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { SubGranularityToggle } from '@/components/primitives/GranularityToggle';
+import { ViewLayoutToggle, type ViewLayout } from '@/components/primitives/ViewLayoutToggle';
 import { SettledDayGrid } from './SettledDayGrid';
 import { ForwardDayGrid } from './ForwardDayGrid';
+import { HorizontalSettledGrid } from './HorizontalSettledGrid';
+import { HorizontalForwardGrid } from './HorizontalForwardGrid';
 import { MonthViewGrid } from './MonthViewGrid';
 import {
   useSettledDayDetail,
@@ -42,6 +45,7 @@ export function IntervalDetailPanel({
     sectionRef.current?.focus();
   }, []);
   const [subGranularity, setSubGranularity] = useState<SubDailyGranularity>('MIN_15');
+  const [viewLayout, setViewLayout] = useState<ViewLayout>('vertical');
 
   // Fetch daily aggregates for the month view
   const dailyQuery = useDailyAggregates(
@@ -116,21 +120,16 @@ export function IntervalDetailPanel({
             </span>
           )}
         </h3>
-        <div className="flex items-center gap-3">
-          {selectedDay && (
-            <SubGranularityToggle value={subGranularity} onChange={setSubGranularity} />
-          )}
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-2 py-1 text-xs text-text-secondary hover:text-text-primary
-                       border border-border-default rounded hover:bg-bg-secondary
-                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-interactive-focus"
-            aria-label="Close interval detail"
-          >
-            Close
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="px-2 py-1 text-xs text-text-secondary hover:text-text-primary
+                     border border-border-default rounded hover:bg-bg-secondary
+                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-interactive-focus"
+          aria-label="Close interval detail"
+        >
+          Close
+        </button>
       </div>
 
       {/* Month view: always show daily aggregate rows */}
@@ -148,31 +147,55 @@ export function IntervalDetailPanel({
       {/* Sub-daily view: show when a day is selected */}
       {selectedDay && selectedDayAggregate && (
         <div className="mt-4">
-          <h4 className="text-xs font-medium text-text-secondary mb-2">
-            {formatLocalDate(selectedDay, timezone)} --{' '}
-            {selectedDayStatus === 'SETTLED'
-              ? 'Settlement Data'
-              : selectedDayStatus === 'TODAY'
-                ? 'Settlement Data (partial day)'
-                : 'Forward Mark Data'}
-          </h4>
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="text-xs font-medium text-text-secondary">
+              {formatLocalDate(selectedDay, timezone)} --{' '}
+              {selectedDayStatus === 'SETTLED'
+                ? 'Settlement Data'
+                : selectedDayStatus === 'TODAY'
+                  ? 'Settlement Data (partial day)'
+                  : 'Forward Mark Data'}
+            </h4>
+            <div className="flex items-center gap-3">
+              <ViewLayoutToggle value={viewLayout} onChange={setViewLayout} />
+              <SubGranularityToggle value={subGranularity} onChange={setSubGranularity} />
+            </div>
+          </div>
 
           {(selectedDayStatus === 'SETTLED' || selectedDayStatus === 'TODAY') && (
-            <SettledDayGrid
-              data={settledQuery.data}
-              isLoading={settledQuery.isLoading}
-              timezone={timezone}
-              expectedIntervalCount={selectedDayAggregate.intervalCount}
-            />
+            viewLayout === 'vertical' ? (
+              <SettledDayGrid
+                data={settledQuery.data}
+                isLoading={settledQuery.isLoading}
+                timezone={timezone}
+                expectedIntervalCount={selectedDayAggregate.intervalCount}
+              />
+            ) : (
+              <HorizontalSettledGrid
+                data={settledQuery.data}
+                isLoading={settledQuery.isLoading}
+                timezone={timezone}
+                expectedIntervalCount={selectedDayAggregate.intervalCount}
+              />
+            )
           )}
 
           {selectedDayStatus === 'FORWARD' && (
-            <ForwardDayGrid
-              data={forwardQuery.data}
-              isLoading={forwardQuery.isLoading}
-              timezone={timezone}
-              expectedIntervalCount={selectedDayAggregate.intervalCount}
-            />
+            viewLayout === 'vertical' ? (
+              <ForwardDayGrid
+                data={forwardQuery.data}
+                isLoading={forwardQuery.isLoading}
+                timezone={timezone}
+                expectedIntervalCount={selectedDayAggregate.intervalCount}
+              />
+            ) : (
+              <HorizontalForwardGrid
+                data={forwardQuery.data}
+                isLoading={forwardQuery.isLoading}
+                timezone={timezone}
+                expectedIntervalCount={selectedDayAggregate.intervalCount}
+              />
+            )
           )}
         </div>
       )}

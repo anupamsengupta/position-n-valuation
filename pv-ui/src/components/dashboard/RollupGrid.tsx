@@ -27,7 +27,10 @@ export interface RollupGridProps {
   granularity: TimeGranularity;
   timezone: string;
   selectedPeriodStart: string | null;
+  selectedRangeStarts: string[];
   onRowClick: (row: RollupGridRow) => void;
+  onRowShiftClick: (row: RollupGridRow) => void;
+  onClearRange: () => void;
 }
 
 const columnHelper = createColumnHelper<RollupGridRow>();
@@ -35,6 +38,7 @@ const columnHelper = createColumnHelper<RollupGridRow>();
 /**
  * L2: Rollup grid showing period-level aggregates.
  * Each row represents a period (day/week/month/year) with settled + forward values.
+ * Supports contiguous range sub-selection via Shift+Click.
  * Keyboard: ArrowUp/ArrowDown navigate rows, Enter/Space selects.
  */
 export function RollupGrid({
@@ -43,7 +47,10 @@ export function RollupGrid({
   granularity,
   timezone,
   selectedPeriodStart,
+  selectedRangeStarts,
   onRowClick,
+  onRowShiftClick,
+  onClearRange,
 }: RollupGridProps) {
   const rowRefs = useRef<(HTMLTableRowElement | null)[]>([]);
 
@@ -154,17 +161,25 @@ export function RollupGrid({
   });
 
   const handleRowClick = useCallback(
-    (row: RollupGridRow) => {
-      onRowClick(row);
+    (e: React.MouseEvent, row: RollupGridRow) => {
+      if (e.shiftKey) {
+        onRowShiftClick(row);
+      } else {
+        onRowClick(row);
+      }
     },
-    [onRowClick],
+    [onRowClick, onRowShiftClick],
   );
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTableRowElement>, row: RollupGridRow, rowIndex: number) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
-        handleRowClick(row);
+        if (e.shiftKey) {
+          onRowShiftClick(row);
+        } else {
+          onRowClick(row);
+        }
       } else if (e.key === 'ArrowDown') {
         e.preventDefault();
         rowRefs.current[rowIndex + 1]?.focus();
@@ -173,7 +188,13 @@ export function RollupGrid({
         rowRefs.current[rowIndex - 1]?.focus();
       }
     },
-    [handleRowClick],
+    [onRowClick, onRowShiftClick],
+  );
+
+  // Build a Set for O(1) lookup of selected range
+  const selectedRangeSet = useMemo(
+    () => new Set(selectedRangeStarts),
+    [selectedRangeStarts],
   );
 
   // Determine which row gets tabIndex={0} (roving tabindex)
@@ -184,6 +205,14 @@ export function RollupGrid({
     }
     return 0;
   }, [rows, selectedPeriodStart]);
+
+  // Range indicator labels
+  const rangeLabel = useMemo(() => {
+    if (selectedRangeStarts.length <= 1) return null;
+    const first = selectedRangeStarts[0]!;
+    const last = selectedRangeStarts[selectedRangeStarts.length - 1]!;
+    return `${formatPeriodLabel(first, granularity, timezone)} \u2013 ${formatPeriodLabel(last, granularity, timezone)}`;
+  }, [selectedRangeStarts, granularity, timezone]);
 
   if (isLoading) {
     return (
@@ -200,60 +229,85 @@ export function RollupGrid({
   }
 
   return (
-    <div
-      className="overflow-auto border border-border-grid rounded"
-      role="grid"
-      aria-label="Period rollup data"
-      aria-rowcount={rows.length}
-    >
-      <table className="w-full border-collapse">
-        <thead className="sticky top-0 z-10 bg-bg-secondary">
-          {table.getHeaderGroups().map((headerGroup) => (
-            <tr key={headerGroup.id} role="row" className="h-7">
-              {headerGroup.headers.map((header) => (
-                <th
-                  key={header.id}
-                  role="columnheader"
-                  className="px-2 py-1 text-xs font-semibold text-text-secondary text-left whitespace-nowrap border-b border-border-grid"
-                  style={{ width: header.getSize() }}
+    <div>
+      {/* Range indicator bar */}
+      {rangeLabel && (
+        <div
+          className="flex items-center gap-2 mb-1 px-2 py-1 rounded bg-interactive-row-selected/30 text-xs text-text-primary"
+          role="status"
+          aria-live="polite"
+        >
+          <span>Selected: {rangeLabel}</span>
+          <button
+            type="button"
+            onClick={onClearRange}
+            className="ml-auto text-text-muted hover:text-text-primary transition-colors"
+            aria-label="Clear range selection"
+          >
+            Clear &times;
+          </button>
+        </div>
+      )}
+
+      <div
+        className="overflow-auto border border-border-grid rounded"
+        role="grid"
+        aria-label="Period rollup data"
+        aria-rowcount={rows.length}
+        aria-multiselectable="true"
+      >
+        <table className="w-full border-collapse">
+          <thead className="sticky top-0 z-10 bg-bg-secondary">
+            {table.getHeaderGroups().map((headerGroup) => (
+              <tr key={headerGroup.id} role="row" className="h-7">
+                {headerGroup.headers.map((header) => (
+                  <th
+                    key={header.id}
+                    role="columnheader"
+                    className="px-2 py-1 text-xs font-semibold text-text-secondary text-left whitespace-nowrap border-b border-border-grid"
+                    style={{ width: header.getSize() }}
+                  >
+                    {flexRender(header.column.columnDef.header, header.getContext())}
+                  </th>
+                ))}
+              </tr>
+            ))}
+          </thead>
+          <tbody>
+            {table.getRowModel().rows.map((row, rowIndex) => {
+              const isInRange = selectedRangeSet.has(row.original.periodStart);
+              return (
+                <tr
+                  key={row.id}
+                  ref={(el) => { rowRefs.current[rowIndex] = el; }}
+                  role="row"
+                  tabIndex={rowIndex === focusableRowIndex ? 0 : -1}
+                  aria-selected={isInRange}
+                  className={cn(
+                    'h-6 cursor-pointer transition-colors',
+                    'hover:bg-interactive-row-hover',
+                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-interactive-focus',
+                    isInRange && 'bg-interactive-row-selected',
+                    !isInRange && rowIndex % 2 === 1 && 'bg-bg-grid-even',
+                  )}
+                  onClick={(e) => handleRowClick(e, row.original)}
+                  onKeyDown={(e) => handleKeyDown(e, row.original, rowIndex)}
                 >
-                  {flexRender(header.column.columnDef.header, header.getContext())}
-                </th>
-              ))}
-            </tr>
-          ))}
-        </thead>
-        <tbody>
-          {table.getRowModel().rows.map((row, rowIndex) => (
-            <tr
-              key={row.id}
-              ref={(el) => { rowRefs.current[rowIndex] = el; }}
-              role="row"
-              tabIndex={rowIndex === focusableRowIndex ? 0 : -1}
-              aria-selected={row.original.periodStart === selectedPeriodStart}
-              className={cn(
-                'h-6 cursor-pointer transition-colors',
-                'hover:bg-interactive-row-hover',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-interactive-focus',
-                row.original.periodStart === selectedPeriodStart && 'bg-interactive-row-selected',
-                rowIndex % 2 === 1 && 'bg-bg-grid-even',
-              )}
-              onClick={() => handleRowClick(row.original)}
-              onKeyDown={(e) => handleKeyDown(e, row.original, rowIndex)}
-            >
-              {row.getVisibleCells().map((cell) => (
-                <td
-                  key={cell.id}
-                  role="gridcell"
-                  className="px-2 py-0.5 text-xs whitespace-nowrap"
-                >
-                  {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
+                  {row.getVisibleCells().map((cell) => (
+                    <td
+                      key={cell.id}
+                      role="gridcell"
+                      className="px-2 py-0.5 text-xs whitespace-nowrap"
+                    >
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

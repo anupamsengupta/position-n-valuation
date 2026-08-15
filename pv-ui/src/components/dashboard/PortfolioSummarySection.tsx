@@ -55,13 +55,13 @@ export function PortfolioSummarySection({
 
   return (
     <section aria-label="Portfolio Summary">
-      <div role="list" aria-label="Portfolio cards" className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+      <div role="list" aria-label="Portfolio cards" className="flex flex-wrap gap-4">
         {data.map((summary) => (
           <div
             key={summary.currency}
             role="listitem"
             aria-label={`${summary.currency} summary`}
-            className="rounded-lg border border-border-default bg-bg-secondary p-4 space-y-3"
+            className="min-w-[340px] flex-1 rounded-lg border border-border-default bg-bg-secondary p-4 space-y-3"
           >
             <div className="flex items-center justify-between">
               <span className="text-sm font-semibold text-text-primary">
@@ -72,7 +72,7 @@ export function PortfolioSummarySection({
               </span>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-x-6 gap-y-2">
               <KpiTile
                 label="Realized PnL"
                 value={summary.realizedPnl}
@@ -99,17 +99,17 @@ export function PortfolioSummarySection({
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3 border-t border-border-grid pt-2">
+            <div className="grid grid-cols-2 gap-x-6 gap-y-2 border-t border-border-grid pt-2">
               <div className="space-y-1">
                 <span className="text-xs text-text-muted">Settled</span>
-                <div className="flex gap-2">
+                <div className="flex gap-4">
                   <KpiTile label="MW" value={summary.settledNetMw} precision="MW" />
                   <KpiTile label="MWh" value={summary.settledNetMwh} precision="MWH" />
                 </div>
               </div>
               <div className="space-y-1">
                 <span className="text-xs text-text-muted">Forward</span>
-                <div className="flex gap-2">
+                <div className="flex gap-4">
                   <KpiTile label="MW" value={summary.forwardNetMw} precision="MW" />
                   <KpiTile label="MWh" value={summary.forwardNetMwh} precision="MWH" />
                 </div>

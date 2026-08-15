@@ -36,6 +36,24 @@ const columns = [
     cell: (info) => <span className="text-text-secondary">{info.getValue()}</span>,
     size: 60,
   }),
+  columnHelper.accessor('deliveryStart', {
+    header: 'Start',
+    cell: (info) => {
+      const val = info.getValue();
+      if (!val) return <span className="text-text-muted">—</span>;
+      return <span className="text-text-secondary">{new Date(val).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</span>;
+    },
+    size: 100,
+  }),
+  columnHelper.accessor('deliveryEnd', {
+    header: 'End',
+    cell: (info) => {
+      const val = info.getValue();
+      if (!val) return <span className="text-text-muted">—</span>;
+      return <span className="text-text-secondary">{new Date(val).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</span>;
+    },
+    size: 100,
+  }),
   columnHelper.accessor('deliveryStatus', {
     header: 'Status',
     cell: (info) => {
@@ -191,7 +209,7 @@ export function PositionLedger({
       </div>
 
       {isLoading ? (
-        <SkeletonTable rows={8} columns={[10, 6, 8, 10, 11, 10, 12, 9, 10, 14]} />
+        <SkeletonTable rows={8} columns={[10, 6, 10, 10, 8, 10, 11, 10, 12, 9, 10, 14]} />
       ) : !data || data.length === 0 ? (
         <EmptyState message="No position contributions for this period." />
       ) : (

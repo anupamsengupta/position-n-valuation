@@ -4,6 +4,7 @@ import { RollupGrid, type RollupGridRow } from './RollupGrid';
 import { PositionLedger } from './PositionLedger';
 import { IntervalDetailPanel } from './IntervalDetailPanel';
 import { DashboardFilterBar } from './DashboardFilterBar';
+import { ConnectionStatusIndicator } from './ConnectionStatusIndicator';
 import { ErrorBoundary } from '@/components/primitives/ErrorBoundary';
 import {
   usePortfolioSummary,
@@ -13,6 +14,7 @@ import {
 import { useDashboardSelection } from '@/hooks/useDashboardSelection';
 import { useDashboardFilters } from '@/hooks/useDashboardFilters';
 import { useUserPreferences } from '@/hooks/useUserPreferences';
+import { useRealtimeInvalidation } from '@/hooks/useRealtimeInvalidation';
 import { localDateToUtcBoundary, formatPeriodLabel } from '@/lib/dateUtils';
 import type { PositionContributionDto } from '@/schemas/api';
 
@@ -25,11 +27,15 @@ export interface DashboardPageProps {
  * Route: /dashboard/:portfolioId
  */
 export function DashboardPage({ portfolioId }: DashboardPageProps) {
+  const connectionStatus = useRealtimeInvalidation();
   const timezone = useUserPreferences((s) => s.timezone);
   const {
     selectedPeriod,
     selectedPositionId,
+    selectedRangeStarts,
     setSelectedPeriod,
+    extendPeriodRange,
+    clearRangeSelection,
     setSelectedPosition,
   } = useDashboardSelection();
 
@@ -81,6 +87,30 @@ export function DashboardPage({ portfolioId }: DashboardPageProps) {
     selectedPeriod?.end,
   );
 
+  // Derive rollup rows for range extension (must match RollupGrid's derivation)
+  const rollupRows = useMemo<RollupGridRow[]>(() => {
+    if (!rollupQuery.data) return [];
+    // Import-free inline — mirrors RollupGrid's row derivation
+    return rollupQuery.data.map((cell) => {
+      const now = new Date().toISOString();
+      let periodStatus: 'SETTLED' | 'TRANSITION' | 'FORWARD';
+      if (cell.periodEnd <= now) periodStatus = 'SETTLED';
+      else if (cell.periodStart >= now) periodStatus = 'FORWARD';
+      else periodStatus = 'TRANSITION';
+
+      const parseVal = (v: string | number | null | undefined) => {
+        if (v === null || v === undefined) return null;
+        const n = typeof v === 'number' ? v : parseFloat(v);
+        return isNaN(n) ? null : n;
+      };
+      const settled = parseVal(cell.settledValue);
+      const forward = parseVal(cell.forwardMarkValue);
+      const totalValue =
+        settled !== null && forward !== null ? settled + forward : settled ?? forward;
+      return { ...cell, periodStatus, totalValue };
+    });
+  }, [rollupQuery.data]);
+
   // Handlers
   const handleRollupRowClick = useCallback(
     (row: RollupGridRow) => {
@@ -91,6 +121,20 @@ export function DashboardPage({ portfolioId }: DashboardPageProps) {
       });
     },
     [setSelectedPeriod],
+  );
+
+  const handleRollupShiftClick = useCallback(
+    (row: RollupGridRow) => {
+      extendPeriodRange(
+        { periodStart: row.periodStart, periodEnd: row.periodEnd, periodStatus: row.periodStatus },
+        rollupRows.map((r) => ({
+          periodStart: r.periodStart,
+          periodEnd: r.periodEnd,
+          periodStatus: r.periodStatus,
+        })),
+      );
+    },
+    [extendPeriodRange, rollupRows],
   );
 
   const handlePositionRowClick = useCallback(
@@ -122,15 +166,20 @@ export function DashboardPage({ portfolioId }: DashboardPageProps) {
   );
 
   const periodLabel = selectedPeriod
-    ? formatPeriodLabel(selectedPeriod.start, granularity, timezone)
+    ? selectedRangeStarts.length > 1
+      ? `${formatPeriodLabel(selectedPeriod.start, granularity, timezone)} \u2013 ${formatPeriodLabel(selectedRangeStarts[selectedRangeStarts.length - 1]!, granularity, timezone)}`
+      : formatPeriodLabel(selectedPeriod.start, granularity, timezone)
     : '';
 
   return (
     <div className="space-y-4" onKeyDown={handleKeyDown}>
       {/* Dashboard header */}
-      <h2 className="text-lg font-semibold text-text-primary">
-        Position &amp; PnL Dashboard
-      </h2>
+      <div className="flex items-center gap-3">
+        <h2 className="text-lg font-semibold text-text-primary">
+          Position &amp; PnL Dashboard
+        </h2>
+        <ConnectionStatusIndicator status={connectionStatus} />
+      </div>
 
       {/* Filter toolbar */}
       <DashboardFilterBar />
@@ -154,7 +203,10 @@ export function DashboardPage({ portfolioId }: DashboardPageProps) {
             granularity={granularity}
             timezone={timezone}
             selectedPeriodStart={selectedPeriod?.start ?? null}
+            selectedRangeStarts={selectedRangeStarts}
             onRowClick={handleRollupRowClick}
+            onRowShiftClick={handleRollupShiftClick}
+            onClearRange={clearRangeSelection}
           />
         </section>
       </ErrorBoundary>

@@ -28,6 +28,17 @@ import java.util.UUID;
  */
 public interface DashboardQueryService {
 
+    // --- L0: Portfolio List ---
+
+    /**
+     * Distinct portfolio IDs for a tenant, derived from current-knowledge
+     * ACTIVE position ledger entries.
+     *
+     * @param tenantId tenant identifier (D-14, Pattern #32)
+     * @return distinct portfolio IDs, ordered alphabetically
+     */
+    List<String> listPortfolios(String tenantId);
+
     // --- L1: Portfolio Cards ---
 
     /**

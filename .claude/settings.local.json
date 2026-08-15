@@ -36,7 +36,9 @@
       "Bash(pnpm approve-builds:*)",
       "Bash(npx tsc:*)",
       "Bash(npx vitest:*)",
-      "Bash(npx vite:*)"
+      "Bash(npx vite:*)",
+      "Bash(pnpm typecheck:*)",
+      "Bash(pnpm test:*)"
     ]
   }
 }

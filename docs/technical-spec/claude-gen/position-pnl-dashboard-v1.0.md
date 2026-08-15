@@ -25,16 +25,16 @@ Six subsystems touched. All are read-only from the dashboard's perspective excep
 2. **New repository methods** on existing ports: `RollupRepository.findByPortfolio()` (Q-1), `PositionLedgerRepository.findByPortfolioAndDeliveryRange()` (Q-2). Pattern #18.
 3. **New domain value objects** (records) for dashboard query results: `PortfolioSummary`, `PositionContribution`, `DailyAggregate`, `ForwardIntervalDetail`. Pattern #3 (Value Object).
 4. **DAILY granularity** added to S7 materialization pipeline in `RollupMaterializationService`. Extends existing Pattern #15 (Template Method).
-5. **Sub-daily aggregation service** for 30-min and 60-min rollup of S5a settlement cells and ForwardMarkService-computed/S6b forward data. Domain logic (FR-035 TWA rules) stays server-side. Pattern #9 (Strategy).
+5. **Sub-daily aggregation service** for 30-min and 60-min rollup of S5a ****settlement cells and ForwardMarkService-computed/S6b forward data. Domain logic (FR-035 TWA rules) stays server-side. Pattern #9 (Strategy).
 6. **Simulator-scope REST endpoints** in `pv-app` for dashboard API. New `DashboardController` with endpoints mapping to L1--L4. DTOs in `pv-app/dto/dashboard/`.
-7. **New adapter method** on `TradeIntervalCache` port: `getForPortfolioAndRange()` for portfolio-scoped S6b queries (Q-7).
+7. **New adapter method** on `TradeIntervalCache` port: `getForPortfolioAndRa****nge()` for portfolio-scoped S6b queries (Q-7).
 
-### 2.2 Defers To
+### 2.2 Defers To********
 
 1. **S5a bitemporality** -- the functional spec notes this as a prerequisite. The dashboard queries current-knowledge settlement cells (no `knownTo` filter needed on the current delete-and-recreate model). When S5a gains bitemporality, the dashboard query will add `knownTo IS NULL` naturally. This spec does not design the S5a bitemporality change.
 2. **S6b bitemporality** -- per OQ-12 resolution: no bitemporality on S6b. Dashboard reads current cache state.
 3. **Peak/off-peak calendar (FR-026)** -- `isPeak` on rollup cells is currently always `false`. When `MarketCalendar` is implemented, peak/off-peak split will flow through existing rollup materialization. No dashboard-specific work needed beyond passing the `isPeak` filter.
-4. **Staleness detection (AC-L1-08, Q-8)** -- requires comparing the S7 rollup cell's curve/volume versions against current S4 curve versions (per ADR-002). This is a cross-cutting concern and is deferred to a follow-up spec. The dashboard API will return the rollup cell's `versionHash` and computation timestamp so the UI or a future service can determine staleness.
+4. **Staleness detection (AC-L1-08, Q-8)** -- requires comparing the**** S7 rollup cell's curve/volume versions against current S4 curve versions (per ADR-002). This is a cross-cutting concern and is deferred to a follow-up spec. The dashboard API will return the rollup cell's `versionHash` and computation timestamp so the UI or a future service can determine staleness.
 5. **Real-time push (OQ-7)** -- deferred. The dashboard will rely on REST polling. SSE/WebSocket push is a separate enhancement once the production hosting layer exists.
 6. **Cross-currency aggregation** -- per functional spec: out of scope. Separate subtotals per currency.
 7. **Production hosting layer** -- all REST endpoints designed here are simulator-scope (`pv-app`). The production host must supply tenant propagation, RLS, and connection routing. The library-scope ports are production-ready.

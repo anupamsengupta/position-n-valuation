@@ -232,6 +232,21 @@ public class JpaPositionLedgerRepository implements PositionLedgerRepository {
     }
 
     @Override
+    public List<String> findDistinctPortfolios(String tenantId) {
+        return emProvider.get()
+            .createQuery("""
+                SELECT DISTINCT e.portfolioId FROM PositionLedgerEntryEntity e
+                WHERE e.tenantId = :tenantId
+                  AND e.knownTo IS NULL
+                  AND e.status = 'ACTIVE'
+                  AND e.portfolioId IS NOT NULL
+                ORDER BY e.portfolioId
+                """, String.class)
+            .setParameter("tenantId", tenantId)
+            .getResultList();
+    }
+
+    @Override
     public void supersede(List<PositionLedgerEntry> entriesToClose,
                           List<PositionLedgerEntry> newEntries) {
         EntityManager em = emProvider.get();

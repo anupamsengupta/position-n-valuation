@@ -10,6 +10,8 @@ import com.power.posval.app.dto.dashboard.PositionContributionDto;
 import com.power.posval.app.provider.TransactionalExecutor;
 import com.power.posval.domain.model.TimeGranularity;
 import com.power.posval.domain.port.service.DashboardQueryService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -23,7 +25,7 @@ import java.util.UUID;
 /**
  * Dashboard REST endpoints (simulator-scope, pv-app).
  *
- * <p>Serves all four dashboard levels (L1–L4) via {@link DashboardQueryService},
+ * <p>Serves all four dashboard levels (L1-L4) via {@link DashboardQueryService},
  * which is obtained from the Guice {@code Injector} per D-13.
  *
  * <p>All queries are read-only and wrapped in a read transaction via
@@ -39,6 +41,8 @@ import java.util.UUID;
 @RequestMapping("/api/dashboard")
 public class DashboardController {
 
+    private static final Logger log = LoggerFactory.getLogger(DashboardController.class);
+
     private final DashboardQueryService dashboardQueryService;
     private final TransactionalExecutor txExecutor;
 
@@ -46,6 +50,23 @@ public class DashboardController {
                                 TransactionalExecutor txExecutor) {
         this.dashboardQueryService = dashboardQueryService;
         this.txExecutor = txExecutor;
+    }
+
+    // -------------------------------------------------------------------------
+    // A.0: Portfolio List
+    // -------------------------------------------------------------------------
+
+    /**
+     * GET /api/dashboard/portfolios
+     * Returns distinct portfolio IDs from current-knowledge ACTIVE positions.
+     */
+    @GetMapping("/portfolios")
+    public ApiResponse<List<String>> listPortfolios(@RequestParam String tenantId) {
+        log.info("GET /api/dashboard/portfolios tenantId={}", tenantId);
+        List<String> portfolios = txExecutor.execute(
+            () -> dashboardQueryService.listPortfolios(tenantId));
+        log.info("GET /api/dashboard/portfolios => {} portfolios names {}", portfolios.size(), portfolios);
+        return ApiResponse.ok(portfolios);
     }
 
     // -------------------------------------------------------------------------
@@ -63,11 +84,14 @@ public class DashboardController {
             @RequestParam String rangeStart,
             @RequestParam String rangeEnd,
             @RequestParam(defaultValue = "MONTHLY") String granularity) {
+        log.info("GET /api/dashboard/portfolios/{}/summary tenantId={} range=[{} .. {}] granularity={}",
+            portfolioId, tenantId, rangeStart, rangeEnd, granularity);
         var summaries = txExecutor.execute(
             () -> dashboardQueryService.portfolioSummaries(
                 tenantId, portfolioId,
                 Instant.parse(rangeStart), Instant.parse(rangeEnd),
                 TimeGranularity.valueOf(granularity)));
+        log.info("GET /api/dashboard/portfolios/{}/summary => {} currency cards", portfolioId, summaries.size());
         return ApiResponse.ok(summaries.stream().map(PortfolioSummaryDto::from).toList());
     }
 
@@ -87,11 +111,14 @@ public class DashboardController {
             @RequestParam String rangeStart,
             @RequestParam String rangeEnd,
             @RequestParam(defaultValue = "MONTHLY") String granularity) {
+        log.info("GET /api/dashboard/portfolios/{}/rollups tenantId={} range=[{} .. {}] granularity={}",
+            portfolioId, tenantId, rangeStart, rangeEnd, granularity);
         var cells = txExecutor.execute(
             () -> dashboardQueryService.rollupGrid(
                 tenantId, portfolioId,
                 Instant.parse(rangeStart), Instant.parse(rangeEnd),
                 TimeGranularity.valueOf(granularity)));
+        log.info("GET /api/dashboard/portfolios/{}/rollups => {} cells", portfolioId, cells.size());
         return ApiResponse.ok(cells.stream().map(RollupCellDto::from).toList());
     }
 
@@ -102,7 +129,7 @@ public class DashboardController {
     /**
      * GET /api/dashboard/portfolios/{portfolioId}/positions
      * Returns position contributions (settled actuals + forward marks) per position.
-     * Offset-based pagination (bounded set, §S10a).
+     * Offset-based pagination (bounded set, S10a).
      */
     @GetMapping("/portfolios/{portfolioId}/positions")
     public ApiResponse<List<PositionContributionDto>> positionContributions(
@@ -112,6 +139,8 @@ public class DashboardController {
             @RequestParam String periodEnd,
             @RequestParam(defaultValue = "0") int offset,
             @RequestParam(defaultValue = "50") int limit) {
+        log.info("GET /api/dashboard/portfolios/{}/positions tenantId={} period=[{} .. {}] offset={} limit={}",
+            portfolioId, tenantId, periodStart, periodEnd, offset, limit);
         var contributions = txExecutor.execute(
             () -> dashboardQueryService.positionContributions(
                 tenantId, portfolioId,
@@ -125,6 +154,8 @@ public class DashboardController {
             .map(PositionContributionDto::from)
             .toList();
 
+        log.info("GET /api/dashboard/portfolios/{}/positions => {} total, returning [{} .. {}]",
+            portfolioId, contributions.size(), fromIdx, toIdx);
         return ApiResponse.ok(page);
     }
 
@@ -145,12 +176,15 @@ public class DashboardController {
             @RequestParam String monthEnd,
             @RequestParam(required = false) String positionId,
             @RequestParam(defaultValue = "Europe/Berlin") String timezone) {
+        log.info("GET /api/dashboard/portfolios/{}/daily tenantId={} month=[{} .. {}] positionId={} tz={}",
+            portfolioId, tenantId, monthStart, monthEnd, positionId, timezone);
         UUID posId = positionId != null ? UUID.fromString(positionId) : null;
         var aggregates = txExecutor.execute(
             () -> dashboardQueryService.dailyAggregates(
                 tenantId, portfolioId, posId,
                 Instant.parse(monthStart), Instant.parse(monthEnd),
                 timezone));
+        log.info("GET /api/dashboard/portfolios/{}/daily => {} days", portfolioId, aggregates.size());
         return ApiResponse.ok(aggregates.stream().map(DailyAggregateDto::from).toList());
     }
 
@@ -171,12 +205,15 @@ public class DashboardController {
             @RequestParam String dayStart,
             @RequestParam String dayEnd,
             @RequestParam(defaultValue = "MIN_15") String granularity) {
+        log.info("GET /api/dashboard/settlements/day tenantId={} portfolio={} positionId={} day=[{} .. {}] granularity={}",
+            tenantId, portfolioId, positionId, dayStart, dayEnd, granularity);
         UUID posId = positionId != null ? UUID.fromString(positionId) : null;
         var cells = txExecutor.execute(
             () -> dashboardQueryService.settledDayDetail(
                 tenantId, portfolioId, posId,
                 Instant.parse(dayStart), Instant.parse(dayEnd),
                 TimeGranularity.valueOf(granularity)));
+        log.info("GET /api/dashboard/settlements/day => {} cells", cells.size());
         return ApiResponse.ok(cells.stream().map(SettlementCellDto::from).toList());
     }
 
@@ -197,12 +234,15 @@ public class DashboardController {
             @RequestParam String dayStart,
             @RequestParam String dayEnd,
             @RequestParam(defaultValue = "MIN_15") String granularity) {
+        log.info("GET /api/dashboard/forward/day tenantId={} portfolio={} positionId={} day=[{} .. {}] granularity={}",
+            tenantId, portfolioId, positionId, dayStart, dayEnd, granularity);
         UUID posId = positionId != null ? UUID.fromString(positionId) : null;
         var details = txExecutor.execute(
             () -> dashboardQueryService.forwardDayDetail(
                 tenantId, portfolioId, posId,
                 Instant.parse(dayStart), Instant.parse(dayEnd),
                 TimeGranularity.valueOf(granularity)));
+        log.info("GET /api/dashboard/forward/day => {} intervals", details.size());
         return ApiResponse.ok(details.stream().map(ForwardIntervalDetailDto::from).toList());
     }
 }

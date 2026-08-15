@@ -31,12 +31,13 @@ function clearDrillDown() {
   useDashboardSelection.getState().clearAll();
 }
 
-export const useDashboardFilters = create<DashboardFiltersState>((set) => ({
-  portfolioId: 'WIND_DE',
+export const useDashboardFilters = create<DashboardFiltersState>((set, get) => ({
+  portfolioId: '',
   granularity: 'MONTHLY',
   dateRange: defaultDateRange(),
 
   setPortfolioId: (id) => {
+    if (id === get().portfolioId) return;
     clearDrillDown();
     set({ portfolioId: id });
   },

@@ -78,13 +78,29 @@ public class DefaultDashboardQueryService implements DashboardQueryService {
     }
 
     // -------------------------------------------------------------------------
+    // L0: Portfolio List
+    // -------------------------------------------------------------------------
+
+    @Override
+    public List<String> listPortfolios(String tenantId) {
+        return ledgerRepo.findDistinctPortfolios(tenantId);
+    }
+
+    // -------------------------------------------------------------------------
     // L1: Portfolio Cards
     // -------------------------------------------------------------------------
 
     /**
-     * Q-1: Aggregates rollup cells per currency.
-     * Settled cells have periodEnd &lt;= now; forward cells have periodStart &gt; now.
-     * FR-035: MW = TWA, MWh = sum, amounts = sum.
+     * Q-1: Aggregates rollup cells per currency for settled data, plus
+     * on-the-fly forward computation via ForwardMarkService + TradeIntervalCache.
+     *
+     * <p>Settled data comes from materialized rollup cells (S7). Forward data
+     * is computed on-the-fly from positions (S1) whose delivery extends beyond
+     * {@code now} — same hybrid approach as L3 {@link #positionContributions}.
+     * This avoids the gap where forward periods have no rollup cells because
+     * no {@code SettlementComputed} event has fired for undelivered intervals.
+     *
+     * <p>FR-035: MW = TWA, MWh = sum, amounts = sum.
      */
     @Override
     public List<PortfolioSummary> portfolioSummaries(String tenantId,
@@ -92,104 +108,202 @@ public class DefaultDashboardQueryService implements DashboardQueryService {
                                                       Instant rangeStart,
                                                       Instant rangeEnd,
                                                       TimeGranularity rollupGranularity) {
+        Instant now = Instant.now();
+
+        // --- Step 1: Settled data from rollup cells (S7) ---
         List<RollupCell> cells = rollupRepo.findByPortfolio(
             tenantId, portfolioId, rangeStart, rangeEnd, rollupGranularity);
 
-        if (cells.isEmpty()) {
+        // Accumulate rollup data by currency.
+        // All rollup cells contribute to "settled" accumulators because rollup cells
+        // only contain materialized settlement data — settlement events only fire
+        // for delivered (past) intervals. A transition month (e.g., Aug 2026 when
+        // today is Aug 15) has a rollup cell covering the full month, but its
+        // pnl/settledValue/netMw/netMwh only reflect the settled portion (Aug 1-15).
+        // Forward data is computed on-the-fly in Step 2 below.
+        Map<String, SettledAccumulator> settledByCurrency = new LinkedHashMap<>();
+        for (RollupCell cell : cells) {
+            String currency = cell.currency() != null ? cell.currency() : "EUR";
+            SettledAccumulator acc = settledByCurrency.computeIfAbsent(
+                currency, k -> new SettledAccumulator());
+
+            if (cell.pnl() != null) {
+                acc.realizedPnl = acc.realizedPnl.add(cell.pnl());
+            }
+            long minutes = cell.periodStart() != null && cell.periodEnd() != null
+                ? Duration.between(cell.periodStart(), cell.periodEnd()).toMinutes()
+                : 0L;
+            if (cell.netMw() != null) {
+                acc.mwWeightedSum = acc.mwWeightedSum.add(
+                    cell.netMw().multiply(BigDecimal.valueOf(minutes)));
+            }
+            acc.totalMinutes += minutes;
+            if (cell.netMwh() != null) {
+                acc.netMwh = acc.netMwh.add(cell.netMwh());
+            }
+        }
+
+        // --- Step 2: Forward data on-the-fly from positions (S1) ---
+        // Find positions with delivery overlapping the requested range
+        List<PositionLedgerEntry> positions = ledgerRepo.findByPortfolioAndDeliveryRange(
+            tenantId, portfolioId, rangeStart, rangeEnd);
+
+        // Filter to positions with forward (undelivered) portions
+        List<PositionLedgerEntry> forwardPositions = positions.stream()
+            .filter(p -> p.deliveryEnd() != null && p.deliveryEnd().isAfter(now))
+            .toList();
+
+        // Accumulate forward data by currency
+        Map<String, ForwardAccumulator> forwardByCurrency = new LinkedHashMap<>();
+
+        if (!forwardPositions.isEmpty()) {
+            // Bulk fetch S6b interval records for forward volume (MW/MWh)
+            List<String> tradeLegIds = forwardPositions.stream()
+                .map(PositionLedgerEntry::tradeLegId)
+                .distinct()
+                .toList();
+
+            Map<String, UUID> posIdByTradeLegId = forwardPositions.stream()
+                .collect(Collectors.toMap(PositionLedgerEntry::tradeLegId,
+                    PositionLedgerEntry::id, (a, b) -> a));
+
+            // Only fetch intervals in the forward portion of the range
+            Instant forwardStart = now.isAfter(rangeStart) ? now : rangeStart;
+            List<TradeIntervalRecord> forwardIntervals = tradeIntervalCache.getForTradeLegIds(
+                tenantId, tradeLegIds, forwardStart, rangeEnd);
+
+            // Group intervals by positionId
+            Map<UUID, List<TradeIntervalRecord>> intervalsByPosition = new LinkedHashMap<>();
+            for (TradeIntervalRecord r : forwardIntervals) {
+                UUID posId = posIdByTradeLegId.get(r.tradeLegId());
+                if (posId != null) {
+                    intervalsByPosition.computeIfAbsent(posId, k -> new ArrayList<>()).add(r);
+                }
+            }
+
+            // Per-position: compute forward MtM + aggregate forward volume
+            for (PositionLedgerEntry pos : forwardPositions) {
+                UUID posId = pos.id();
+                List<TradeIntervalRecord> intervals =
+                    intervalsByPosition.getOrDefault(posId, List.of());
+
+                // Forward volume aggregation (S6b) — TWA for MW, sum for MWh
+                ForwardVolumeAggregation fwdVol = aggregateForwardVolume(intervals);
+
+                // Forward MtM via ForwardMarkService (ADR-002)
+                MonthlyMark monthlyMark = null;
+                try {
+                    monthlyMark = forwardMarkService.computeMonthlyMark(
+                        tenantId, posId, forwardStart, rangeEnd);
+                } catch (Exception ex) {
+                    log.warn("ForwardMarkService.computeMonthlyMark failed for position {}: {}",
+                        posId, ex.getMessage());
+                }
+
+                String currency = monthlyMark != null ? monthlyMark.currency() : "EUR";
+                ForwardAccumulator acc = forwardByCurrency.computeIfAbsent(
+                    currency, k -> new ForwardAccumulator());
+
+                if (monthlyMark != null) {
+                    acc.unrealizedMtm = acc.unrealizedMtm.add(monthlyMark.forwardMtm());
+                }
+
+                // Use S6b intervals for volume if available, else MonthlyMark totalMwh
+                if (!intervals.isEmpty()) {
+                    acc.netMwh = acc.netMwh.add(fwdVol.netMwh);
+                    // TWA accumulation: add weighted MW × minutes
+                    long fwdMinutes = intervals.stream()
+                        .mapToLong(r -> Duration.between(r.intervalStart(), r.intervalEnd()).toMinutes())
+                        .sum();
+                    acc.mwWeightedSum = acc.mwWeightedSum.add(
+                        fwdVol.netMw.multiply(BigDecimal.valueOf(fwdMinutes)));
+                    acc.totalMinutes += fwdMinutes;
+                } else if (monthlyMark != null) {
+                    acc.netMwh = acc.netMwh.add(monthlyMark.totalMwh());
+                }
+            }
+        }
+
+        // --- Step 3: Merge settled + forward into PortfolioSummary per currency ---
+        // Collect all currencies present in either settled or forward
+        Map<String, PortfolioSummary> mergedByCurrency = new LinkedHashMap<>();
+
+        for (var entry : settledByCurrency.entrySet()) {
+            String currency = entry.getKey();
+            SettledAccumulator s = entry.getValue();
+
+            BigDecimal settledNetMw = s.totalMinutes > 0
+                ? np.round(s.mwWeightedSum.divide(BigDecimal.valueOf(s.totalMinutes),
+                    np.scale(NumericPrecision.Domain.VOLUME), np.roundingMode()),
+                    NumericPrecision.Domain.VOLUME)
+                : BigDecimal.ZERO;
+
+            BigDecimal rPnl = np.round(s.realizedPnl, NumericPrecision.Domain.MONETARY);
+
+            mergedByCurrency.put(currency, new PortfolioSummary(
+                portfolioId, currency, rPnl,
+                BigDecimal.ZERO, rPnl,
+                settledNetMw, np.round(s.netMwh, NumericPrecision.Domain.ENERGY),
+                BigDecimal.ZERO, BigDecimal.ZERO,
+                now));
+        }
+
+        for (var entry : forwardByCurrency.entrySet()) {
+            String currency = entry.getKey();
+            ForwardAccumulator f = entry.getValue();
+
+            BigDecimal forwardNetMw = f.totalMinutes > 0
+                ? np.round(f.mwWeightedSum.divide(BigDecimal.valueOf(f.totalMinutes),
+                    np.scale(NumericPrecision.Domain.VOLUME), np.roundingMode()),
+                    NumericPrecision.Domain.VOLUME)
+                : BigDecimal.ZERO;
+
+            BigDecimal uMtm = np.round(f.unrealizedMtm, NumericPrecision.Domain.MONETARY);
+            BigDecimal fwdMwh = np.round(f.netMwh, NumericPrecision.Domain.ENERGY);
+
+            PortfolioSummary existing = mergedByCurrency.get(currency);
+            if (existing != null) {
+                // Merge forward into existing settled summary
+                BigDecimal totalValue = np.round(
+                    existing.realizedPnl().add(uMtm), NumericPrecision.Domain.MONETARY);
+                mergedByCurrency.put(currency, new PortfolioSummary(
+                    portfolioId, currency,
+                    existing.realizedPnl(), uMtm, totalValue,
+                    existing.settledNetMw(), existing.settledNetMwh(),
+                    forwardNetMw, fwdMwh,
+                    now));
+            } else {
+                // Forward-only currency (no settled data)
+                mergedByCurrency.put(currency, new PortfolioSummary(
+                    portfolioId, currency,
+                    BigDecimal.ZERO, uMtm, uMtm,
+                    BigDecimal.ZERO, BigDecimal.ZERO,
+                    forwardNetMw, fwdMwh,
+                    now));
+            }
+        }
+
+        if (mergedByCurrency.isEmpty()) {
             return List.of();
         }
 
-        Instant now = Instant.now();
+        return new ArrayList<>(mergedByCurrency.values());
+    }
 
-        // Group by currency
-        Map<String, List<RollupCell>> byCurrency = cells.stream()
-            .collect(Collectors.groupingBy(c -> c.currency() != null ? c.currency() : "EUR",
-                LinkedHashMap::new, Collectors.toList()));
+    /** Mutable accumulator for settled rollup aggregation in portfolioSummaries. */
+    private static final class SettledAccumulator {
+        BigDecimal realizedPnl = BigDecimal.ZERO;
+        BigDecimal mwWeightedSum = BigDecimal.ZERO;
+        long totalMinutes = 0L;
+        BigDecimal netMwh = BigDecimal.ZERO;
+    }
 
-        List<PortfolioSummary> summaries = new ArrayList<>(byCurrency.size());
-        for (var entry : byCurrency.entrySet()) {
-            String currency = entry.getKey();
-            List<RollupCell> currencyCells = entry.getValue();
-
-            BigDecimal realizedPnl = BigDecimal.ZERO;
-            BigDecimal unrealizedMtm = BigDecimal.ZERO;
-
-            // TWA accumulators for settled / forward MW
-            BigDecimal settledMwWeightedSum = BigDecimal.ZERO;
-            long settledTotalMinutes = 0L;
-            BigDecimal settledNetMwh = BigDecimal.ZERO;
-
-            BigDecimal forwardMwWeightedSum = BigDecimal.ZERO;
-            long forwardTotalMinutes = 0L;
-            BigDecimal forwardNetMwh = BigDecimal.ZERO;
-
-            Instant dataAsOf = Instant.EPOCH;
-
-            for (RollupCell cell : currencyCells) {
-                boolean isSettled = cell.periodEnd() != null && !cell.periodEnd().isAfter(now);
-                long minutes = cell.periodStart() != null && cell.periodEnd() != null
-                    ? Duration.between(cell.periodStart(), cell.periodEnd()).toMinutes()
-                    : 0L;
-
-                if (isSettled) {
-                    if (cell.pnl() != null) {
-                        realizedPnl = realizedPnl.add(cell.pnl());
-                    }
-                    if (cell.netMw() != null) {
-                        settledMwWeightedSum = settledMwWeightedSum.add(
-                            cell.netMw().multiply(BigDecimal.valueOf(minutes)));
-                    }
-                    settledTotalMinutes += minutes;
-                    if (cell.netMwh() != null) {
-                        settledNetMwh = settledNetMwh.add(cell.netMwh());
-                    }
-                } else {
-                    if (cell.forwardMarkValue() != null) {
-                        unrealizedMtm = unrealizedMtm.add(cell.forwardMarkValue());
-                    }
-                    if (cell.netMw() != null) {
-                        forwardMwWeightedSum = forwardMwWeightedSum.add(
-                            cell.netMw().multiply(BigDecimal.valueOf(minutes)));
-                    }
-                    forwardTotalMinutes += minutes;
-                    if (cell.netMwh() != null) {
-                        forwardNetMwh = forwardNetMwh.add(cell.netMwh());
-                    }
-                }
-                // track latest computation time (use versionHash as proxy — no computedAt on RollupCell)
-                dataAsOf = now; // use request time as data-as-of marker
-            }
-
-            BigDecimal settledNetMw = settledTotalMinutes > 0
-                ? np.round(settledMwWeightedSum.divide(BigDecimal.valueOf(settledTotalMinutes),
-                    np.scale(NumericPrecision.Domain.VOLUME), np.roundingMode()),
-                    NumericPrecision.Domain.VOLUME)
-                : BigDecimal.ZERO;
-
-            BigDecimal forwardNetMw = forwardTotalMinutes > 0
-                ? np.round(forwardMwWeightedSum.divide(BigDecimal.valueOf(forwardTotalMinutes),
-                    np.scale(NumericPrecision.Domain.VOLUME), np.roundingMode()),
-                    NumericPrecision.Domain.VOLUME)
-                : BigDecimal.ZERO;
-
-            BigDecimal rPnl = np.round(realizedPnl, NumericPrecision.Domain.MONETARY);
-            BigDecimal uMtm = np.round(unrealizedMtm, NumericPrecision.Domain.MONETARY);
-
-            summaries.add(new PortfolioSummary(
-                portfolioId,
-                currency,
-                rPnl,
-                uMtm,
-                np.round(rPnl.add(uMtm), NumericPrecision.Domain.MONETARY),
-                settledNetMw,
-                np.round(settledNetMwh, NumericPrecision.Domain.ENERGY),
-                forwardNetMw,
-                np.round(forwardNetMwh, NumericPrecision.Domain.ENERGY),
-                dataAsOf
-            ));
-        }
-
-        return summaries;
+    /** Mutable accumulator for forward on-the-fly aggregation in portfolioSummaries. */
+    private static final class ForwardAccumulator {
+        BigDecimal unrealizedMtm = BigDecimal.ZERO;
+        BigDecimal mwWeightedSum = BigDecimal.ZERO;
+        long totalMinutes = 0L;
+        BigDecimal netMwh = BigDecimal.ZERO;
     }
 
     // -------------------------------------------------------------------------

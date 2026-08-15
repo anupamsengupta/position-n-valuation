@@ -34,7 +34,7 @@ export function usePortfolioSummary(
     enabled: !!tenantId && !!portfolioId,
     staleTime: 30_000,
     gcTime: 300_000,
-    refetchInterval: 30_000,
+    refetchInterval: 120_000, // Fallback; primary updates via SSE invalidation
   });
 }
 
@@ -55,7 +55,7 @@ export function useRollupGrid(
     enabled: !!tenantId && !!portfolioId,
     staleTime: 30_000,
     gcTime: 300_000,
-    refetchInterval: 30_000,
+    refetchInterval: 120_000, // Fallback; primary updates via SSE invalidation
   });
 }
 
@@ -81,7 +81,7 @@ export function usePositionContributions(
     enabled: !!tenantId && !!portfolioId && !!periodStart && !!periodEnd,
     staleTime: 60_000,
     gcTime: 300_000,
-    refetchInterval: 60_000,
+    refetchInterval: 300_000, // Fallback; primary updates via SSE invalidation
   });
 }
 
@@ -109,7 +109,7 @@ export function useDailyAggregates(
     enabled: !!tenantId && !!portfolioId && !!monthStart && !!monthEnd,
     staleTime: 30_000,
     gcTime: 300_000,
-    refetchInterval: 30_000,
+    refetchInterval: 120_000, // Fallback; primary updates via SSE invalidation
   });
 }
 
@@ -169,6 +169,6 @@ export function useForwardDayDetail(
     enabled: !!tenantId && !!portfolioId && !!dayStart && !!dayEnd,
     staleTime: 15_000,
     gcTime: 300_000,
-    refetchInterval: 15_000,
+    refetchInterval: 60_000, // Fallback; primary updates via SSE invalidation
   });
 }
