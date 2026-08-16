@@ -619,8 +619,8 @@ public class DefaultDashboardQueryService implements DashboardQueryService {
                     mark.tradeLegId(),
                     mark.resolvedQty(),
                     mark.resolvedEnergy(),
-                    BigDecimal.ONE,   // multiplier not on IntervalMark; use 1 as default
-                    null,             // seriesKey not on IntervalMark
+                    pos.multiplier(),
+                    pos.volumeSeriesKey() != null ? pos.volumeSeriesKey().value() : null,
                     mark.evaluatedPrice(),
                     mark.markValue(),
                     mark.curveId(),

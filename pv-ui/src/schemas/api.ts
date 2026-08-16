@@ -149,7 +149,7 @@ export const forwardIntervalDetailSchema = z.object({
   resolvedQty: bigDecimalValue,
   resolvedEnergy: bigDecimalValue,
   multiplier: bigDecimalValue,
-  seriesKey: z.string(),
+  seriesKey: z.string().nullable(),
   evaluatedPrice: bigDecimalNullable,
   markValue: bigDecimalNullable,
   curveId: z.string().nullable(),
