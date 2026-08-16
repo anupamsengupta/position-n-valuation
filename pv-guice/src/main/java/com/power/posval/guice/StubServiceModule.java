@@ -5,11 +5,9 @@ import com.google.inject.Singleton;
 import com.power.posval.domain.port.marketdata.MarketDataPort;
 import com.power.posval.domain.port.repository.MeteredActualRepository;
 import com.power.posval.domain.port.repository.PriceExpressionRepository;
-import com.power.posval.domain.port.service.ForwardMarkService;
 import com.power.posval.domain.service.stub.JsonMarketDataPort;
 import com.power.posval.domain.service.stub.JsonMeteredActualRepository;
 import com.power.posval.domain.service.stub.JsonPriceExpressionRepository;
-import com.power.posval.domain.service.stub.StubForwardMarkService;
 
 /**
  * Guice module for JSON-resource-backed stub implementations of external services.
@@ -32,11 +30,8 @@ public class StubServiceModule extends AbstractModule {
             .to(JsonMeteredActualRepository.class)
             .in(Singleton.class);
 
-        // ForwardMarkService stub — OI-1 (ADR-002 not yet implemented).
-        // Replace with the real implementation when ADR-002 is delivered.
-        // Pattern #18 (Port + Adapter stub).
-        bind(ForwardMarkService.class)
-            .to(StubForwardMarkService.class)
-            .in(Singleton.class);
+        // ForwardMarkService binding moved to DomainModule (ADR-002 delivered).
+        // DefaultForwardMarkService computes forward MtM on demand from
+        // S6b volumes + S4 curves via PriceEvaluator.
     }
 }

@@ -61,13 +61,22 @@ public final class MarketDataSeriesSeeder {
         int curves = seedForwardCurves(repo, "EEX_BASE_DE", fixingEnd, seriesEnd, 123);
         log.info("Seeded {} EEX_BASE_DE forward curve points (15-min, {} → {})", curves, fixingEnd.toLocalDate(), seriesEnd.toLocalDate());
 
+        // EPEX_DA15 forward curves — same series referenced by EXPR-002/003/004
+        // MarketDataLeaf nodes for forward mark valuation (marketPriceExpressionId)
+        int epexCurves = seedForwardCurves(repo, "EPEX_DA15", fixingEnd, seriesEnd, 456);
+        log.info("Seeded {} EPEX_DA15 forward curve points (15-min, {} → {})", epexCurves, fixingEnd.toLocalDate(), seriesEnd.toLocalDate());
+
+        // NORDPOOL_SYS forward curves — referenced by EXPR-005 cross-border PPA
+        int nordpoolCurves = seedForwardCurves(repo, "NORDPOOL_SYS", fixingEnd, seriesEnd, 789);
+        log.info("Seeded {} NORDPOOL_SYS forward curve points (15-min, {} → {})", nordpoolCurves, fixingEnd.toLocalDate(), seriesEnd.toLocalDate());
+
         int fxRates = seedFxRates(repo, seriesStart, seriesEnd);
         log.info("Seeded {} EUR/NOK FX rates", fxRates);
 
         int indices = seedIndices(repo);
         log.info("Seeded {} HICP-DE index values", indices);
 
-        return new int[]{fixings + nordpool, curves, fxRates, indices};
+        return new int[]{fixings + nordpool, curves + epexCurves + nordpoolCurves, fxRates, indices};
     }
 
     /**
@@ -90,6 +99,15 @@ public final class MarketDataSeriesSeeder {
             count++;
         }
         return count;
+    }
+
+    /**
+     * Public entry point for incremental forward curve seeding (called by DataSeeder
+     * phase 2b for series that were added after initial seeding).
+     */
+    public static int seedForwardCurvesPublic(MarketDataRepository repo, String series,
+                                               ZonedDateTime start, ZonedDateTime end, long randomSeed) {
+        return seedForwardCurves(repo, series, start, end, randomSeed);
     }
 
     /**

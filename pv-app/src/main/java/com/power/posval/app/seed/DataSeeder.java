@@ -85,6 +85,25 @@ public class DataSeeder implements ApplicationRunner {
                     mktCounts[0], mktCounts[1], mktCounts[2], mktCounts[3]);
         }
 
+        // --- Phase 2b: Forward curves for expression series (EPEX_DA15, NORDPOOL_SYS) ---
+        // These may be missing on existing DBs where only EEX_BASE_DE was seeded.
+        boolean epexCurvesExist = txExecutor.execute(
+                () -> marketDataRepo.findForwardCurve(TENANT_ID, "EPEX_DA15",
+                        YearMonth.of(2026, 8), Instant.parse("2026-08-01T00:00:00Z")).isPresent());
+        if (epexCurvesExist) {
+            log.info("EPEX_DA15 + NORDPOOL_SYS forward curves already seeded, skipping");
+        } else {
+            log.info("Seeding forward curves for EPEX_DA15 + NORDPOOL_SYS...");
+            txExecutor.run(() -> {
+                var now = java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC);
+                var fixingEnd = now.withMinute((now.getMinute() / 15) * 15).withSecond(0).withNano(0);
+                var seriesEnd = java.time.ZonedDateTime.of(2028, 7, 1, 0, 0, 0, 0, java.time.ZoneOffset.UTC);
+                int epex = MarketDataSeriesSeeder.seedForwardCurvesPublic(marketDataRepo, "EPEX_DA15", fixingEnd, seriesEnd, 456);
+                int nordpool = MarketDataSeriesSeeder.seedForwardCurvesPublic(marketDataRepo, "NORDPOOL_SYS", fixingEnd, seriesEnd, 789);
+                log.info("Seeded {} EPEX_DA15 + {} NORDPOOL_SYS forward curve points", epex, nordpool);
+            });
+        }
+
         // --- Phase 3: Volume series (wind + solar, Jul 2026 → Jul 2028, 15-min UTC) ---
         boolean volumeExists = txExecutor.execute(
                 () -> volumeSeriesRepo.findCurrentBySeriesKey(TENANT_ID,

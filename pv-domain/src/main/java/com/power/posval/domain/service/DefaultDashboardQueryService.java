@@ -130,14 +130,25 @@ public class DefaultDashboardQueryService implements DashboardQueryService {
             if (cell.pnl() != null) {
                 acc.realizedPnl = acc.realizedPnl.add(cell.pnl());
             }
-            long minutes = cell.periodStart() != null && cell.periodEnd() != null
-                ? Duration.between(cell.periodStart(), cell.periodEnd()).toMinutes()
-                : 0L;
-            if (cell.netMw() != null) {
-                acc.mwWeightedSum = acc.mwWeightedSum.add(
-                    cell.netMw().multiply(BigDecimal.valueOf(minutes)));
+            // TWA weighting: use the settled portion of the period, not the full
+            // period span. For a transition month (e.g., Aug when today is Aug 16),
+            // the rollup cell covers Aug 1 - Sep 1 but only contains settlement
+            // data for Aug 1 - Aug 16. Using the full month duration would under-
+            // weight the transition month's MW average relative to fully-settled
+            // months. Clamping periodEnd to min(periodEnd, now) gives the correct
+            // settled duration for TWA recombination across cells.
+            if (cell.periodStart() != null && cell.periodEnd() != null) {
+                Instant effectiveEnd = cell.periodEnd().isAfter(now)
+                    ? now : cell.periodEnd();
+                long minutes = Duration.between(cell.periodStart(), effectiveEnd).toMinutes();
+                if (minutes > 0) {
+                    if (cell.netMw() != null) {
+                        acc.mwWeightedSum = acc.mwWeightedSum.add(
+                            cell.netMw().multiply(BigDecimal.valueOf(minutes)));
+                    }
+                    acc.totalMinutes += minutes;
+                }
             }
-            acc.totalMinutes += minutes;
             if (cell.netMwh() != null) {
                 acc.netMwh = acc.netMwh.add(cell.netMwh());
             }

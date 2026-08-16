@@ -53,6 +53,13 @@ public class DomainModule extends AbstractModule {
         bind(VolumeSeriesQueryService.class).to(DefaultVolumeSeriesQueryService.class).in(Singleton.class);
         bind(RollupQueryService.class).to(DefaultRollupQueryService.class).in(Singleton.class);
 
+        // ForwardMarkService — ADR-002: compute-on-demand.
+        // Replaces StubForwardMarkService. Uses S6b volumes + S4 curves
+        // via PriceEvaluator to compute forward MtM at query time.
+        bind(ForwardMarkService.class)
+            .to(DefaultForwardMarkService.class)
+            .in(Singleton.class);
+
         // Dashboard query facade — Pattern #18, §9.1.
         // Binds DashboardQueryService → DefaultDashboardQueryService (Singleton).
         bind(DashboardQueryService.class)

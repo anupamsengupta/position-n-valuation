@@ -128,23 +128,22 @@ public class SettlementRevaluationService {
             }
         }
 
-        // 4. Publish SettlementComputed events
-        Instant eventTime = Instant.now();
-        List<Object> events = newCells.stream()
-            .<Object>map(cell -> new SettlementComputed(
-                position.tenantId(),
-                position.id(),
-                ZonedDateTime.ofInstant(cell.intervalStart(),
-                    position.deliveryRange().deliveryTimezone()),
-                ZonedDateTime.ofInstant(cell.intervalEnd(),
-                    position.deliveryRange().deliveryTimezone()),
-                new Money(cell.amount(), Currency.getInstance("EUR")),
-                "PROVISIONAL",
-                cell.activeLeaves(),
-                cell.inputVersionSet(),
-                eventTime))
-            .toList();
-        eventPublisher.publishAll(events);
+        // 4. Publish a single SettlementComputed event spanning the full range
+        // rather than one per cell, to avoid N rollup materializations + SSE pushes.
+        SettlementCell first = newCells.getFirst();
+        SettlementCell last = newCells.getLast();
+        eventPublisher.publish(new SettlementComputed(
+            position.tenantId(),
+            position.id(),
+            ZonedDateTime.ofInstant(first.intervalStart(),
+                position.deliveryRange().deliveryTimezone()),
+            ZonedDateTime.ofInstant(last.intervalEnd(),
+                position.deliveryRange().deliveryTimezone()),
+            new Money(last.amount(), Currency.getInstance("EUR")),
+            "PROVISIONAL",
+            last.activeLeaves(),
+            last.inputVersionSet(),
+            Instant.now()));
 
         log.info("Revaluation: saved {} new cells for position {} in [{}, {})",
             newCells.size(), position.id(), effectiveStart, effectiveEnd);

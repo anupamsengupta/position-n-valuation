@@ -7,6 +7,7 @@ import com.power.posval.domain.port.marketdata.MarketDataPort;
 
 import jakarta.inject.Inject;
 import java.math.BigDecimal;
+import java.time.YearMonth;
 import java.util.*;
 
 /**
@@ -61,7 +62,11 @@ public class PriceExpressionBasedEvaluator implements PriceEvaluator {
                                  && m.settlementSeries() != null)
                                 ? m.settlementSeries()
                                 : m.series();
-                var lookup = md.lookupFixing(series, interval.start().toInstant());
+                var lookup = (purpose == ResolutionPurpose.FORWARD)
+                    ? md.lookupForwardCurve(series,
+                          YearMonth.from(interval.start().toLocalDate()),
+                          interval.start().toInstant())
+                    : md.lookupFixing(series, interval.start().toInstant());
                 activeLeaves.add(m.leafId());
                 versions.put(series, lookup.versionId());
                 yield lookup.value();

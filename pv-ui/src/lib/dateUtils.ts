@@ -212,6 +212,23 @@ export function getDstInfo(intervalCount: number): {
 }
 
 /**
+ * Advance a local date string (YYYY-MM-DD) by one calendar day.
+ * Used to convert an inclusive end date to an exclusive upper bound
+ * for backend API calls where rangeEnd semantics are exclusive.
+ *
+ * Example: '2026-09-30' -> '2026-10-01'
+ *          '2026-12-31' -> '2027-01-01'
+ */
+export function nextDay(localDate: string): string {
+  const parts = localDate.split('-');
+  const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]) + 1);
+  const y = d.getFullYear();
+  const m = (d.getMonth() + 1).toString().padStart(2, '0');
+  const day = d.getDate().toString().padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/**
  * Get default date range: first day of current year to last day of next year.
  */
 export function getDefaultDateRange(): { rangeStart: string; rangeEnd: string } {

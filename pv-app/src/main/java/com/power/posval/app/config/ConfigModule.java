@@ -28,12 +28,10 @@ import com.power.posval.domain.port.event.DomainEventPublisher;
 import com.power.posval.domain.port.marketdata.MarketDataPort;
 import com.power.posval.domain.port.repository.*;
 import com.power.posval.domain.port.tenant.TenantContext;
-import com.power.posval.domain.port.service.ForwardMarkService;
 import com.power.posval.domain.service.CachingMarketDataPort;
 import com.power.posval.domain.service.PriceEvaluator;
 import com.power.posval.domain.service.stub.JsonMeteredActualRepository;
 import com.power.posval.domain.service.stub.JsonPriceExpressionRepository;
-import com.power.posval.domain.service.stub.StubForwardMarkService;
 import com.power.posval.persistence.adapter.*;
 import com.power.posval.persistence.batch.BatchWriter;
 import com.power.posval.persistence.batch.UnitOfWork;
@@ -111,7 +109,8 @@ public class ConfigModule extends AbstractModule {
         // --- Stub services (swap for real adapters when available) ---
         bind(PriceExpressionRepository.class).to(JsonPriceExpressionRepository.class).in(Singleton.class);
         bind(MeteredActualRepository.class).to(JsonMeteredActualRepository.class).in(Singleton.class);
-        bind(ForwardMarkService.class).to(StubForwardMarkService.class).in(Singleton.class);
+        // ForwardMarkService binding: DomainModule binds DefaultForwardMarkService (ADR-002).
+        // No override needed here — the stub was replaced when ADR-002 was delivered.
 
         // --- PriceEvaluator strategy override ---
         if ("rule-engine".equals(pricingStrategy)) {

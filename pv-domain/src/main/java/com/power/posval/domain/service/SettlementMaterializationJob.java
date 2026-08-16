@@ -132,6 +132,8 @@ public class SettlementMaterializationJob extends AbstractMaterializationJob<Set
 
     @Override
     protected void flushResults(PositionLedgerEntry position, List<SettlementCell> cells) {
+        if (cells.isEmpty()) return;
+
         cellRepo.saveAll(cells);
 
         // S8: upsert dependency edges at cell interval precision (FR-102–104)
@@ -146,23 +148,22 @@ public class SettlementMaterializationJob extends AbstractMaterializationJob<Set
             }
         }
 
-        Instant eventTime = Instant.now();
-        List<Object> events = cells.stream()
-            .<Object>map(cell -> new SettlementComputed(
-                position.tenantId(),
-                position.id(),
-                ZonedDateTime.ofInstant(cell.intervalStart(),
-                    position.deliveryRange().deliveryTimezone()),
-                ZonedDateTime.ofInstant(cell.intervalEnd(),
-                    position.deliveryRange().deliveryTimezone()),
-                new Money(cell.amount(), java.util.Currency.getInstance("EUR")),
-                "PROVISIONAL",
-                cell.activeLeaves(),
-                cell.inputVersionSet(),
-                eventTime))
-            .toList();
-
-        eventPublisher.publishAll(events);
+        // Publish a single SettlementComputed event spanning the full range
+        // rather than one per cell, to avoid N rollup materializations + SSE pushes.
+        SettlementCell first = cells.getFirst();
+        SettlementCell last = cells.getLast();
+        eventPublisher.publish(new SettlementComputed(
+            position.tenantId(),
+            position.id(),
+            ZonedDateTime.ofInstant(first.intervalStart(),
+                position.deliveryRange().deliveryTimezone()),
+            ZonedDateTime.ofInstant(last.intervalEnd(),
+                position.deliveryRange().deliveryTimezone()),
+            new Money(last.amount(), java.util.Currency.getInstance("EUR")),
+            "PROVISIONAL",
+            last.activeLeaves(),
+            last.inputVersionSet(),
+            Instant.now()));
     }
 
     private VolumeReference buildVolumeReference(PositionLedgerEntry position) {

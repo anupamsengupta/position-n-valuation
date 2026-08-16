@@ -15,7 +15,7 @@ import { useDashboardSelection } from '@/hooks/useDashboardSelection';
 import { useDashboardFilters } from '@/hooks/useDashboardFilters';
 import { useUserPreferences } from '@/hooks/useUserPreferences';
 import { useRealtimeInvalidation } from '@/hooks/useRealtimeInvalidation';
-import { localDateToUtcBoundary, formatPeriodLabel } from '@/lib/dateUtils';
+import { localDateToUtcBoundary, nextDay, formatPeriodLabel } from '@/lib/dateUtils';
 import type { PositionContributionDto } from '@/schemas/api';
 
 export interface DashboardPageProps {
@@ -54,13 +54,18 @@ export function DashboardPage({ portfolioId }: DashboardPageProps) {
     }
   }, [portfolioId, storePortfolioId, setPortfolioId]);
 
-  // Convert local dates to UTC boundaries for API calls
+  // Convert local dates to UTC boundaries for API calls.
+  // rangeStart: inclusive lower bound (midnight of the first day).
+  // rangeEnd: exclusive upper bound (midnight of the day AFTER the last day).
+  // The filter state stores inclusive end dates for display (e.g., '2026-09-30'),
+  // but the backend SQL uses exclusive upper bound (interval_start < :rangeEnd),
+  // so we advance by one day before converting to UTC.
   const rangeStartUtc = useMemo(
     () => localDateToUtcBoundary(dateRange.rangeStart, timezone),
     [dateRange.rangeStart, timezone],
   );
   const rangeEndUtc = useMemo(
-    () => localDateToUtcBoundary(dateRange.rangeEnd, timezone),
+    () => localDateToUtcBoundary(nextDay(dateRange.rangeEnd), timezone),
     [dateRange.rangeEnd, timezone],
   );
 

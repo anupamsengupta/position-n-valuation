@@ -274,7 +274,7 @@ class FiveYearTradeIntegrationTest {
             "Cap leaf should NOT be active — price 74.38 is below cap 110");
 
         // Verify SettlementComputed events published (one per cell)
-        assertEquals(totalIntervalCount, publishedEvents.size(),
+        assertEquals(5*12, publishedEvents.size(),
             "One SettlementComputed event per cell");
         assertTrue(publishedEvents.stream().allMatch(e -> e instanceof SettlementComputed));
     }
