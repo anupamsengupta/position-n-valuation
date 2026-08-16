@@ -4,8 +4,6 @@ import com.power.posval.domain.model.PositionLedgerEntry;
 import com.power.posval.domain.model.VolumeUnit;
 import com.power.posval.domain.model.value.DeliveryPeriod;
 import com.power.posval.domain.model.value.DeliveryRange;
-import com.power.posval.domain.model.value.SeriesKey;
-import com.power.posval.domain.port.marketdata.MarketDataPort;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;

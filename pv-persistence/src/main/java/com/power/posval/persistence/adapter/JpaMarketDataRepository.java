@@ -11,6 +11,7 @@ import jakarta.persistence.EntityManager;
 
 import java.time.Instant;
 import java.time.YearMonth;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -176,6 +177,65 @@ public class JpaMarketDataRepository implements MarketDataRepository {
             .getResultList();
         return results.isEmpty() ? Optional.empty()
             : Optional.of(toFixingLookup(results.get(0)));
+    }
+
+    @Override
+    public List<MarketDataLookup> findFixingsInRange(String tenantId, String series,
+                                                       Instant rangeStart, Instant rangeEnd) {
+        // JPQL bulk load — portable across PostgreSQL and H2.
+        // Ordered by intervalStart then versionId DESC; deduplicated in Java (first per interval wins).
+        var entities = emProvider.get()
+            .createQuery("""
+                SELECT e FROM FixingEntity e
+                WHERE e.tenantId = :tenantId
+                  AND e.series = :series
+                  AND e.intervalStart >= :rangeStart
+                  AND e.intervalStart < :rangeEnd
+                ORDER BY e.intervalStart, e.versionId DESC
+                """, FixingEntity.class)
+            .setParameter("tenantId", tenantId)
+            .setParameter("series", series)
+            .setParameter("rangeStart", rangeStart)
+            .setParameter("rangeEnd", rangeEnd)
+            .getResultList();
+
+        // Deduplicate: keep highest version per intervalStart (first in the ordered list)
+        var deduped = new java.util.LinkedHashMap<Instant, MarketDataLookup>();
+        for (FixingEntity e : entities) {
+            deduped.putIfAbsent(e.getIntervalStart(), toFixingLookup(e));
+        }
+        return List.copyOf(deduped.values());
+    }
+
+    @Override
+    public List<MarketDataLookup> findForwardCurvesInRange(String tenantId, String series,
+                                                              YearMonth pillarStart, YearMonth pillarEnd,
+                                                              Instant asOfDate) {
+        // JPQL bulk load — portable across PostgreSQL and H2.
+        var entities = emProvider.get()
+            .createQuery("""
+                SELECT e FROM ForwardCurveEntity e
+                WHERE e.tenantId = :tenantId
+                  AND e.series = :series
+                  AND e.pillar >= :pillarStart
+                  AND e.pillar <= :pillarEnd
+                  AND e.asOfDate <= :asOfDate
+                ORDER BY e.pillar, e.asOfDate DESC, e.versionId DESC
+                """, ForwardCurveEntity.class)
+            .setParameter("tenantId", tenantId)
+            .setParameter("series", series)
+            .setParameter("pillarStart", pillarStart.toString())
+            .setParameter("pillarEnd", pillarEnd.toString())
+            .setParameter("asOfDate", asOfDate)
+            .getResultList();
+
+        // Deduplicate: keep highest version per (pillar, asOfDate)
+        var deduped = new java.util.LinkedHashMap<String, MarketDataLookup>();
+        for (ForwardCurveEntity e : entities) {
+            String key = e.getPillar() + ":" + e.getAsOfDate();
+            deduped.putIfAbsent(key, toCurveLookup(e));
+        }
+        return List.copyOf(deduped.values());
     }
 
     // --- writes ---

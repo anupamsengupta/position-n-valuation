@@ -43,7 +43,7 @@ public abstract class AbstractMaterializationJob<R> {
         this.priceEvaluator = priceEvaluator;
         this.priceExpressionRepo = priceExpressionRepo;
 
-        // Wrap market data port with timing instrumentation (thread-local stats)
+        // Timing instrumentation wraps the injected MarketDataPort (which already has L1 Caffeine cache)
         this.instrumentedMarketData = new InstrumentedMarketDataPort(marketData);
         this.marketData = this.instrumentedMarketData;
     }

@@ -116,17 +116,19 @@ public class SettlementRevaluationService {
 
         cellRepo.saveAll(newCells);
 
-        // 3b. S8: upsert dependency edges at cell interval precision (FR-102–104)
+        // 3b. S8: batch upsert dependency edges at cell interval precision (FR-102–104)
         Instant now = Instant.now();
+        List<DependencyEdge> edges = new ArrayList<>();
         for (SettlementCell cell : newCells) {
             for (String seriesKey : cell.inputVersionSet().keySet()) {
-                dependencyIndex.upsert(new DependencyEdge(
+                edges.add(new DependencyEdge(
                     position.tenantId(), cell.cellId(), "SETTLEMENT",
                     seriesKey, "PRICE_LEAF",
                     cell.intervalStart(), cell.intervalEnd(),
                     cell.activeLeaves(), now, null));
             }
         }
+        dependencyIndex.upsertAll(edges);
 
         // 4. Publish a single SettlementComputed event spanning the full range
         // rather than one per cell, to avoid N rollup materializations + SSE pushes.

@@ -10,10 +10,7 @@ import com.power.posval.domain.model.value.VolumeReference;
 import com.power.posval.domain.port.NumericPrecision;
 import com.power.posval.domain.port.event.DomainEventPublisher;
 import com.power.posval.domain.port.marketdata.MarketDataPort;
-import com.power.posval.domain.port.repository.DependencyEdge;
-import com.power.posval.domain.port.repository.DependencyIndex;
-import com.power.posval.domain.port.repository.PriceExpressionRepository;
-import com.power.posval.domain.port.repository.SettlementCellRepository;
+import com.power.posval.domain.port.repository.*;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -136,17 +133,19 @@ public class SettlementMaterializationJob extends AbstractMaterializationJob<Set
 
         cellRepo.saveAll(cells);
 
-        // S8: upsert dependency edges at cell interval precision (FR-102–104)
+        // S8: batch upsert dependency edges at cell interval precision (FR-102–104)
         Instant now = Instant.now();
+        List<DependencyEdge> edges = new ArrayList<>();
         for (SettlementCell cell : cells) {
             for (String seriesKey : cell.inputVersionSet().keySet()) {
-                dependencyIndex.upsert(new DependencyEdge(
+                edges.add(new DependencyEdge(
                     position.tenantId(), cell.cellId(), "SETTLEMENT",
                     seriesKey, "PRICE_LEAF",
                     cell.intervalStart(), cell.intervalEnd(),
                     cell.activeLeaves(), now, null));
             }
         }
+        dependencyIndex.upsertAll(edges);
 
         // Publish a single SettlementComputed event spanning the full range
         // rather than one per cell, to avoid N rollup materializations + SSE pushes.

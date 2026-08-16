@@ -24,6 +24,9 @@ pv:
   seed:
     enabled: true
   cache:
+    l1:
+      max-size: 2000000
+      ttl-hours: 24
     ttl:
       market-data-stable-hours: 24    # fixings, FX rates, indexes, spreads
       market-data-volatile-hours: 1   # forward curves, vol surfaces

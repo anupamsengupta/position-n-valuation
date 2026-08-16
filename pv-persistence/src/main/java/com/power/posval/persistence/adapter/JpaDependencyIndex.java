@@ -56,6 +56,46 @@ public class JpaDependencyIndex implements DependencyIndex {
     }
 
     @Override
+    public void upsertAll(List<DependencyEdge> edges) {
+        if (edges.isEmpty()) return;
+        EntityManager em = emProvider.get();
+        em.unwrap(org.hibernate.Session.class).doWork(connection -> {
+            try (var ps = connection.prepareStatement("""
+                    INSERT INTO valuation.dependency_edge
+                        (tenant_id, cell_id, cell_type, input_series_key, input_type,
+                         affected_range_start, affected_range_end, active_leaves, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), ?)
+                    ON CONFLICT (tenant_id, cell_id, input_series_key)
+                    DO UPDATE SET
+                        active_leaves = CAST(EXCLUDED.active_leaves AS jsonb),
+                        affected_range_start = EXCLUDED.affected_range_start,
+                        affected_range_end = EXCLUDED.affected_range_end,
+                        pruned_at = NULL
+                    """)) {
+                int count = 0;
+                for (DependencyEdge edge : edges) {
+                    ps.setString(1, edge.tenantId());
+                    ps.setObject(2, edge.cellId());
+                    ps.setString(3, edge.cellType());
+                    ps.setString(4, edge.inputSeriesKey());
+                    ps.setString(5, edge.inputType());
+                    ps.setTimestamp(6, java.sql.Timestamp.from(edge.affectedRangeStart()));
+                    ps.setTimestamp(7, java.sql.Timestamp.from(edge.affectedRangeEnd()));
+                    ps.setString(8, toJsonArray(edge.activeLeaves()));
+                    ps.setTimestamp(9, java.sql.Timestamp.from(edge.createdAt()));
+                    ps.addBatch();
+                    if (++count % 500 == 0) {
+                        ps.executeBatch();
+                    }
+                }
+                if (count % 500 != 0) {
+                    ps.executeBatch();
+                }
+            }
+        });
+    }
+
+    @Override
     @SuppressWarnings("unchecked")
     public List<DependencyEdge> findAffectedCells(String tenantId,
                                                     String inputSeriesKey,

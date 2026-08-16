@@ -24,6 +24,7 @@ import com.power.posval.domain.port.NumericPrecision;
 import com.power.posval.domain.port.cache.MarketDataCache;
 import com.power.posval.domain.port.cache.TradeIntervalCache;
 import com.power.posval.domain.port.cache.VolumeCache;
+import com.power.posval.domain.service.CaffeineMarketDataCache;
 import com.power.posval.domain.port.event.DomainEventPublisher;
 import com.power.posval.domain.port.marketdata.MarketDataPort;
 import com.power.posval.domain.port.repository.*;
@@ -65,17 +66,23 @@ public class ConfigModule extends AbstractModule {
     private final VolumeCache volumeCache;
     private final MarketDataCache marketDataCache;
     private final TenantContext tenantContext;
+    private final long l1MaxSize;
+    private final long l1TtlHours;
 
     public ConfigModule(String pricingStrategy,
                         Provider<EntityManager> emProvider,
                         VolumeCache volumeCache,
                         MarketDataCache marketDataCache,
-                        TenantContext tenantContext) {
+                        TenantContext tenantContext,
+                        long l1MaxSize,
+                        long l1TtlHours) {
         this.pricingStrategy = pricingStrategy;
         this.emProvider = emProvider;
         this.volumeCache = volumeCache;
         this.marketDataCache = marketDataCache;
         this.tenantContext = tenantContext;
+        this.l1MaxSize = l1MaxSize;
+        this.l1TtlHours = l1TtlHours;
     }
 
     @Override
@@ -83,7 +90,9 @@ public class ConfigModule extends AbstractModule {
         // --- Shared-state beans from Spring (must be same instance) ---
         bind(EntityManager.class).toProvider(emProvider);
         bind(VolumeCache.class).toInstance(volumeCache);
-        bind(MarketDataCache.class).toInstance(marketDataCache);
+        // L1 Caffeine cache wraps the L2 cache (Redis/InMemory)
+        MarketDataCache l1Cache = new CaffeineMarketDataCache(marketDataCache, l1MaxSize, l1TtlHours);
+        bind(MarketDataCache.class).toInstance(l1Cache);
         bind(TenantContext.class).toInstance(tenantContext);
 
         // --- Batch infrastructure (stateless, Guice creates via @Inject) ---
