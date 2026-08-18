@@ -105,6 +105,7 @@ public class ConfigModule extends AbstractModule {
         bind(VolumeSeriesRepository.class).to(JpaVolumeSeriesRepository.class).in(Singleton.class);
         bind(SettlementCellRepository.class).to(JpaSettlementCellRepository.class).in(Singleton.class);
         bind(RollupRepository.class).to(JpaRollupRepository.class).in(Singleton.class);
+        bind(TradeLegRollupRepository.class).to(JpaTradeLegRollupRepository.class).in(Singleton.class);
         bind(DependencyIndex.class).to(JpaDependencyIndex.class).in(Singleton.class);
         bind(MarketDataRepository.class).to(JpaMarketDataRepository.class).in(Singleton.class);
         bind(TradeIntervalCache.class).to(JpaTradeIntervalCache.class).in(Singleton.class);

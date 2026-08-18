@@ -8,6 +8,8 @@ import com.power.posval.domain.port.cache.TradeIntervalCache;
 import com.power.posval.domain.port.datasource.DataSourceRouter;
 import com.power.posval.domain.port.repository.*;
 import com.power.posval.persistence.adapter.*;
+import com.power.posval.domain.port.repository.TradeLegRollupRepository;
+import com.power.posval.persistence.adapter.JpaTradeLegRollupRepository;
 import com.power.posval.domain.port.repository.StruckMarkRepository;
 import com.power.posval.persistence.batch.BatchWriter;
 import com.power.posval.persistence.batch.UnitOfWork;
@@ -56,6 +58,11 @@ public class PersistenceModule extends AbstractModule {
 
         bind(TradeIntervalCache.class)
             .to(JpaTradeIntervalCache.class)
+            .in(Singleton.class);
+
+        // Pattern #18: TradeLegRollupRepository — S7 trade-leg materialization (trade-leg-rollup-v1.0)
+        bind(TradeLegRollupRepository.class)
+            .to(JpaTradeLegRollupRepository.class)
             .in(Singleton.class);
 
         // Infrastructure

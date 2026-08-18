@@ -8,10 +8,14 @@ import com.power.posval.domain.model.PositionMonthSummary;
 import com.power.posval.domain.model.value.DeliveryRange;
 import com.power.posval.domain.model.value.SeriesKey;
 import com.power.posval.domain.port.DefaultNumericPrecision;
+import com.power.posval.domain.port.cache.TradeIntervalCache;
+import com.power.posval.domain.port.cache.TradeIntervalRecord;
 import com.power.posval.domain.port.repository.PositionLedgerRepository;
 import com.power.posval.domain.port.repository.RollupCell;
 import com.power.posval.domain.port.repository.RollupRepository;
 import com.power.posval.domain.port.repository.SettlementCellRepository;
+import com.power.posval.domain.port.repository.TradeLegRollupCell;
+import com.power.posval.domain.port.repository.TradeLegRollupRepository;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -154,7 +158,19 @@ class RollupMaterializationServiceTest {
             @Override public void saveAll(String t, List<RollupCell> c) { savedRollups.addAll(c); }
         };
 
-        return new RollupMaterializationService(cellRepo, ledgerRepo, rollupRepo, new DefaultNumericPrecision());
+        TradeLegRollupRepository tradeLegRepo = new TradeLegRollupRepository() {
+            @Override public List<TradeLegRollupCell> findByPortfolio(String t, String p, Instant s, Instant e, TimeGranularity g) { return List.of(); }
+            @Override public void saveAll(String t, List<TradeLegRollupCell> c) {}
+            @Override public void deleteByPositionId(String t, UUID id) {}
+        };
+        TradeIntervalCache tradeIntervalCache = new TradeIntervalCache() {
+            @Override public List<TradeIntervalRecord> getForTradeLeg(String t, String tl, Instant s, Instant e) { return List.of(); }
+            @Override public void rebuild(String t, String tl, Instant s, Instant e) {}
+            @Override public void writeAll(String t, List<TradeIntervalRecord> r) {}
+        };
+
+        return new RollupMaterializationService(cellRepo, ledgerRepo, rollupRepo,
+            tradeLegRepo, tradeIntervalCache, new DefaultNumericPrecision());
     }
 
     private PositionLedgerEntry testPosition() {

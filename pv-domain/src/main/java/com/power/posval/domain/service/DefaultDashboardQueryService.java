@@ -10,6 +10,8 @@ import com.power.posval.domain.port.repository.PositionLedgerRepository;
 import com.power.posval.domain.port.repository.RollupCell;
 import com.power.posval.domain.port.repository.RollupRepository;
 import com.power.posval.domain.port.repository.SettlementCellRepository;
+import com.power.posval.domain.port.repository.TradeLegRollupCell;
+import com.power.posval.domain.port.repository.TradeLegRollupRepository;
 import com.power.posval.domain.port.service.DashboardQueryService;
 import com.power.posval.domain.port.service.ForwardMarkService;
 import com.power.posval.domain.port.service.IntervalMark;
@@ -55,6 +57,7 @@ public class DefaultDashboardQueryService implements DashboardQueryService {
     private static final String DEFAULT_TIMEZONE = "Europe/Berlin";
 
     private final RollupRepository rollupRepo;
+    private final TradeLegRollupRepository tradeLegRollupRepo;
     private final PositionLedgerRepository ledgerRepo;
     private final SettlementCellRepository cellRepo;
     private final ForwardMarkService forwardMarkService;
@@ -64,12 +67,14 @@ public class DefaultDashboardQueryService implements DashboardQueryService {
     /** §6.5, D-13: constructor injection only. */
     @Inject
     public DefaultDashboardQueryService(RollupRepository rollupRepo,
+                                         TradeLegRollupRepository tradeLegRollupRepo,
                                          PositionLedgerRepository ledgerRepo,
                                          SettlementCellRepository cellRepo,
                                          ForwardMarkService forwardMarkService,
                                          TradeIntervalCache tradeIntervalCache,
                                          NumericPrecision np) {
         this.rollupRepo = rollupRepo;
+        this.tradeLegRollupRepo = tradeLegRollupRepo;
         this.ledgerRepo = ledgerRepo;
         this.cellRepo = cellRepo;
         this.forwardMarkService = forwardMarkService;
@@ -335,7 +340,106 @@ public class DefaultDashboardQueryService implements DashboardQueryService {
     // -------------------------------------------------------------------------
 
     /**
-     * Q-2 + Q-9: Hybrid bulk-fetch (§6.5).
+     * Q-10: Reads pre-materialized trade-leg rollup cells (S7) for the portfolio
+     * and computes forward marks on-the-fly only for positions where
+     * {@code hasForwardIntervals = true} (M Redis calls where M &lt;&lt; N).
+     *
+     * <p>Falls back to on-the-fly computation via
+     * {@link #positionContributionsOnTheFly} if the rollup table is empty
+     * (OI-3: transitional fallback during initial rollout before backfill).
+     *
+     * <p>Before (on-the-fly): 3 SQL queries + N Redis calls (576K+ rows fetched).
+     * After (materialized): 1 SQL query (≤200 rows) + M Redis calls (only PARTIAL/FORWARD).
+     *
+     * <p>FR-035: MW = TWA, MWh = sum, price = volume-weighted average.
+     * D-3: forward marks are not materialized; computed at query time.
+     * Pattern #18, S5.3, Appendix B.
+     */
+    @Override
+    public List<PositionContribution> positionContributions(String tenantId,
+                                                             String portfolioId,
+                                                             Instant periodStart,
+                                                             Instant periodEnd) {
+        // Step 1: read materialized trade-leg rollup (Q-10)
+        List<TradeLegRollupCell> rollups = tradeLegRollupRepo.findByPortfolio(
+            tenantId, portfolioId, periodStart, periodEnd, TimeGranularity.MONTHLY);
+
+        if (rollups.isEmpty()) {
+            // OI-3: fallback to on-the-fly if rollup table not yet populated
+            log.warn("Trade-leg rollup table is empty for tenant={} portfolio={} [{}, {}) — " +
+                "falling back to on-the-fly computation. Run backfill to populate the table.",
+                tenantId, portfolioId, periodStart, periodEnd);
+            return positionContributionsOnTheFly(tenantId, portfolioId, periodStart, periodEnd);
+        }
+
+        // Step 2: for positions with forward intervals, compute monthly mark (D-3)
+        List<PositionContribution> result = new ArrayList<>(rollups.size());
+        for (TradeLegRollupCell rollup : rollups) {
+            BigDecimal forwardMw = BigDecimal.ZERO;
+            BigDecimal forwardMwh = BigDecimal.ZERO;
+            BigDecimal forwardMarkValue = BigDecimal.ZERO;
+            BigDecimal unrealizedMtm = BigDecimal.ZERO;
+
+            if (rollup.hasForwardIntervals()) {
+                // Only call ForwardMarkService for PARTIAL/FORWARD positions (ADR-002)
+                try {
+                    MonthlyMark monthlyMark = forwardMarkService.computeMonthlyMark(
+                        tenantId, rollup.positionId(), periodStart, periodEnd);
+                    if (monthlyMark != null) {
+                        forwardMwh = monthlyMark.totalMwh();
+                        forwardMarkValue = monthlyMark.forwardMtm();
+                        unrealizedMtm = monthlyMark.forwardMtm();
+                        // Derive TWA forward MW from totalMwh and period duration
+                        long periodMinutes = java.time.Duration.between(
+                            rollup.periodStart(), rollup.periodEnd()).toMinutes();
+                        if (periodMinutes > 0 && forwardMwh.signum() != 0) {
+                            forwardMw = np.round(
+                                forwardMwh.multiply(BigDecimal.valueOf(60))
+                                    .divide(BigDecimal.valueOf(periodMinutes),
+                                        np.scale(NumericPrecision.Domain.VOLUME),
+                                        np.roundingMode()),
+                                NumericPrecision.Domain.VOLUME);
+                        }
+                    }
+                } catch (Exception ex) {
+                    log.warn("ForwardMarkService.computeMonthlyMark failed for position {}: {}",
+                        rollup.positionId(), ex.getMessage());
+                }
+            }
+
+            result.add(new PositionContribution(
+                rollup.positionId(),
+                rollup.tradeId(),
+                rollup.tradeLegId(),
+                rollup.tradeVersion(),
+                rollup.periodStart(),
+                rollup.periodEnd(),
+                rollup.quantity(),
+                rollup.volumeUnit(),
+                rollup.deliveryPointId(),
+                rollup.deliveryStatus(),
+                rollup.settledMw(),
+                rollup.settledMwh(),
+                rollup.avgPrice(),
+                rollup.settledValue(),
+                rollup.marketValue(),
+                rollup.realizedPnl(),
+                forwardMw,
+                forwardMwh,
+                forwardMarkValue,
+                unrealizedMtm,
+                rollup.currency()
+            ));
+        }
+
+        return result;
+    }
+
+    /**
+     * On-the-fly fallback for {@link #positionContributions} when the rollup table
+     * is empty (OI-3: used during initial rollout before backfill completes).
+     *
+     * <p>Q-2 + Q-9: Hybrid bulk-fetch (§6.5).
      * Step 1: 1 SQL for position metadata.
      * Step 2a: 1 SQL bulk S5a cells (findByPositionIds).
      * Step 2b: 1 SQL bulk S6b records (getForTradeLegIds).
@@ -343,11 +447,10 @@ public class DefaultDashboardQueryService implements DashboardQueryService {
      * Step 3: Merge per position; derive deliveryStatus.
      * FR-035: MW = TWA, MWh = sum, price = volume-weighted average.
      */
-    @Override
-    public List<PositionContribution> positionContributions(String tenantId,
-                                                             String portfolioId,
-                                                             Instant periodStart,
-                                                             Instant periodEnd) {
+    private List<PositionContribution> positionContributionsOnTheFly(String tenantId,
+                                                                       String portfolioId,
+                                                                       Instant periodStart,
+                                                                       Instant periodEnd) {
         // Step 1: position metadata
         List<PositionLedgerEntry> positions =
             ledgerRepo.findByPortfolioAndDeliveryRange(
@@ -361,11 +464,6 @@ public class DefaultDashboardQueryService implements DashboardQueryService {
             .map(PositionLedgerEntry::tradeLegId)
             .distinct()
             .toList();
-
-        // Build lookup: positionId -> entry (first occurrence for that id)
-        Map<UUID, PositionLedgerEntry> positionById = positions.stream()
-            .collect(Collectors.toMap(PositionLedgerEntry::id, e -> e, (a, b) -> a,
-                LinkedHashMap::new));
 
         // Build lookup: tradeLegId -> positionId (first occurrence)
         Map<String, UUID> posIdByTradeLegId = positions.stream()

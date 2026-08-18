@@ -304,6 +304,37 @@ CREATE TABLE IF NOT EXISTS volume_series.rollup_cell (
                 interval_start, granularity, is_peak)
 );
 
+-- volume_series.trade_leg_rollup_cell (S7 — per-position materialized rollup, native SQL only)
+CREATE TABLE IF NOT EXISTS volume_series.trade_leg_rollup_cell (
+    id                      UUID            NOT NULL DEFAULT gen_random_uuid(),
+    tenant_id               VARCHAR(64)     NOT NULL,
+    position_id             UUID            NOT NULL,
+    trade_id                VARCHAR(128)    NOT NULL,
+    trade_leg_id            VARCHAR(128)    NOT NULL,
+    trade_version           INTEGER         NOT NULL,
+    delivery_point_id       VARCHAR(128)    NOT NULL,
+    portfolio_id            VARCHAR(128)    NOT NULL,
+    period_start            TIMESTAMPTZ     NOT NULL,
+    period_end              TIMESTAMPTZ     NOT NULL,
+    granularity             VARCHAR(16)     NOT NULL,
+    settled_mw              NUMERIC(18, 8)  NOT NULL,
+    settled_mwh             NUMERIC(18, 8)  NOT NULL,
+    avg_price               NUMERIC(18, 8)  NOT NULL,
+    settled_value           NUMERIC(18, 4)  NOT NULL,
+    market_value            NUMERIC(18, 4)  NOT NULL,
+    realized_pnl            NUMERIC(18, 4)  NOT NULL,
+    has_forward_intervals   BOOLEAN         NOT NULL,
+    delivery_status         VARCHAR(16)     NOT NULL,
+    quantity                NUMERIC(18, 8)  NOT NULL,
+    volume_unit             VARCHAR(32),
+    currency                VARCHAR(3)      NOT NULL DEFAULT 'EUR',
+    version_hash            VARCHAR(64),
+    refreshed_at            TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    CONSTRAINT pk_trade_leg_rollup_cell PRIMARY KEY (id),
+    CONSTRAINT uq_tlr_position_period_gran
+        UNIQUE (tenant_id, position_id, period_start, granularity)
+);
+
 -- ============================================================
 -- 4. INDEXES — Entity @Index annotations
 -- ============================================================
@@ -411,3 +442,23 @@ CREATE INDEX IF NOT EXISTS idx_de_active_leaves_gin
 -- Rollup cells: range-overlap query for findByRange()
 CREATE INDEX IF NOT EXISTS idx_rc_tenant_dp_port_range
     ON volume_series.rollup_cell (tenant_id, delivery_point_id, portfolio_id, interval_start, interval_end, granularity);
+
+-- Trade-leg rollup: L3 query Q-10 findByPortfolio() — covers WHERE + ORDER BY
+CREATE INDEX IF NOT EXISTS idx_tlr_portfolio_granularity_time
+    ON volume_series.trade_leg_rollup_cell (tenant_id, portfolio_id, granularity, period_start, trade_leg_id);
+
+-- Trade-leg rollup: deleteByPositionId (orphan cleanup on amendment/cancel)
+CREATE INDEX IF NOT EXISTS idx_tlr_position
+    ON volume_series.trade_leg_rollup_cell (tenant_id, position_id);
+
+-- Trade-leg rollup: lookup by trade_id (all rollups for a given trade)
+CREATE INDEX IF NOT EXISTS idx_tlr_trade
+    ON volume_series.trade_leg_rollup_cell (tenant_id, trade_id);
+
+-- Trade-leg rollup: lookup by trade_leg_id (rollups for a specific leg)
+CREATE INDEX IF NOT EXISTS idx_tlr_trade_leg
+    ON volume_series.trade_leg_rollup_cell (tenant_id, trade_leg_id);
+
+-- Trade-leg rollup: delivery point filtering within portfolio queries
+CREATE INDEX IF NOT EXISTS idx_tlr_delivery_point
+    ON volume_series.trade_leg_rollup_cell (tenant_id, delivery_point_id, period_start);

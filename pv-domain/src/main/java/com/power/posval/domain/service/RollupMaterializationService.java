@@ -4,10 +4,13 @@ import com.power.posval.domain.model.PositionLedgerEntry;
 import com.power.posval.domain.model.SettlementCell;
 import com.power.posval.domain.model.TimeGranularity;
 import com.power.posval.domain.port.NumericPrecision;
+import com.power.posval.domain.port.cache.TradeIntervalCache;
 import com.power.posval.domain.port.repository.PositionLedgerRepository;
 import com.power.posval.domain.port.repository.RollupCell;
 import com.power.posval.domain.port.repository.RollupRepository;
 import com.power.posval.domain.port.repository.SettlementCellRepository;
+import com.power.posval.domain.port.repository.TradeLegRollupCell;
+import com.power.posval.domain.port.repository.TradeLegRollupRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,16 +38,22 @@ public class RollupMaterializationService {
     private final SettlementCellRepository cellRepo;
     private final PositionLedgerRepository ledgerRepo;
     private final RollupRepository rollupRepo;
+    private final TradeLegRollupRepository tradeLegRollupRepo;
+    private final TradeIntervalCache tradeIntervalCache;
     private final NumericPrecision np;
 
     @jakarta.inject.Inject
     public RollupMaterializationService(SettlementCellRepository cellRepo,
                                          PositionLedgerRepository ledgerRepo,
                                          RollupRepository rollupRepo,
+                                         TradeLegRollupRepository tradeLegRollupRepo,
+                                         TradeIntervalCache tradeIntervalCache,
                                          NumericPrecision np) {
         this.cellRepo = cellRepo;
         this.ledgerRepo = ledgerRepo;
         this.rollupRepo = rollupRepo;
+        this.tradeLegRollupRepo = tradeLegRollupRepo;
+        this.tradeIntervalCache = tradeIntervalCache;
         this.np = np;
     }
 
@@ -158,6 +167,224 @@ public class RollupMaterializationService {
             materialize(tenantId, wideStart, wideEnd, granularity);
         }
     }
+
+    /**
+     * Granularities materialized per trade-leg position for trade-level L3 views.
+     * OI-1 resolution: both DAILY and MONTHLY for consistency with
+     * {@code PORTFOLIO_GRANULARITIES} and to enable future per-trade daily drill-down.
+     */
+    private static final List<TimeGranularity> TRADE_LEG_GRANULARITIES = List.of(
+        TimeGranularity.DAILY, TimeGranularity.MONTHLY);
+
+    /**
+     * Materialize trade-leg rollup cells for a single position.
+     *
+     * <p>Triggered alongside portfolio rollup from {@code SettlementPublishedConsumer}.
+     * Reads S5a cells for the position, performs an S6b existence check for
+     * {@code hasForwardIntervals}, aggregates per FR-035, and persists via
+     * {@link TradeLegRollupRepository}.
+     *
+     * <p>Superseded positions (knownTo != null) have their rollup rows deleted
+     * instead of recomputed (S8.4, Option A).
+     *
+     * <p>S7, Pattern #18, FR-035, D-3, D-14.
+     *
+     * @param tenantId   tenant identifier (D-14, Pattern #32)
+     * @param positionId position ledger entry ID
+     * @param rangeStart interval range start (from the triggering SettlementComputed event)
+     * @param rangeEnd   interval range end (from the triggering SettlementComputed event)
+     */
+    public void materializeTradeLegRollup(String tenantId, UUID positionId,
+                                           Instant rangeStart, Instant rangeEnd) {
+        // Step 1: load position; handle supersession (S8.4, Option A)
+        var posOpt = ledgerRepo.findById(positionId);
+        if (posOpt.isEmpty()) {
+            log.debug("Position {} not found — skipping trade-leg rollup", positionId);
+            return;
+        }
+        var pos = posOpt.get();
+
+        if (pos.knownTo() != null) {
+            // Position has been superseded — delete its orphaned rollup rows
+            tradeLegRollupRepo.deleteByPositionId(tenantId, positionId);
+            log.debug("Position {} is superseded — deleted trade-leg rollup rows", positionId);
+            return;
+        }
+
+        // Step 2: materialize at each granularity
+        List<TradeLegRollupCell> allCells = new ArrayList<>();
+
+        for (TimeGranularity granularity : TRADE_LEG_GRANULARITIES) {
+            // Widen the range to full period boundaries (same widening as materializeForPosition)
+            TimeGranularity wideningGranularity = switch (granularity) {
+                case DAILY -> TimeGranularity.MONTHLY;
+                case MONTHLY -> TimeGranularity.YEARLY;
+                default -> TimeGranularity.YEARLY;
+            };
+            Instant wideStart = truncateToPeriod(rangeStart, wideningGranularity);
+            Instant wideEnd = advancePeriod(
+                truncateToPeriod(rangeEnd, wideningGranularity), wideningGranularity);
+            if (!wideEnd.isAfter(rangeEnd)) {
+                wideEnd = advancePeriod(wideEnd, wideningGranularity);
+            }
+
+            // Load S5a cells for this position in the widened range
+            List<SettlementCell> cells = cellRepo.findByPosition(
+                tenantId, positionId, wideStart, wideEnd);
+
+            // S6b existence check for hasForwardIntervals (D-3: no forward values materialized)
+            boolean hasForward = !tradeIntervalCache.getForTradeLeg(
+                tenantId, pos.tradeLegId(), wideStart, wideEnd).isEmpty();
+
+            // Group cells by period bucket
+            Map<PeriodKey, List<SettlementCell>> buckets = new LinkedHashMap<>();
+            for (SettlementCell cell : cells) {
+                Instant bucketStart = truncateToPeriod(cell.intervalStart(), granularity);
+                PeriodKey key = new PeriodKey(bucketStart,
+                    advancePeriod(bucketStart, granularity));
+                buckets.computeIfAbsent(key, k -> new ArrayList<>()).add(cell);
+            }
+
+            // If no cells at all, still create one rollup cell for the primary period
+            // covering the event range, so the position appears in L3 results as FORWARD.
+            if (cells.isEmpty() && hasForward) {
+                Instant bucketStart = truncateToPeriod(rangeStart, granularity);
+                Instant bucketEnd = advancePeriod(bucketStart, granularity);
+                allCells.add(buildTradeLegRollupCell(
+                    pos, tenantId, bucketStart, bucketEnd, granularity,
+                    List.of(), hasForward));
+            } else {
+                for (var entry : buckets.entrySet()) {
+                    allCells.add(buildTradeLegRollupCell(
+                        pos, tenantId,
+                        entry.getKey().periodStart(), entry.getKey().periodEnd(),
+                        granularity, entry.getValue(), hasForward));
+                }
+            }
+        }
+
+        tradeLegRollupRepo.saveAll(tenantId, allCells);
+        log.info("Materialized {} trade-leg rollup cells for position {} tenant {}",
+            allCells.size(), positionId, tenantId);
+    }
+
+    /**
+     * Aggregates S5a cells for one position-period bucket and constructs a
+     * {@link TradeLegRollupCell}.
+     *
+     * <p>FR-035: settledMw = TWA, settledMwh = sum, avgPrice = volume-weighted
+     * average (settledValue / settledMwh), settledValue/marketValue/realizedPnl = sum.
+     * S10.4: uses NumericPrecision for all arithmetic.
+     */
+    private TradeLegRollupCell buildTradeLegRollupCell(PositionLedgerEntry pos,
+                                                         String tenantId,
+                                                         Instant periodStart,
+                                                         Instant periodEnd,
+                                                         TimeGranularity granularity,
+                                                         List<SettlementCell> cells,
+                                                         boolean hasForward) {
+        // --- FR-035 aggregation ---
+        // 1. Sum MW per distinct interval for net-position TWA
+        record IntervalKey(Instant start, Instant end) {}
+        Map<IntervalKey, BigDecimal> netMwByInterval = new LinkedHashMap<>();
+        BigDecimal totalMwh = BigDecimal.ZERO;
+        BigDecimal totalAmount = BigDecimal.ZERO;
+        BigDecimal totalMarketAmount = BigDecimal.ZERO;
+        BigDecimal totalPnl = BigDecimal.ZERO;
+        String currency = "EUR";
+
+        for (SettlementCell cell : cells) {
+            IntervalKey ik = new IntervalKey(cell.intervalStart(), cell.intervalEnd());
+            BigDecimal mw = cell.volumeMw() != null ? cell.volumeMw() : BigDecimal.ZERO;
+            netMwByInterval.merge(ik, mw, BigDecimal::add);
+            if (cell.volumeMwh() != null) {
+                totalMwh = totalMwh.add(cell.volumeMwh());
+            }
+            if (cell.amount() != null) {
+                totalAmount = totalAmount.add(cell.amount());
+            }
+            if (cell.marketAmount() != null) {
+                totalMarketAmount = totalMarketAmount.add(cell.marketAmount());
+            }
+            if (cell.pnl() != null) {
+                totalPnl = totalPnl.add(cell.pnl());
+            }
+            currency = cell.currency() != null ? cell.currency() : "EUR";
+        }
+
+        // 2. TWA for MW using INTERMEDIATE precision for accumulation (S10.4)
+        BigDecimal weightedMwSum = BigDecimal.ZERO;
+        long totalMinutes = 0L;
+        for (var entry : netMwByInterval.entrySet()) {
+            long minutes = Duration.between(entry.getKey().start(), entry.getKey().end()).toMinutes();
+            BigDecimal weighted = np.round(
+                entry.getValue().multiply(BigDecimal.valueOf(minutes)),
+                NumericPrecision.Domain.INTERMEDIATE);
+            weightedMwSum = weightedMwSum.add(weighted);
+            totalMinutes += minutes;
+        }
+
+        BigDecimal settledMw = totalMinutes > 0
+            ? np.round(weightedMwSum.divide(BigDecimal.valueOf(totalMinutes),
+                np.scale(NumericPrecision.Domain.VOLUME), np.roundingMode()),
+                NumericPrecision.Domain.VOLUME)
+            : BigDecimal.ZERO;
+
+        BigDecimal settledMwh = np.round(totalMwh, NumericPrecision.Domain.ENERGY);
+        BigDecimal settledValue = np.round(totalAmount, NumericPrecision.Domain.MONETARY);
+        BigDecimal marketValue = np.round(totalMarketAmount, NumericPrecision.Domain.MONETARY);
+        BigDecimal realizedPnl = np.round(totalPnl, NumericPrecision.Domain.MONETARY);
+
+        // Volume-weighted average price = settledValue / settledMwh (PRICE domain)
+        BigDecimal avgPrice = settledMwh.signum() != 0
+            ? np.round(settledValue.divide(settledMwh,
+                np.scale(NumericPrecision.Domain.PRICE), np.roundingMode()),
+                NumericPrecision.Domain.PRICE)
+            : BigDecimal.ZERO;
+
+        // Derive deliveryStatus from settled cell presence and S6b existence
+        boolean hasSettled = !cells.isEmpty();
+        String deliveryStatus;
+        if (hasSettled && hasForward) {
+            deliveryStatus = "PARTIAL";
+        } else if (hasSettled) {
+            deliveryStatus = "SETTLED";
+        } else {
+            deliveryStatus = "FORWARD";
+        }
+
+        // Version hash for staleness detection
+        String versionHash = Integer.toHexString(
+            Objects.hash(cells.size(), totalMwh, totalAmount));
+
+        return new TradeLegRollupCell(
+            pos.id(),
+            tenantId,
+            pos.tradeId(),
+            pos.tradeLegId(),
+            pos.tradeVersion(),
+            pos.deliveryPointId() != null ? pos.deliveryPointId() : "DEFAULT",
+            pos.portfolioId() != null ? pos.portfolioId() : "DEFAULT",
+            periodStart,
+            periodEnd,
+            granularity,
+            settledMw,
+            settledMwh,
+            avgPrice,
+            settledValue,
+            marketValue,
+            realizedPnl,
+            hasForward,
+            deliveryStatus,
+            pos.quantity() != null ? pos.quantity() : BigDecimal.ZERO,
+            pos.volumeUnit() != null ? pos.volumeUnit().name() : null,
+            currency,
+            versionHash,
+            Instant.now()
+        );
+    }
+
+    private record PeriodKey(Instant periodStart, Instant periodEnd) {}
 
     private RollupCell aggregate(RollupKey key, List<SettlementCell> cells,
                                   TimeGranularity granularity) {
