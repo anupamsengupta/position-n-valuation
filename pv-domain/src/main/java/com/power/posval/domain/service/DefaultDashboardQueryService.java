@@ -648,15 +648,24 @@ public class DefaultDashboardQueryService implements DashboardQueryService {
                 BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO);
         }
 
-        // TWA for MW — group by interval first (net position per interval)
+        // Single pass: accumulate MW by interval (for TWA) and sum MWh/amounts
         record IntervalKey(Instant start, Instant end) {}
         Map<IntervalKey, BigDecimal> netMwByInterval = new LinkedHashMap<>();
+        BigDecimal netMwh = BigDecimal.ZERO;
+        BigDecimal totalAmount = BigDecimal.ZERO;
+        BigDecimal totalMarket = BigDecimal.ZERO;
+        BigDecimal totalPnl = BigDecimal.ZERO;
         for (SettlementCell cell : cells) {
             IntervalKey ik = new IntervalKey(cell.intervalStart(), cell.intervalEnd());
             BigDecimal mw = cell.volumeMw() != null ? cell.volumeMw() : BigDecimal.ZERO;
             netMwByInterval.merge(ik, mw, BigDecimal::add);
+            if (cell.volumeMwh() != null) netMwh = netMwh.add(cell.volumeMwh());
+            if (cell.amount() != null) totalAmount = totalAmount.add(cell.amount());
+            if (cell.marketAmount() != null) totalMarket = totalMarket.add(cell.marketAmount());
+            if (cell.pnl() != null) totalPnl = totalPnl.add(cell.pnl());
         }
 
+        // TWA for MW from per-interval net positions
         BigDecimal mwWeightedSum = BigDecimal.ZERO;
         long totalMinutes = 0L;
         for (var e : netMwByInterval.entrySet()) {
@@ -671,17 +680,6 @@ public class DefaultDashboardQueryService implements DashboardQueryService {
                 np.scale(NumericPrecision.Domain.VOLUME), np.roundingMode()),
                 NumericPrecision.Domain.VOLUME)
             : BigDecimal.ZERO;
-
-        BigDecimal netMwh = BigDecimal.ZERO;
-        BigDecimal totalAmount = BigDecimal.ZERO;
-        BigDecimal totalMarket = BigDecimal.ZERO;
-        BigDecimal totalPnl = BigDecimal.ZERO;
-        for (SettlementCell cell : cells) {
-            if (cell.volumeMwh() != null) netMwh = netMwh.add(cell.volumeMwh());
-            if (cell.amount() != null) totalAmount = totalAmount.add(cell.amount());
-            if (cell.marketAmount() != null) totalMarket = totalMarket.add(cell.marketAmount());
-            if (cell.pnl() != null) totalPnl = totalPnl.add(cell.pnl());
-        }
 
         netMwh = np.round(netMwh, NumericPrecision.Domain.ENERGY);
         totalAmount = np.round(totalAmount, NumericPrecision.Domain.MONETARY);
