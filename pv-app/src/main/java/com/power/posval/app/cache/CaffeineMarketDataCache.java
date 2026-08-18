@@ -1,4 +1,4 @@
-package com.power.posval.domain.service;
+package com.power.posval.app.cache;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
@@ -18,6 +18,9 @@ import java.util.concurrent.TimeUnit;
  * Process-scoped Caffeine L1 cache decorator for {@link MarketDataCache}.
  * Sits in front of the L2 cache (Redis/InMemory) and provides sub-microsecond
  * lookups for hot market data entries.
+ *
+ * <p>Simulator-scope (D-14): this in-memory cache lives in pv-app only.
+ * A production host would bring its own L1 strategy if needed.
  *
  * <p>Key format mirrors {@code InMemoryMarketDataCache}:
  * {@code "{tenantId}|{type}|{series}|{lookupKey}"}.

@@ -30,13 +30,6 @@
             <scope>provided</scope>
         </dependency>
 
-        <!-- Caffeine L1 cache — pure Java, zero transitive deps (D-13 compliant) -->
-        <dependency>
-            <groupId>com.github.ben-manes.caffeine</groupId>
-            <artifactId>caffeine</artifactId>
-            <version>3.1.8</version>
-        </dependency>
-
         <!-- Logging (API only — runtime binding provided by pv-app) -->
         <dependency>
             <groupId>org.slf4j</groupId>

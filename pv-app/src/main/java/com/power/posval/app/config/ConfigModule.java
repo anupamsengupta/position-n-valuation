@@ -24,7 +24,7 @@ import com.power.posval.domain.port.NumericPrecision;
 import com.power.posval.domain.port.cache.MarketDataCache;
 import com.power.posval.domain.port.cache.TradeIntervalCache;
 import com.power.posval.domain.port.cache.VolumeCache;
-import com.power.posval.domain.service.CaffeineMarketDataCache;
+import com.power.posval.app.cache.CaffeineMarketDataCache;
 import com.power.posval.domain.port.event.DomainEventPublisher;
 import com.power.posval.domain.port.marketdata.MarketDataPort;
 import com.power.posval.domain.port.repository.*;
