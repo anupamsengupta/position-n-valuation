@@ -4,7 +4,7 @@
  * staleness/refetch configuration from spec S6.1.
  */
 
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueries } from '@tanstack/react-query';
 import { dashboardKeys } from '@/api/queryKeys';
 import {
   fetchPortfolioSummary,
@@ -170,5 +170,26 @@ export function useForwardDayDetail(
     staleTime: 15_000,
     gcTime: 300_000,
     refetchInterval: 60_000, // Fallback; primary updates via SSE invalidation
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Card Strip: All Portfolio Summaries (parallel)
+// ---------------------------------------------------------------------------
+
+export function useAllPortfolioSummaries(
+  portfolioIds: string[],
+  rangeStart: string,
+  rangeEnd: string,
+) {
+  const tenantId = useTenantStore((s) => s.tenantId);
+  return useQueries({
+    queries: portfolioIds.map((id) => ({
+      queryKey: dashboardKeys.cardSummary(tenantId, id, rangeStart, rangeEnd),
+      queryFn: () => fetchPortfolioSummary(tenantId, id, rangeStart, rangeEnd, 'MONTHLY'),
+      enabled: !!tenantId && !!rangeStart && !!rangeEnd,
+      staleTime: 30_000,
+      gcTime: 300_000,
+    })),
   });
 }

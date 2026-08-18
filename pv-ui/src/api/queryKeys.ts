@@ -64,4 +64,7 @@ export const dashboardKeys = {
     positionId?: string,
   ) =>
     [...dashboardKeys.all, 'forward-day', tenantId, portfolioId, dayStart, dayEnd, granularity, positionId ?? 'all'] as const,
+
+  cardSummary: (tenantId: string, portfolioId: string, rangeStart: string, rangeEnd: string) =>
+    [...dashboardKeys.all, 'card-summary', tenantId, portfolioId, rangeStart, rangeEnd] as const,
 } as const;

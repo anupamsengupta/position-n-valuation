@@ -1,11 +1,7 @@
-import { useCallback, useEffect } from 'react';
-import { useNavigate } from '@tanstack/react-router';
 import { cn } from '@/lib/cn';
 import { GranularityToggle } from '@/components/primitives/GranularityToggle';
 import { useDashboardFilters, type QuickFilterPreset } from '@/hooks/useDashboardFilters';
 import { getMonthRange, getYearRange, getYearSpanRange } from '@/lib/dateUtils';
-import { KNOWN_PORTFOLIOS } from '@/api/portfolios';
-import { usePortfolios } from '@/hooks/usePortfolios';
 import type { TimeGranularity } from '@/schemas/types';
 
 // ---------------------------------------------------------------------------
@@ -34,39 +30,6 @@ function NavButton({
     >
       {direction === 'prev' ? '\u2039' : '\u203A'}
     </button>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// PortfolioSelect
-// ---------------------------------------------------------------------------
-
-function PortfolioSelect({
-  value,
-  onChange,
-  portfolios,
-}: {
-  value: string;
-  onChange: (id: string) => void;
-  portfolios: string[];
-}) {
-  return (
-    <select
-      aria-label="Portfolio"
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className={cn(
-        'px-2 py-1 text-xs font-medium rounded border border-border-default',
-        'bg-bg-primary text-text-primary',
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-interactive-focus',
-      )}
-    >
-      {portfolios.map((id) => (
-        <option key={id} value={id}>
-          {id}
-        </option>
-      ))}
-    </select>
   );
 }
 
@@ -223,43 +186,14 @@ function QuickFilters({ onApply }: { onApply: (preset: QuickFilterPreset) => voi
 // DashboardFilterBar — main export
 // ---------------------------------------------------------------------------
 
-const FALLBACK_PORTFOLIO_IDS = KNOWN_PORTFOLIOS.map((p) => p.portfolioId);
-
 export function DashboardFilterBar() {
   const {
-    portfolioId,
     granularity,
     dateRange,
-    setPortfolioId,
     setGranularity,
     setDateRange,
     applyQuickFilter,
   } = useDashboardFilters();
-
-  const navigate = useNavigate();
-  const { data: serverPortfolios } = usePortfolios();
-
-  // Use server data when available, fall back to static list
-  const portfolios = serverPortfolios && serverPortfolios.length > 0
-    ? serverPortfolios
-    : FALLBACK_PORTFOLIO_IDS;
-
-  // If current selection isn't in the list, auto-select first
-  useEffect(() => {
-    if (portfolios.length > 0 && !portfolios.includes(portfolioId)) {
-      const first = portfolios[0]!;
-      setPortfolioId(first);
-      navigate({ to: '/dashboard/$portfolioId', params: { portfolioId: first } });
-    }
-  }, [portfolios, portfolioId, setPortfolioId, navigate]);
-
-  const handlePortfolioChange = useCallback(
-    (id: string) => {
-      setPortfolioId(id);
-      navigate({ to: '/dashboard/$portfolioId', params: { portfolioId: id } });
-    },
-    [setPortfolioId, navigate],
-  );
 
   return (
     <div
@@ -270,10 +204,6 @@ export function DashboardFilterBar() {
         'rounded border border-border-default bg-bg-secondary',
       )}
     >
-      <PortfolioSelect value={portfolioId} onChange={handlePortfolioChange} portfolios={portfolios} />
-
-      <div className="w-px h-5 bg-border-default" aria-hidden="true" />
-
       <GranularityToggle value={granularity} onChange={setGranularity} />
 
       <div className="w-px h-5 bg-border-default" aria-hidden="true" />

@@ -61,7 +61,7 @@ export function PortfolioSummarySection({
             key={summary.currency}
             role="listitem"
             aria-label={`${summary.currency} summary`}
-            className="min-w-[340px] flex-1 rounded-lg border border-border-default bg-bg-secondary p-4 space-y-3"
+            className="w-[70%] min-w-[340px] max-w-[600px] rounded-lg border border-border-default bg-bg-secondary p-4 space-y-3"
           >
             <div className="flex items-center justify-between">
               <span className="text-sm font-semibold text-text-primary">

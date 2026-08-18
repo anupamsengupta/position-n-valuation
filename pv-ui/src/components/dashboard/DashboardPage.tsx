@@ -1,5 +1,7 @@
 import { useCallback, useMemo, useEffect, useRef } from 'react';
+import { useNavigate } from '@tanstack/react-router';
 import { PortfolioSummarySection } from './PortfolioSummarySection';
+import { PortfolioCardStrip } from './PortfolioCardStrip';
 import { RollupGrid, type RollupGridRow } from './RollupGrid';
 import { PositionLedger } from './PositionLedger';
 import { IntervalDetailPanel } from './IntervalDetailPanel';
@@ -27,6 +29,7 @@ export interface DashboardPageProps {
  * Route: /dashboard/:portfolioId
  */
 export function DashboardPage({ portfolioId }: DashboardPageProps) {
+  const navigate = useNavigate();
   const connectionStatus = useRealtimeInvalidation();
   const timezone = useUserPreferences((s) => s.timezone);
   const {
@@ -157,6 +160,14 @@ export function DashboardPage({ portfolioId }: DashboardPageProps) {
     setSelectedPosition(null);
   }, [setSelectedPosition]);
 
+  const handlePortfolioSelect = useCallback(
+    (id: string) => {
+      setPortfolioId(id);
+      navigate({ to: '/dashboard/$portfolioId', params: { portfolioId: id } });
+    },
+    [setPortfolioId, navigate],
+  );
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -188,6 +199,16 @@ export function DashboardPage({ portfolioId }: DashboardPageProps) {
 
       {/* Filter toolbar */}
       <DashboardFilterBar />
+
+      {/* Portfolio card strip */}
+      <ErrorBoundary>
+        <PortfolioCardStrip
+          selectedPortfolioId={portfolioId}
+          rangeStart={rangeStartUtc}
+          rangeEnd={rangeEndUtc}
+          onSelect={handlePortfolioSelect}
+        />
+      </ErrorBoundary>
 
       {/* L1: Portfolio Summary Cards */}
       <ErrorBoundary>
