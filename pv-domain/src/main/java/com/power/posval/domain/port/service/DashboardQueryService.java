@@ -127,6 +127,37 @@ public interface DashboardQueryService {
                                           Instant monthEnd,
                                           String timezone);
 
+    /**
+     * Q-4 multi-position: Daily aggregates netted across a subset of positions
+     * within a month. S15.2.1, FR-035.
+     *
+     * <p>Semantics:
+     * <ul>
+     *   <li>{@code positionIds} null or empty → portfolio-scoped (delegates to
+     *       existing single-position-null path)</li>
+     *   <li>{@code positionIds} with 1 entry → equivalent to single-position path</li>
+     *   <li>{@code positionIds} with N entries → netted aggregate across the subset</li>
+     * </ul>
+     *
+     * <p>D-13: No Spring types. D-14: tenantId always propagated. FR-035 (TWA for
+     * MW, sum for MWh, volume-weighted avg for price) applies identically to single
+     * and multi-position aggregation.
+     *
+     * @param tenantId    tenant identifier (D-14, Pattern #32)
+     * @param portfolioId portfolio identifier
+     * @param positionIds position subset; null or empty means portfolio-scoped
+     * @param monthStart  UTC start of month
+     * @param monthEnd    UTC end of month (exclusive)
+     * @param timezone    CET/CEST timezone for day boundary computation
+     * @return daily aggregates ordered by dayStart
+     */
+    List<DailyAggregate> dailyAggregates(String tenantId,
+                                          String portfolioId,
+                                          List<UUID> positionIds,
+                                          Instant monthStart,
+                                          Instant monthEnd,
+                                          String timezone);
+
     // --- L4: Settled Day View ---
 
     /**
@@ -151,6 +182,38 @@ public interface DashboardQueryService {
                                            Instant dayEnd,
                                            TimeGranularity subDailyGranularity);
 
+    /**
+     * Q-3 + Q-5 multi-position + contiguous day range: Settlement cells netted
+     * across a subset of positions over an arbitrary UTC range [dayStart, dayEnd).
+     * S15.2.1, S15.3.2, FR-035.
+     *
+     * <p>The range may span multiple days (contiguous day range). The existing
+     * overlap query (intervalStart &lt; dayEnd AND intervalEnd &gt; dayStart) naturally
+     * covers multi-day ranges — no special handling required.
+     *
+     * <p>Semantics:
+     * <ul>
+     *   <li>{@code positionIds} null or empty → portfolio-scoped</li>
+     *   <li>{@code positionIds} with N entries → netted aggregate across the subset</li>
+     * </ul>
+     *
+     * <p>D-13: No Spring types. D-14: tenantId always propagated.
+     *
+     * @param tenantId            tenant identifier (D-14, Pattern #32)
+     * @param portfolioId         portfolio identifier
+     * @param positionIds         position subset; null or empty means portfolio-scoped
+     * @param dayStart            UTC range start (inclusive)
+     * @param dayEnd              UTC range end (exclusive); may be multiple days ahead of dayStart
+     * @param subDailyGranularity MIN_15 | MIN_30 | HOURLY
+     * @return settlement cells (raw or aggregated) ordered by intervalStart
+     */
+    List<SettlementCell> settledDayDetail(String tenantId,
+                                           String portfolioId,
+                                           List<UUID> positionIds,
+                                           Instant dayStart,
+                                           Instant dayEnd,
+                                           TimeGranularity subDailyGranularity);
+
     // --- L4: Forward Day View ---
 
     /**
@@ -171,6 +234,34 @@ public interface DashboardQueryService {
     List<ForwardIntervalDetail> forwardDayDetail(String tenantId,
                                                   String portfolioId,
                                                   UUID positionId,
+                                                  Instant dayStart,
+                                                  Instant dayEnd,
+                                                  TimeGranularity subDailyGranularity);
+
+    /**
+     * Q-6 + Q-7 multi-position + contiguous day range: Forward interval detail
+     * netted across a subset of positions over an arbitrary UTC range [dayStart, dayEnd).
+     * S15.2.1, S15.3.2, FR-035.
+     *
+     * <p>The range may span multiple days. Semantics:
+     * <ul>
+     *   <li>{@code positionIds} null or empty → portfolio-scoped</li>
+     *   <li>{@code positionIds} with N entries → netted aggregate across the subset</li>
+     * </ul>
+     *
+     * <p>D-13: No Spring types. D-14: tenantId always propagated.
+     *
+     * @param tenantId            tenant identifier (D-14, Pattern #32)
+     * @param portfolioId         portfolio identifier
+     * @param positionIds         position subset; null or empty means portfolio-scoped
+     * @param dayStart            UTC range start (inclusive)
+     * @param dayEnd              UTC range end (exclusive); may be multiple days ahead of dayStart
+     * @param subDailyGranularity MIN_15 | MIN_30 | HOURLY
+     * @return forward interval details ordered by intervalStart
+     */
+    List<ForwardIntervalDetail> forwardDayDetail(String tenantId,
+                                                  String portfolioId,
+                                                  List<UUID> positionIds,
                                                   Instant dayStart,
                                                   Instant dayEnd,
                                                   TimeGranularity subDailyGranularity);

@@ -12,13 +12,17 @@ import com.power.posval.domain.model.TimeGranularity;
 import com.power.posval.domain.port.service.DashboardQueryService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
+import java.time.Duration;
 import java.time.Instant;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 
@@ -166,7 +170,12 @@ public class DashboardController {
     /**
      * GET /api/dashboard/portfolios/{portfolioId}/daily
      * Returns daily aggregates for a position or portfolio within a month.
-     * positionId is optional (null = portfolio-scoped).
+     *
+     * <p>S15.2.2: {@code positionId} is a repeatable parameter. Spring MVC binds
+     * multiple {@code ?positionId=uuid-1&positionId=uuid-2} values to a
+     * {@code List<String>}. Backward compatibility: a single
+     * {@code ?positionId=uuid} still works (list of one). No {@code positionId}
+     * → portfolio-scoped. D-13: no Spring types in the service layer.
      */
     @GetMapping("/portfolios/{portfolioId}/daily")
     public ApiResponse<List<DailyAggregateDto>> dailyAggregates(
@@ -174,14 +183,15 @@ public class DashboardController {
             @RequestParam String tenantId,
             @RequestParam String monthStart,
             @RequestParam String monthEnd,
-            @RequestParam(required = false) String positionId,
+            @RequestParam(required = false) List<String> positionId,
             @RequestParam(defaultValue = "Europe/Berlin") String timezone) {
-        log.info("GET /api/dashboard/portfolios/{}/daily tenantId={} month=[{} .. {}] positionId={} tz={}",
+        log.info("GET /api/dashboard/portfolios/{}/daily tenantId={} month=[{} .. {}] positionIds={} tz={}",
             portfolioId, tenantId, monthStart, monthEnd, positionId, timezone);
-        UUID posId = positionId != null ? UUID.fromString(positionId) : null;
+
+        List<UUID> posIds = parsePositionIds(positionId);
         var aggregates = txExecutor.execute(
             () -> dashboardQueryService.dailyAggregates(
-                tenantId, portfolioId, posId,
+                tenantId, portfolioId, posIds,
                 Instant.parse(monthStart), Instant.parse(monthEnd),
                 timezone));
         log.info("GET /api/dashboard/portfolios/{}/daily => {} days", portfolioId, aggregates.size());
@@ -194,24 +204,33 @@ public class DashboardController {
 
     /**
      * GET /api/dashboard/settlements/day
-     * Returns settlement cells for a day, optionally aggregated to MIN_30 or HOURLY.
-     * Reuses existing {@link SettlementCellDto} shape for all granularities.
+     * Returns settlement cells for a day or contiguous day range, optionally
+     * aggregated to MIN_30 or HOURLY. Reuses existing {@link SettlementCellDto}.
+     *
+     * <p>S15.2.2: {@code positionId} is repeatable. {@code dayEnd} may be multiple
+     * days after {@code dayStart} for contiguous day ranges. Ranges exceeding 31 days
+     * are rejected with HTTP 400 per S15.2.3. D-13: service layer remains Spring-free.
      */
     @GetMapping("/settlements/day")
     public ApiResponse<List<SettlementCellDto>> settledDayDetail(
             @RequestParam String tenantId,
             @RequestParam String portfolioId,
-            @RequestParam(required = false) String positionId,
+            @RequestParam(required = false) List<String> positionId,
             @RequestParam String dayStart,
             @RequestParam String dayEnd,
             @RequestParam(defaultValue = "MIN_15") String granularity) {
-        log.info("GET /api/dashboard/settlements/day tenantId={} portfolio={} positionId={} day=[{} .. {}] granularity={}",
+        log.info("GET /api/dashboard/settlements/day tenantId={} portfolio={} positionIds={} day=[{} .. {}] granularity={}",
             tenantId, portfolioId, positionId, dayStart, dayEnd, granularity);
-        UUID posId = positionId != null ? UUID.fromString(positionId) : null;
+
+        Instant start = Instant.parse(dayStart);
+        Instant end = Instant.parse(dayEnd);
+        validateDayRange(start, end);
+
+        List<UUID> posIds = parsePositionIds(positionId);
         var cells = txExecutor.execute(
             () -> dashboardQueryService.settledDayDetail(
-                tenantId, portfolioId, posId,
-                Instant.parse(dayStart), Instant.parse(dayEnd),
+                tenantId, portfolioId, posIds,
+                start, end,
                 TimeGranularity.valueOf(granularity)));
         log.info("GET /api/dashboard/settlements/day => {} cells", cells.size());
         return ApiResponse.ok(cells.stream().map(SettlementCellDto::from).toList());
@@ -223,26 +242,63 @@ public class DashboardController {
 
     /**
      * GET /api/dashboard/forward/day
-     * Returns forward interval details for a day, optionally aggregated.
-     * markType = "INDICATIVE" per S11 EMIR labeling requirement.
+     * Returns forward interval details for a day or contiguous day range,
+     * optionally aggregated. markType = "INDICATIVE" per S11 EMIR labeling.
+     *
+     * <p>S15.2.2: {@code positionId} is repeatable. {@code dayEnd} may be multiple
+     * days after {@code dayStart} for contiguous day ranges. Ranges exceeding 31 days
+     * are rejected with HTTP 400 per S15.2.3. D-13: service layer remains Spring-free.
      */
     @GetMapping("/forward/day")
     public ApiResponse<List<ForwardIntervalDetailDto>> forwardDayDetail(
             @RequestParam String tenantId,
             @RequestParam String portfolioId,
-            @RequestParam(required = false) String positionId,
+            @RequestParam(required = false) List<String> positionId,
             @RequestParam String dayStart,
             @RequestParam String dayEnd,
             @RequestParam(defaultValue = "MIN_15") String granularity) {
-        log.info("GET /api/dashboard/forward/day tenantId={} portfolio={} positionId={} day=[{} .. {}] granularity={}",
+        log.info("GET /api/dashboard/forward/day tenantId={} portfolio={} positionIds={} day=[{} .. {}] granularity={}",
             tenantId, portfolioId, positionId, dayStart, dayEnd, granularity);
-        UUID posId = positionId != null ? UUID.fromString(positionId) : null;
+
+        Instant start = Instant.parse(dayStart);
+        Instant end = Instant.parse(dayEnd);
+        validateDayRange(start, end);
+
+        List<UUID> posIds = parsePositionIds(positionId);
         var details = txExecutor.execute(
             () -> dashboardQueryService.forwardDayDetail(
-                tenantId, portfolioId, posId,
-                Instant.parse(dayStart), Instant.parse(dayEnd),
+                tenantId, portfolioId, posIds,
+                start, end,
                 TimeGranularity.valueOf(granularity)));
         log.info("GET /api/dashboard/forward/day => {} intervals", details.size());
         return ApiResponse.ok(details.stream().map(ForwardIntervalDetailDto::from).toList());
+    }
+
+    // -------------------------------------------------------------------------
+    // Private helpers
+    // -------------------------------------------------------------------------
+
+    /**
+     * Converts a list of raw positionId strings (from repeatable query param) to
+     * a list of UUIDs. Null or empty input → empty list, which the service layer
+     * interprets as portfolio-scoped. S15.2.2.
+     */
+    private List<UUID> parsePositionIds(List<String> positionId) {
+        if (positionId == null || positionId.isEmpty()) {
+            return Collections.emptyList();
+        }
+        return positionId.stream().map(UUID::fromString).toList();
+    }
+
+    /**
+     * Rejects day ranges exceeding 31 days with HTTP 400 per S15.2.3.
+     * Protects against unbounded queries on {@code /settlements/day} and
+     * {@code /forward/day}.
+     */
+    private void validateDayRange(Instant start, Instant end) {
+        if (Duration.between(start, end).toDays() > 31) {
+            throw new ResponseStatusException(
+                HttpStatus.BAD_REQUEST, "Day range must not exceed 31 days");
+        }
     }
 }

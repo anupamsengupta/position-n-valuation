@@ -38,7 +38,8 @@
       "Bash(npx vitest:*)",
       "Bash(npx vite:*)",
       "Bash(pnpm typecheck:*)",
-      "Bash(pnpm test:*)"
+      "Bash(pnpm test:*)",
+      "Bash(npm run:*)"
     ]
   }
 }

@@ -84,8 +84,8 @@ class PositionContributionsFromRollupTest {
         UUID settledPosId = UUID.fromString("aaaaaaaa-0000-0000-0000-000000000001");
         UUID forwardPosId = UUID.fromString("bbbbbbbb-0000-0000-0000-000000000002");
 
-        var settledRollup = testRollupCell(settledPosId, "SETTLED", false);
-        var forwardRollup = testRollupCell(forwardPosId, "PARTIAL", true);
+        var settledRollup = testRollupCell(settledPosId, "LEG-SETTLED", "SETTLED", false);
+        var forwardRollup = testRollupCell(forwardPosId, "LEG-PARTIAL", "PARTIAL", true);
 
         var forwardMark = new MonthlyMark(
             forwardPosId, PERIOD_START, PERIOD_END,
@@ -165,9 +165,9 @@ class PositionContributionsFromRollupTest {
         UUID p2 = UUID.fromString("bbbbbbbb-0000-0000-0000-000000000002");
         UUID p3 = UUID.fromString("cccccccc-0000-0000-0000-000000000003");
 
-        var settled  = testRollupCell(p1, "SETTLED", false);
-        var partial  = testRollupCell(p2, "PARTIAL", true);
-        var forward  = testRollupCell(p3, "FORWARD", true);
+        var settled  = testRollupCell(p1, "LEG-A", "SETTLED", false);
+        var partial  = testRollupCell(p2, "LEG-B", "PARTIAL", true);
+        var forward  = testRollupCell(p3, "LEG-C", "FORWARD", true);
 
         var fmsCallCount = new int[]{0};
         var fms = mockForwardMarkService(null, null, fmsCallCount);
@@ -190,6 +190,57 @@ class PositionContributionsFromRollupTest {
         // ForwardMarkService called for PARTIAL and FORWARD only
         assertEquals(2, fmsCallCount[0],
             "ForwardMarkService should be called for PARTIAL and FORWARD positions");
+    }
+
+    // -------------------------------------------------------------------------
+    // Test case 5: stale rollup — resolves current position ID from ledger
+    // -------------------------------------------------------------------------
+
+    @Test
+    void positionContributions_staleRollupPositionId_resolvesCurrentFromLedger() {
+        // Rollup table has the OLD superseded position UUID (b1dcc703...).
+        // Ledger now has a NEW current entry (f80eefff...) for the same trade leg.
+        // positionContributions() must cross-check against the live ledger and
+        // return the current (knownTo IS NULL) position ID, not the stale one.
+        UUID stalePosId = UUID.fromString("b1dcc703-9e46-4a2c-989a-405c93a5815f");
+        UUID currentPosId = UUID.fromString("f80eefff-4c4e-4a55-a083-d91307cca888");
+
+        // Rollup was materialized with the old, now-superseded positionId
+        var rollup = testRollupCell(stalePosId, "SETTLED", false);
+
+        // Ledger returns the current (non-superseded) position for this trade leg
+        var currentPosition = new PositionLedgerEntry.Builder()
+            .id(currentPosId)
+            .tenantId(TENANT)
+            .tradeId("T-7788")
+            .tradeLegId("LEG-1")
+            .tradeVersion(2)
+            .deliveryRange(new DeliveryRange(
+                java.time.YearMonth.of(2025, 3), java.time.YearMonth.of(2025, 3),
+                ZoneId.of("Europe/Berlin")))
+            .deliveryStart(PERIOD_START)
+            .deliveryEnd(PERIOD_END)
+            .quantity(new BigDecimal("100"))
+            .volumeUnit(VolumeUnit.MW_CAPACITY)
+            .priceExpressionId(UUID.randomUUID())
+            .validFrom(PERIOD_START)
+            .knownFrom(Instant.parse("2025-03-15T10:00:00Z"))
+            .portfolioId(PORTFOLIO)
+            .build();
+
+        var fmsCallCount = new int[]{0};
+        var fms = mockForwardMarkService(null, null, fmsCallCount);
+
+        var service = buildServiceWithLedger(List.of(rollup), fms, List.of(currentPosition));
+
+        List<PositionContribution> result = service.positionContributions(
+            TENANT, PORTFOLIO, PERIOD_START, PERIOD_END);
+
+        assertEquals(1, result.size());
+        assertEquals(currentPosId, result.get(0).positionId(),
+            "Should resolve to the current (non-superseded) position ID from the live ledger");
+        assertEquals("T-7788", result.get(0).tradeId());
+        assertEquals("LEG-1", result.get(0).tradeLegId());
     }
 
     // =========================================================================
@@ -245,13 +296,69 @@ class PositionContributionsFromRollupTest {
             new DefaultNumericPrecision());
     }
 
+    /**
+     * Like {@link #buildService} but with a ledger that returns the given current positions
+     * from {@code findByPortfolioAndDeliveryRange} (bitemporal cross-check).
+     */
+    private DefaultDashboardQueryService buildServiceWithLedger(List<TradeLegRollupCell> rollups,
+                                                                  ForwardMarkService fms,
+                                                                  List<PositionLedgerEntry> currentPositions) {
+        TradeLegRollupRepository tradeLegRepo = new TradeLegRollupRepository() {
+            @Override
+            public List<TradeLegRollupCell> findByPortfolio(String t, String p, Instant s, Instant e, TimeGranularity g) {
+                return new ArrayList<>(rollups);
+            }
+            @Override public void saveAll(String t, List<TradeLegRollupCell> c) {}
+            @Override public void deleteByPositionId(String t, UUID id) {}
+        };
+
+        RollupRepository rollupRepo = new RollupRepository() {
+            @Override public List<RollupCell> findByRange(String t, String d, String p, Instant s, Instant e, TimeGranularity g) { return List.of(); }
+            @Override public void refresh(String t, Instant s, Instant e, TimeGranularity g) {}
+        };
+
+        PositionLedgerRepository ledgerRepo = new PositionLedgerRepository() {
+            @Override public void save(PositionLedgerEntry e) {}
+            @Override public Optional<PositionLedgerEntry> findById(UUID id) { return Optional.empty(); }
+            @Override public List<PositionLedgerEntry> findCurrentByTradeLeg(String t, String tr, String tl) { return List.of(); }
+            @Override public List<PositionLedgerEntry> findAsOf(String t, String tr, String tl, Instant b, Instant k) { return List.of(); }
+            @Override public List<PositionLedgerEntry> findAllByDeliveryRange(String t, Instant s, Instant e) { return List.of(); }
+            @Override public List<PositionLedgerEntry> findByDeliveryRangeForTradeLeg(String t, String tr, String tl, Instant s, Instant e) { return List.of(); }
+            @Override public void supersede(List<PositionLedgerEntry> old, List<PositionLedgerEntry> nw) {}
+            @Override public List<PositionLedgerEntry> findByPortfolioAndDeliveryRange(String t, String p, Instant s, Instant e) {
+                return new ArrayList<>(currentPositions);
+            }
+        };
+
+        SettlementCellRepository cellRepo = new SettlementCellRepository() {
+            @Override public void save(SettlementCell c) {}
+            @Override public List<SettlementCell> findByPosition(String t, UUID p, Instant s, Instant e) { return List.of(); }
+        };
+
+        TradeIntervalCache tic = new TradeIntervalCache() {
+            @Override public List<TradeIntervalRecord> getForTradeLeg(String t, String tl, Instant s, Instant e) { return List.of(); }
+            @Override public void rebuild(String t, String tl, Instant s, Instant e) {}
+            @Override public void writeAll(String t, List<TradeIntervalRecord> r) {}
+        };
+
+        return new DefaultDashboardQueryService(
+            rollupRepo, tradeLegRepo, ledgerRepo, cellRepo, fms, tic,
+            new DefaultNumericPrecision());
+    }
+
     private TradeLegRollupCell testRollupCell(UUID positionId, String deliveryStatus,
+                                               boolean hasForwardIntervals) {
+        return testRollupCell(positionId, "LEG-1", deliveryStatus, hasForwardIntervals);
+    }
+
+    private TradeLegRollupCell testRollupCell(UUID positionId, String tradeLegId,
+                                               String deliveryStatus,
                                                boolean hasForwardIntervals) {
         return new TradeLegRollupCell(
             positionId,
             TENANT,
             "T-7788",
-            "LEG-1",
+            tradeLegId,
             1,
             "DP-EPEX-DE",
             PORTFOLIO,

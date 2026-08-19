@@ -31,9 +31,11 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -372,30 +374,103 @@ public class DefaultDashboardQueryService implements DashboardQueryService {
             return positionContributionsOnTheFly(tenantId, portfolioId, periodStart, periodEnd);
         }
 
-        // Step 2: for positions with forward intervals, compute monthly mark (D-3)
-        List<PositionContribution> result = new ArrayList<>(rollups.size());
-        for (TradeLegRollupCell rollup : rollups) {
+        // Step 1b: resolve current position IDs from live ledger (bitemporal correctness).
+        // The rollup table may carry stale position_id values if the supersession cleanup
+        // event was not yet processed. One bulk query fetches all current (knownTo IS NULL)
+        // positions for this portfolio+range, keyed by tradeLegId.
+        List<PositionLedgerEntry> currentPositions =
+            ledgerRepo.findByPortfolioAndDeliveryRange(tenantId, portfolioId, periodStart, periodEnd);
+        Map<String, PositionLedgerEntry> currentPosByTradeLeg = currentPositions.stream()
+            .collect(Collectors.toMap(PositionLedgerEntry::tradeLegId,
+                p -> p, (a, b) -> a));  // first occurrence per tradeLegId
+
+        // Step 2: group rollup rows by tradeLegId — the query may return multiple
+        // rows per trade leg (one per delivery-month position per MONTHLY bucket,
+        // D-1: grain = trade-leg × delivery-month). L3 expects one row per trade leg
+        // across the entire requested range.  Aggregate: TWA for MW, sum for MWh/amounts.
+        Map<String, List<TradeLegRollupCell>> byTradeLeg = rollups.stream()
+            .collect(Collectors.groupingBy(TradeLegRollupCell::tradeLegId, LinkedHashMap::new, Collectors.toList()));
+
+        List<PositionContribution> result = new ArrayList<>(byTradeLeg.size());
+        for (var entry : byTradeLeg.entrySet()) {
+            List<TradeLegRollupCell> cells = entry.getValue();
+            TradeLegRollupCell first = cells.get(0);
+
+            // Aggregate settled values across monthly buckets (FR-035)
+            BigDecimal totalSettledMwh = BigDecimal.ZERO;
+            BigDecimal totalSettledValue = BigDecimal.ZERO;
+            BigDecimal totalMarketValue = BigDecimal.ZERO;
+            BigDecimal totalRealizedPnl = BigDecimal.ZERO;
+            long totalMinutes = 0;
+            BigDecimal weightedMw = BigDecimal.ZERO; // MW × minutes for TWA
+            boolean hasForward = false;
+            boolean hasSettled = false;
+            boolean hasPartial = false;
+
+            for (TradeLegRollupCell cell : cells) {
+                totalSettledMwh = totalSettledMwh.add(cell.settledMwh());
+                totalSettledValue = totalSettledValue.add(cell.settledValue());
+                totalMarketValue = totalMarketValue.add(cell.marketValue());
+                totalRealizedPnl = totalRealizedPnl.add(cell.realizedPnl());
+
+                long bucketMinutes = Duration.between(cell.periodStart(), cell.periodEnd()).toMinutes();
+                totalMinutes += bucketMinutes;
+                weightedMw = weightedMw.add(cell.settledMw().multiply(BigDecimal.valueOf(bucketMinutes)));
+
+                if (cell.hasForwardIntervals()) hasForward = true;
+                if ("SETTLED".equals(cell.deliveryStatus())) hasSettled = true;
+                else if ("PARTIAL".equals(cell.deliveryStatus())) hasPartial = true;
+            }
+            // Derive overall status: PARTIAL if buckets mix settled and forward,
+            // otherwise use the unanimous bucket status.
+            String deliveryStatus;
+            if (hasPartial || (hasSettled && hasForward)) {
+                deliveryStatus = "PARTIAL";
+            } else if (hasForward) {
+                deliveryStatus = "FORWARD";
+            } else {
+                deliveryStatus = "SETTLED";
+            }
+
+            // TWA MW = sum(MW × minutes) / totalMinutes
+            BigDecimal settledMw = totalMinutes > 0
+                ? np.round(weightedMw.divide(BigDecimal.valueOf(totalMinutes),
+                    np.scale(NumericPrecision.Domain.VOLUME), np.roundingMode()),
+                    NumericPrecision.Domain.VOLUME)
+                : BigDecimal.ZERO;
+
+            // Volume-weighted average price = settledValue / settledMwh
+            BigDecimal avgPrice = totalSettledMwh.signum() != 0
+                ? np.round(totalSettledValue.divide(totalSettledMwh,
+                    np.scale(NumericPrecision.Domain.PRICE), np.roundingMode()),
+                    NumericPrecision.Domain.PRICE)
+                : BigDecimal.ZERO;
+
+            // Resolve the current (knownTo IS NULL) position ID for this trade leg.
+            // The rollup may carry a stale position_id if supersession cleanup hasn't run.
+            PositionLedgerEntry currentPos = currentPosByTradeLeg.get(first.tradeLegId());
+            UUID resolvedPositionId = currentPos != null ? currentPos.id() : first.positionId();
+
+            // Step 3: forward mark (D-3, ADR-002) — only for positions with forward intervals
             BigDecimal forwardMw = BigDecimal.ZERO;
             BigDecimal forwardMwh = BigDecimal.ZERO;
             BigDecimal forwardMarkValue = BigDecimal.ZERO;
             BigDecimal unrealizedMtm = BigDecimal.ZERO;
 
-            if (rollup.hasForwardIntervals()) {
-                // Only call ForwardMarkService for PARTIAL/FORWARD positions (ADR-002)
+            if (hasForward) {
                 try {
                     MonthlyMark monthlyMark = forwardMarkService.computeMonthlyMark(
-                        tenantId, rollup.positionId(), periodStart, periodEnd);
+                        tenantId, resolvedPositionId, periodStart, periodEnd);
                     if (monthlyMark != null) {
                         forwardMwh = monthlyMark.totalMwh();
                         forwardMarkValue = monthlyMark.forwardMtm();
                         unrealizedMtm = monthlyMark.forwardMtm();
-                        // Derive TWA forward MW from totalMwh and period duration
-                        long periodMinutes = java.time.Duration.between(
-                            rollup.periodStart(), rollup.periodEnd()).toMinutes();
-                        if (periodMinutes > 0 && forwardMwh.signum() != 0) {
+                        // Derive TWA forward MW from totalMwh and full period duration
+                        long fwdMinutes = Duration.between(periodStart, periodEnd).toMinutes();
+                        if (fwdMinutes > 0 && forwardMwh.signum() != 0) {
                             forwardMw = np.round(
                                 forwardMwh.multiply(BigDecimal.valueOf(60))
-                                    .divide(BigDecimal.valueOf(periodMinutes),
+                                    .divide(BigDecimal.valueOf(fwdMinutes),
                                         np.scale(NumericPrecision.Domain.VOLUME),
                                         np.roundingMode()),
                                 NumericPrecision.Domain.VOLUME);
@@ -403,32 +478,33 @@ public class DefaultDashboardQueryService implements DashboardQueryService {
                     }
                 } catch (Exception ex) {
                     log.warn("ForwardMarkService.computeMonthlyMark failed for position {}: {}",
-                        rollup.positionId(), ex.getMessage());
+                        resolvedPositionId, ex.getMessage());
                 }
             }
 
+            // Use the full requested range as delivery window, not individual bucket boundaries
             result.add(new PositionContribution(
-                rollup.positionId(),
-                rollup.tradeId(),
-                rollup.tradeLegId(),
-                rollup.tradeVersion(),
-                rollup.periodStart(),
-                rollup.periodEnd(),
-                rollup.quantity(),
-                rollup.volumeUnit(),
-                rollup.deliveryPointId(),
-                rollup.deliveryStatus(),
-                rollup.settledMw(),
-                rollup.settledMwh(),
-                rollup.avgPrice(),
-                rollup.settledValue(),
-                rollup.marketValue(),
-                rollup.realizedPnl(),
+                resolvedPositionId,
+                first.tradeId(),
+                first.tradeLegId(),
+                first.tradeVersion(),
+                periodStart,
+                periodEnd,
+                first.quantity(),
+                first.volumeUnit(),
+                first.deliveryPointId(),
+                deliveryStatus,
+                settledMw,
+                totalSettledMwh,
+                avgPrice,
+                np.round(totalSettledValue, NumericPrecision.Domain.MONETARY),
+                np.round(totalMarketValue, NumericPrecision.Domain.MONETARY),
+                np.round(totalRealizedPnl, NumericPrecision.Domain.MONETARY),
                 forwardMw,
                 forwardMwh,
                 forwardMarkValue,
                 unrealizedMtm,
-                rollup.currency()
+                first.currency()
             ));
         }
 
@@ -489,30 +565,41 @@ public class DefaultDashboardQueryService implements DashboardQueryService {
             }
         }
 
-        // Step 3: per-position merge + aggregation
-        List<PositionContribution> result = new ArrayList<>(positions.size());
-        for (PositionLedgerEntry pos : positions) {
-            UUID posId = pos.id();
-            List<SettlementCell> cells =
-                cellsByPosition.getOrDefault(posId, List.of());
-            List<TradeIntervalRecord> intervals =
-                intervalsByPosition.getOrDefault(posId, List.of());
+        // Step 3: group by tradeLegId — D-1 means one position per delivery-month,
+        // but L3 expects one row per trade leg across the entire requested range.
+        // Aggregate S5a cells and S6b intervals across all positions for the same leg.
+        Map<String, List<PositionLedgerEntry>> byTradeLeg = positions.stream()
+            .collect(Collectors.groupingBy(PositionLedgerEntry::tradeLegId,
+                LinkedHashMap::new, Collectors.toList()));
+
+        List<PositionContribution> result = new ArrayList<>(byTradeLeg.size());
+        for (var legEntry : byTradeLeg.entrySet()) {
+            List<PositionLedgerEntry> legPositions = legEntry.getValue();
+            PositionLedgerEntry firstPos = legPositions.get(0);
+
+            // Collect all S5a cells and S6b intervals across positions for this leg
+            List<SettlementCell> allLegCells = new ArrayList<>();
+            List<TradeIntervalRecord> allLegIntervals = new ArrayList<>();
+            for (PositionLedgerEntry pos : legPositions) {
+                allLegCells.addAll(cellsByPosition.getOrDefault(pos.id(), List.of()));
+                allLegIntervals.addAll(intervalsByPosition.getOrDefault(pos.id(), List.of()));
+            }
 
             // Aggregate settled (S5a): FR-035
-            SettledAggregation settled = aggregateSettled(cells);
+            SettledAggregation settled = aggregateSettled(allLegCells);
 
             // Aggregate forward volumes (S6b)
-            ForwardVolumeAggregation fwd = aggregateForwardVolume(intervals);
+            ForwardVolumeAggregation fwd = aggregateForwardVolume(allLegIntervals);
 
-            // Step 2c: ForwardMarkService for forward MtM (ADR-002)
+            // ForwardMarkService for forward MtM (ADR-002) — use first position ID
             MonthlyMark monthlyMark = null;
-            if (!intervals.isEmpty()) {
+            if (!allLegIntervals.isEmpty()) {
                 try {
                     monthlyMark = forwardMarkService.computeMonthlyMark(
-                        tenantId, posId, periodStart, periodEnd);
+                        tenantId, firstPos.id(), periodStart, periodEnd);
                 } catch (Exception ex) {
                     log.warn("ForwardMarkService.computeMonthlyMark failed for position {}: {}",
-                        posId, ex.getMessage());
+                        firstPos.id(), ex.getMessage());
                 }
             }
 
@@ -520,8 +607,8 @@ public class DefaultDashboardQueryService implements DashboardQueryService {
                 : BigDecimal.ZERO;
 
             // Derive deliveryStatus
-            boolean hasSettled = !cells.isEmpty();
-            boolean hasForward = !intervals.isEmpty();
+            boolean hasSettled = !allLegCells.isEmpty();
+            boolean hasForward = !allLegIntervals.isEmpty();
             String deliveryStatus;
             if (hasSettled && hasForward) {
                 deliveryStatus = "PARTIAL";
@@ -531,20 +618,25 @@ public class DefaultDashboardQueryService implements DashboardQueryService {
                 deliveryStatus = "FORWARD";
             }
 
-            String currency = cells.isEmpty()
+            String currency = allLegCells.isEmpty()
                 ? (monthlyMark != null ? monthlyMark.currency() : "EUR")
-                : cells.get(0).currency();
+                : allLegCells.get(0).currency();
+
+            // Sum quantities across positions for the same leg
+            BigDecimal totalQuantity = legPositions.stream()
+                .map(PositionLedgerEntry::quantity)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
 
             result.add(new PositionContribution(
-                posId,
-                pos.tradeId(),
-                pos.tradeLegId(),
-                pos.tradeVersion(),
-                pos.deliveryStart(),
-                pos.deliveryEnd(),
-                pos.quantity(),
-                pos.volumeUnit() != null ? pos.volumeUnit().name() : null,
-                pos.deliveryPointId(),
+                firstPos.id(),
+                firstPos.tradeId(),
+                firstPos.tradeLegId(),
+                firstPos.tradeVersion(),
+                periodStart,
+                periodEnd,
+                totalQuantity,
+                firstPos.volumeUnit() != null ? firstPos.volumeUnit().name() : null,
+                firstPos.deliveryPointId(),
                 deliveryStatus,
                 settled.netMw,
                 settled.netMwh,
@@ -633,6 +725,75 @@ public class DefaultDashboardQueryService implements DashboardQueryService {
         return result;
     }
 
+    /**
+     * Q-4 multi-position: Daily aggregates netted across a position subset.
+     * S15.3.1, FR-035. D-13: no Spring types. D-14: tenantId propagated.
+     *
+     * <p>If {@code positionIds} is null or empty, delegates to the portfolio-scoped
+     * single-position-null path (same as calling
+     * {@link #dailyAggregates(String, String, UUID, Instant, Instant, String)} with
+     * {@code positionId = null}). Otherwise, the same portfolio-scoped logic runs but
+     * position fetches are filtered to the requested subset.
+     */
+    @Override
+    public List<DailyAggregate> dailyAggregates(String tenantId,
+                                                  String portfolioId,
+                                                  List<UUID> positionIds,
+                                                  Instant monthStart,
+                                                  Instant monthEnd,
+                                                  String timezone) {
+        if (positionIds == null || positionIds.isEmpty()) {
+            // Delegate to portfolio-scoped path (positionId = null)
+            return dailyAggregates(tenantId, portfolioId, (UUID) null, monthStart, monthEnd, timezone);
+        }
+
+        // Filter: same portfolio-scoped logic but restrict which positions are used
+        // in the fallback path. The rollup-cell path (S7) is portfolio-keyed and
+        // cannot easily be filtered to a subset without a new query; we therefore
+        // go directly to the on-the-fly fallback, filtered to the requested subset.
+        // For a single-position subset, we route through the existing single-position path.
+        if (positionIds.size() == 1) {
+            return dailyAggregates(tenantId, portfolioId, positionIds.get(0), monthStart, monthEnd, timezone);
+        }
+
+        // Multi-position: compute on-the-fly for the subset, same day enumeration as
+        // the single-position path. We replicate the day-enumeration loop but feed it
+        // filtered positions instead of a single positionId.
+        String tz = timezone != null ? timezone : DEFAULT_TIMEZONE;
+        ZoneId zone = ZoneId.of(tz);
+        Instant now = Instant.now();
+
+        // Collect the subset as a Set for O(1) containment checks
+        Set<UUID> positionIdSet = new HashSet<>(positionIds);
+
+        List<DailyAggregate> result = new ArrayList<>();
+        LocalDate localDay = monthStart.atZone(zone).toLocalDate();
+        LocalDate localEnd = monthEnd.atZone(zone).toLocalDate();
+
+        while (!localDay.isAfter(localEnd.minusDays(1))) {
+            ZonedDateTime dayStartLocal = localDay.atStartOfDay(zone);
+            Instant dayStartUtc = dayStartLocal.toInstant();
+            Instant dayEndUtc = dayStartLocal.plusDays(1).toInstant();
+
+            if (dayStartUtc.isBefore(monthEnd) && dayEndUtc.isAfter(monthStart)) {
+                long durationMinutes = java.time.Duration.between(dayStartUtc, dayEndUtc).toMinutes();
+                int intervalCount = (int) (durationMinutes / 15);
+
+                boolean isSettled = dayEndUtc.compareTo(now) <= 0;
+                String dayStatus = dayEndUtc.compareTo(now) <= 0 ? "SETTLED"
+                    : (dayStartUtc.compareTo(now) <= 0 ? "TODAY" : "FORWARD");
+
+                result.add(buildDailyAggregateFallbackForSubset(
+                    tenantId, portfolioId, positionIdSet,
+                    dayStartUtc, dayEndUtc, dayStatus, intervalCount, isSettled, now));
+            }
+
+            localDay = localDay.plusDays(1);
+        }
+
+        return result;
+    }
+
     // -------------------------------------------------------------------------
     // L4: Settled Day View
     // -------------------------------------------------------------------------
@@ -670,6 +831,44 @@ public class DefaultDashboardQueryService implements DashboardQueryService {
         return aggregateCellsToGranularity(cells, subDailyGranularity);
     }
 
+    /**
+     * Q-3 + Q-5 multi-position + contiguous day range. S15.3.2, FR-035.
+     * D-13: no Spring types. D-14: tenantId propagated.
+     *
+     * <p>The {@code [dayStart, dayEnd)} range may span multiple days. The existing
+     * overlap query naturally handles this — no special bucketing is needed.
+     * {@code positionIds} null or empty → portfolio-scoped.
+     */
+    @Override
+    public List<SettlementCell> settledDayDetail(String tenantId,
+                                                   String portfolioId,
+                                                   List<UUID> positionIds,
+                                                   Instant dayStart,
+                                                   Instant dayEnd,
+                                                   TimeGranularity subDailyGranularity) {
+        List<SettlementCell> cells;
+
+        if (positionIds == null || positionIds.isEmpty()) {
+            // Portfolio-scoped: find all positions then bulk-fetch
+            List<PositionLedgerEntry> positions =
+                ledgerRepo.findByPortfolioAndDeliveryRange(tenantId, portfolioId, dayStart, dayEnd);
+            if (positions.isEmpty()) {
+                return List.of();
+            }
+            List<UUID> ids = positions.stream().map(PositionLedgerEntry::id).toList();
+            cells = cellRepo.findByPositionIds(tenantId, ids, dayStart, dayEnd);
+        } else {
+            // Subset of positions: bulk-fetch directly by the given IDs
+            cells = cellRepo.findByPositionIds(tenantId, positionIds, dayStart, dayEnd);
+        }
+
+        if (subDailyGranularity == TimeGranularity.MIN_15 || cells.isEmpty()) {
+            return cells;
+        }
+
+        return aggregateCellsToGranularity(cells, subDailyGranularity);
+    }
+
     // -------------------------------------------------------------------------
     // L4: Forward Day View
     // -------------------------------------------------------------------------
@@ -703,6 +902,73 @@ public class DefaultDashboardQueryService implements DashboardQueryService {
             try {
                 marks = forwardMarkService.computeIntervalMarks(
                     tenantId, pos.id(), dayStart, dayEnd);
+            } catch (Exception ex) {
+                log.warn("ForwardMarkService.computeIntervalMarks failed for position {}: {}",
+                    pos.id(), ex.getMessage());
+                continue;
+            }
+
+            for (IntervalMark mark : marks) {
+                result.add(new ForwardIntervalDetail(
+                    mark.intervalStart(),
+                    mark.intervalEnd(),
+                    mark.positionId(),
+                    mark.tradeLegId(),
+                    mark.resolvedQty(),
+                    mark.resolvedEnergy(),
+                    pos.multiplier(),
+                    pos.volumeSeriesKey() != null ? pos.volumeSeriesKey().value() : null,
+                    mark.evaluatedPrice(),
+                    mark.markValue(),
+                    mark.curveId(),
+                    mark.curveVersion(),
+                    mark.currency()
+                ));
+            }
+        }
+
+        if (subDailyGranularity == TimeGranularity.MIN_15 || result.isEmpty()) {
+            return result;
+        }
+
+        return aggregateForwardIntervalsToGranularity(result, subDailyGranularity);
+    }
+
+    /**
+     * Q-6 + Q-7 multi-position + contiguous day range. S15.3.2, FR-035.
+     * D-13: no Spring types. D-14: tenantId propagated.
+     *
+     * <p>The {@code [dayStart, dayEnd)} range may span multiple days. Semantics:
+     * {@code positionIds} null or empty → portfolio-scoped.
+     */
+    @Override
+    public List<ForwardIntervalDetail> forwardDayDetail(String tenantId,
+                                                         String portfolioId,
+                                                         List<UUID> positionIds,
+                                                         Instant dayStart,
+                                                         Instant dayEnd,
+                                                         TimeGranularity subDailyGranularity) {
+        List<PositionLedgerEntry> positions;
+
+        if (positionIds == null || positionIds.isEmpty()) {
+            // Portfolio-scoped
+            positions = ledgerRepo.findByPortfolioAndDeliveryRange(tenantId, portfolioId, dayStart, dayEnd);
+            if (positions.isEmpty()) return List.of();
+        } else {
+            // Resolve each requested positionId via ledgerRepo.findById
+            positions = new ArrayList<>();
+            for (UUID id : positionIds) {
+                ledgerRepo.findById(id).ifPresent(positions::add);
+            }
+            if (positions.isEmpty()) return List.of();
+        }
+
+        List<ForwardIntervalDetail> result = new ArrayList<>();
+
+        for (PositionLedgerEntry pos : positions) {
+            List<IntervalMark> marks;
+            try {
+                marks = forwardMarkService.computeIntervalMarks(tenantId, pos.id(), dayStart, dayEnd);
             } catch (Exception ex) {
                 log.warn("ForwardMarkService.computeIntervalMarks failed for position {}: {}",
                     pos.id(), ex.getMessage());
@@ -928,6 +1194,81 @@ public class DefaultDashboardQueryService implements DashboardQueryService {
                     np.round(totalFwdMtm, NumericPrecision.Domain.MONETARY),
                     currency);
             }
+        }
+    }
+
+    /**
+     * On-the-fly daily aggregate fallback for a filtered position subset (S15.3.1).
+     * Mirrors {@link #buildDailyAggregateFallback} but accepts a set of positionIds
+     * rather than a single nullable positionId. FR-035.
+     */
+    private DailyAggregate buildDailyAggregateFallbackForSubset(String tenantId,
+                                                                  String portfolioId,
+                                                                  Set<UUID> positionIdSet,
+                                                                  Instant dayStart, Instant dayEnd,
+                                                                  String dayStatus, int intervalCount,
+                                                                  boolean isSettled, Instant now) {
+        if (isSettled) {
+            // Fetch all positions in range, filter to subset, then bulk-fetch S5a cells
+            List<PositionLedgerEntry> dayPositions =
+                ledgerRepo.findByPortfolioAndDeliveryRange(tenantId, portfolioId, dayStart, dayEnd);
+            List<UUID> ids = dayPositions.stream()
+                .map(PositionLedgerEntry::id)
+                .filter(positionIdSet::contains)
+                .toList();
+            if (ids.isEmpty()) {
+                return emptyDailyAggregate(dayStart, dayEnd, dayStatus, intervalCount, true);
+            }
+            List<SettlementCell> dayCells = cellRepo.findByPositionIds(tenantId, ids, dayStart, dayEnd);
+            if (dayCells.isEmpty()) {
+                return emptyDailyAggregate(dayStart, dayEnd, dayStatus, intervalCount, true);
+            }
+            SettledAggregation agg = aggregateSettled(dayCells);
+            String currency = dayCells.get(0).currency();
+            return new DailyAggregate(
+                dayStart, dayEnd, dayStatus, intervalCount,
+                agg.netMw, agg.netMwh, agg.avgPrice,
+                agg.settledValue, agg.marketValue, agg.pnl,
+                null, null, null, null, currency);
+        } else {
+            // Forward day: sum ForwardMarkService results over the subset
+            List<PositionLedgerEntry> fwdPositions =
+                ledgerRepo.findByPortfolioAndDeliveryRange(tenantId, portfolioId, dayStart, dayEnd);
+            List<PositionLedgerEntry> subsetPositions = fwdPositions.stream()
+                .filter(p -> positionIdSet.contains(p.id()))
+                .toList();
+            if (subsetPositions.isEmpty()) {
+                return emptyDailyAggregate(dayStart, dayEnd, dayStatus, intervalCount, false);
+            }
+            BigDecimal totalFwdMtm = BigDecimal.ZERO;
+            BigDecimal totalFwdMwh = BigDecimal.ZERO;
+            String currency = "EUR";
+            for (PositionLedgerEntry pos : subsetPositions) {
+                try {
+                    MonthlyMark m = forwardMarkService.computeMonthlyMark(
+                        tenantId, pos.id(), dayStart, dayEnd);
+                    if (m != null) {
+                        totalFwdMtm = totalFwdMtm.add(m.forwardMtm());
+                        totalFwdMwh = totalFwdMwh.add(m.totalMwh());
+                        currency = m.currency();
+                    }
+                } catch (Exception ex) {
+                    log.warn("ForwardMarkService failed for pos {} on day {}: {}",
+                        pos.id(), dayStart, ex.getMessage());
+                }
+            }
+            BigDecimal curvePrice = totalFwdMwh.signum() != 0
+                ? np.round(totalFwdMtm.divide(totalFwdMwh,
+                    np.scale(NumericPrecision.Domain.PRICE), np.roundingMode()),
+                    NumericPrecision.Domain.PRICE)
+                : BigDecimal.ZERO;
+            return new DailyAggregate(
+                dayStart, dayEnd, dayStatus, intervalCount,
+                null, null, null, null, null, null,
+                null, np.round(totalFwdMwh, NumericPrecision.Domain.ENERGY),
+                curvePrice,
+                np.round(totalFwdMtm, NumericPrecision.Domain.MONETARY),
+                currency);
         }
     }
 
