@@ -95,12 +95,12 @@ export async function fetchDailyAggregates(
   portfolioId: string,
   monthStart: string,
   monthEnd: string,
-  positionId?: string,
+  positionIds: string[] = [],
   timezone = 'Europe/Berlin',
 ): Promise<DailyAggregateDto[]> {
   const raw = await apiFetch<unknown>(
     `/api/dashboard/portfolios/${encodeURIComponent(portfolioId)}/daily`,
-    { monthStart, monthEnd, positionId, timezone },
+    { monthStart, monthEnd, positionId: positionIds.length > 0 ? positionIds : undefined, timezone },
     tenantId,
   );
   const schema = apiResponseSchema(z.array(dailyAggregateSchema));
@@ -118,11 +118,11 @@ export async function fetchSettledDayDetail(
   dayStart: string,
   dayEnd: string,
   granularity: SubDailyGranularity,
-  positionId?: string,
+  positionIds: string[] = [],
 ): Promise<SettlementCellDto[]> {
   const raw = await apiFetch<unknown>(
     '/api/dashboard/settlements/day',
-    { portfolioId, dayStart, dayEnd, granularity, positionId },
+    { portfolioId, dayStart, dayEnd, granularity, positionId: positionIds.length > 0 ? positionIds : undefined },
     tenantId,
   );
   const schema = apiResponseSchema(z.array(settlementCellSchema));
@@ -140,11 +140,11 @@ export async function fetchForwardDayDetail(
   dayStart: string,
   dayEnd: string,
   granularity: SubDailyGranularity,
-  positionId?: string,
+  positionIds: string[] = [],
 ): Promise<ForwardIntervalDetailDto[]> {
   const raw = await apiFetch<unknown>(
     '/api/dashboard/forward/day',
-    { portfolioId, dayStart, dayEnd, granularity, positionId },
+    { portfolioId, dayStart, dayEnd, granularity, positionId: positionIds.length > 0 ? positionIds : undefined },
     tenantId,
   );
   const schema = apiResponseSchema(z.array(forwardIntervalDetailSchema));

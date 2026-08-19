@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useRef, useEffect } from 'react';
+import { useMemo, useCallback, useRef, useEffect, useState } from 'react';
 import {
   createColumnHelper,
   flexRender,
@@ -9,6 +9,8 @@ import { NumericCell } from '@/components/primitives/NumericCell';
 import { StatusBadge } from '@/components/primitives/StatusBadge';
 import { SkeletonTable } from '@/components/primitives/SkeletonRow';
 import { EmptyState } from '@/components/primitives/EmptyState';
+import { SelectAllCheckbox } from '@/components/primitives/SelectAllCheckbox';
+import { RowCheckbox } from '@/components/primitives/RowCheckbox';
 import { cn } from '@/lib/cn';
 import type { PositionContributionDto } from '@/schemas/api';
 import type { PeriodStatus } from '@/schemas/types';
@@ -18,125 +20,204 @@ export interface PositionLedgerProps {
   isLoading: boolean;
   periodLabel: string;
   periodStatus: PeriodStatus;
-  selectedPositionId: string | null;
-  onRowClick: (row: PositionContributionDto) => void;
+  selectedPositionIds: ReadonlySet<string>;
+  activatedPositionId: string | null;
+  onRowActivate: (row: PositionContributionDto) => void;
+  onSelectionChange: (selectedIds: ReadonlySet<string>) => void;
   onClose: () => void;
 }
 
 const columnHelper = createColumnHelper<PositionContributionDto>();
 
-const columns = [
-  columnHelper.accessor('tradeId', {
-    header: 'Trade ID',
-    cell: (info) => <span className="font-medium text-text-primary">{info.getValue()}</span>,
-    size: 100,
-  }),
-  columnHelper.accessor('tradeLegId', {
-    header: 'Leg',
-    cell: (info) => <span className="text-text-secondary">{info.getValue()}</span>,
-    size: 60,
-  }),
-  columnHelper.accessor('deliveryStart', {
-    header: 'Start',
-    cell: (info) => {
-      const val = info.getValue();
-      if (!val) return <span className="text-text-muted">—</span>;
-      return <span className="text-text-secondary">{new Date(val).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</span>;
-    },
-    size: 100,
-  }),
-  columnHelper.accessor('deliveryEnd', {
-    header: 'End',
-    cell: (info) => {
-      const val = info.getValue();
-      if (!val) return <span className="text-text-muted">—</span>;
-      return <span className="text-text-secondary">{new Date(val).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</span>;
-    },
-    size: 100,
-  }),
-  columnHelper.accessor('deliveryStatus', {
-    header: 'Status',
-    cell: (info) => {
-      const val = info.getValue();
-      if (val === 'SETTLED' || val === 'PARTIAL' || val === 'FORWARD') {
-        return <StatusBadge status={val} />;
-      }
-      return <span className="text-text-muted text-xs">{val}</span>;
-    },
-    size: 90,
-  }),
-  columnHelper.accessor('settledMw', {
-    header: 'Settled MW',
-    cell: (info) => <NumericCell value={info.getValue()} precision="MW" />,
-    size: 100,
-  }),
-  columnHelper.accessor('settledMwh', {
-    header: 'Settled MWh',
-    cell: (info) => <NumericCell value={info.getValue()} precision="MWH" />,
-    size: 110,
-  }),
-  columnHelper.accessor('avgPrice', {
-    header: 'Avg Price',
-    cell: (info) => <NumericCell value={info.getValue()} precision="PRICE" />,
-    size: 100,
-  }),
-  columnHelper.accessor('realizedPnl', {
-    header: 'Realized PnL',
-    cell: (info) => (
-      <NumericCell
-        value={info.getValue()}
-        precision="MONETARY"
-        currency={info.row.original.currency}
-        showSign
-      />
-    ),
-    size: 120,
-  }),
-  columnHelper.accessor('forwardMw', {
-    header: 'Fwd MW',
-    cell: (info) => <NumericCell value={info.getValue()} precision="MW" />,
-    size: 90,
-  }),
-  columnHelper.accessor('forwardMwh', {
-    header: 'Fwd MWh',
-    cell: (info) => <NumericCell value={info.getValue()} precision="MWH" />,
-    size: 100,
-  }),
-  columnHelper.accessor('unrealizedMtm', {
-    header: 'Unrealized MtM (indicative)',
-    cell: (info) => (
-      <NumericCell
-        value={info.getValue()}
-        precision="MONETARY"
-        currency={info.row.original.currency}
-        showSign
-      />
-    ),
-    size: 170,
-  }),
-];
-
 /**
- * L3: Position ledger table showing per-position contributions
- * for the selected period.
- * Focus is moved to this section on mount for keyboard/screen reader discoverability.
+ * L3: Position ledger table with multi-select checkboxes (F1).
+ *
+ * Separation of concerns:
+ * - "Selection" (checkboxes) = multi-select for netted L4 view
+ * - "Activation" (Enter/row click) = drill into single position L4 detail
  */
 export function PositionLedger({
   data,
   isLoading,
   periodLabel,
   periodStatus,
-  selectedPositionId,
-  onRowClick,
+  selectedPositionIds,
+  activatedPositionId,
+  onRowActivate,
+  onSelectionChange,
   onClose,
 }: PositionLedgerProps) {
   const sectionRef = useRef<HTMLElement>(null);
   const rowRefs = useRef<(HTMLTableRowElement | null)[]>([]);
+  const [anchorIndex, setAnchorIndex] = useState<number | null>(null);
 
-  // S-2 fix: move focus to section on mount so users discover the new panel
   useEffect(() => {
     sectionRef.current?.focus();
   }, []);
+
+  const allPositionIds = useMemo(
+    () => (data ?? []).map((r) => r.positionId).filter((id): id is string => id != null),
+    [data],
+  );
+
+  const allSelected = allPositionIds.length > 0 && allPositionIds.every((id) => selectedPositionIds.has(id));
+  const someSelected = allPositionIds.some((id) => selectedPositionIds.has(id));
+
+  const handleSelectAll = useCallback(() => {
+    if (allSelected) {
+      onSelectionChange(new Set());
+    } else {
+      onSelectionChange(new Set(allPositionIds));
+    }
+    setAnchorIndex(null);
+  }, [allSelected, allPositionIds, onSelectionChange]);
+
+  const handleToggle = useCallback(
+    (positionId: string, rowIndex: number) => {
+      const next = new Set(selectedPositionIds);
+      if (next.has(positionId)) {
+        next.delete(positionId);
+      } else {
+        next.add(positionId);
+      }
+      onSelectionChange(next);
+      setAnchorIndex(rowIndex);
+    },
+    [selectedPositionIds, onSelectionChange],
+  );
+
+  const handleShiftSelect = useCallback(
+    (rowIndex: number) => {
+      const anchor = anchorIndex ?? 0;
+      const from = Math.min(anchor, rowIndex);
+      const to = Math.max(anchor, rowIndex);
+      const next = new Set(selectedPositionIds);
+      for (let i = from; i <= to; i++) {
+        const id = allPositionIds[i];
+        if (id) next.add(id);
+      }
+      onSelectionChange(next);
+    },
+    [anchorIndex, allPositionIds, selectedPositionIds, onSelectionChange],
+  );
+
+  const columns = useMemo(
+    () => [
+      columnHelper.display({
+        id: 'select',
+        header: () => (
+          <SelectAllCheckbox
+            checked={allSelected}
+            indeterminate={someSelected && !allSelected}
+            onChange={handleSelectAll}
+            totalCount={allPositionIds.length}
+            selectedCount={selectedPositionIds.size}
+          />
+        ),
+        cell: ({ row }) => {
+          const posId = row.original.positionId;
+          if (!posId) return null;
+          return (
+            <RowCheckbox
+              checked={selectedPositionIds.has(posId)}
+              onChange={() => handleToggle(posId, row.index)}
+              label={`Select position ${row.original.tradeId} leg ${row.original.tradeLegId}`}
+            />
+          );
+        },
+        size: 28,
+      }),
+      columnHelper.accessor('tradeId', {
+        header: 'Trade ID',
+        cell: (info) => <span className="font-medium text-text-primary">{info.getValue()}</span>,
+        size: 100,
+      }),
+      columnHelper.accessor('tradeLegId', {
+        header: 'Leg',
+        cell: (info) => <span className="text-text-secondary">{info.getValue()}</span>,
+        size: 60,
+      }),
+      columnHelper.accessor('deliveryStart', {
+        header: 'Start',
+        cell: (info) => {
+          const val = info.getValue();
+          if (!val) return <span className="text-text-muted">—</span>;
+          return <span className="text-text-secondary">{new Date(val).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</span>;
+        },
+        size: 100,
+      }),
+      columnHelper.accessor('deliveryEnd', {
+        header: 'End',
+        cell: (info) => {
+          const val = info.getValue();
+          if (!val) return <span className="text-text-muted">—</span>;
+          return <span className="text-text-secondary">{new Date(val).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</span>;
+        },
+        size: 100,
+      }),
+      columnHelper.accessor('deliveryStatus', {
+        header: 'Status',
+        cell: (info) => {
+          const val = info.getValue();
+          if (val === 'SETTLED' || val === 'PARTIAL' || val === 'FORWARD') {
+            return <StatusBadge status={val} />;
+          }
+          return <span className="text-text-muted text-xs">{val}</span>;
+        },
+        size: 90,
+      }),
+      columnHelper.accessor('settledMw', {
+        header: 'Settled MW',
+        cell: (info) => <NumericCell value={info.getValue()} precision="MW" />,
+        size: 100,
+      }),
+      columnHelper.accessor('settledMwh', {
+        header: 'Settled MWh',
+        cell: (info) => <NumericCell value={info.getValue()} precision="MWH" />,
+        size: 110,
+      }),
+      columnHelper.accessor('avgPrice', {
+        header: 'Avg Price',
+        cell: (info) => <NumericCell value={info.getValue()} precision="PRICE" />,
+        size: 100,
+      }),
+      columnHelper.accessor('realizedPnl', {
+        header: 'Realized PnL',
+        cell: (info) => (
+          <NumericCell
+            value={info.getValue()}
+            precision="MONETARY"
+            currency={info.row.original.currency}
+            showSign
+          />
+        ),
+        size: 120,
+      }),
+      columnHelper.accessor('forwardMw', {
+        header: 'Fwd MW',
+        cell: (info) => <NumericCell value={info.getValue()} precision="MW" />,
+        size: 90,
+      }),
+      columnHelper.accessor('forwardMwh', {
+        header: 'Fwd MWh',
+        cell: (info) => <NumericCell value={info.getValue()} precision="MWH" />,
+        size: 100,
+      }),
+      columnHelper.accessor('unrealizedMtm', {
+        header: 'Unrealized MtM (indicative)',
+        cell: (info) => (
+          <NumericCell
+            value={info.getValue()}
+            precision="MONETARY"
+            currency={info.row.original.currency}
+            showSign
+          />
+        ),
+        size: 170,
+      }),
+    ],
+    [allSelected, someSelected, handleSelectAll, allPositionIds.length, selectedPositionIds, handleToggle],
+  );
 
   const table = useReactTable({
     data: data ?? [],
@@ -147,16 +228,25 @@ export function PositionLedger({
 
   const handleRowClick = useCallback(
     (row: PositionContributionDto) => {
-      onRowClick(row);
+      onRowActivate(row);
     },
-    [onRowClick],
+    [onRowActivate],
   );
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTableRowElement>, row: PositionContributionDto, rowIndex: number) => {
-      if (e.key === 'Enter' || e.key === ' ') {
+      if (e.key === 'Enter') {
         e.preventDefault();
         handleRowClick(row);
+      } else if (e.key === ' ') {
+        e.preventDefault();
+        if (row.positionId) {
+          if (e.shiftKey) {
+            handleShiftSelect(rowIndex);
+          } else {
+            handleToggle(row.positionId, rowIndex);
+          }
+        }
       } else if (e.key === 'ArrowDown') {
         e.preventDefault();
         rowRefs.current[rowIndex + 1]?.focus();
@@ -165,10 +255,17 @@ export function PositionLedger({
         rowRefs.current[rowIndex - 1]?.focus();
       } else if (e.key === 'Escape') {
         e.preventDefault();
-        onClose();
+        if (selectedPositionIds.size > 0) {
+          onSelectionChange(new Set());
+        } else {
+          onClose();
+        }
+      } else if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        handleSelectAll();
       }
     },
-    [handleRowClick, onClose],
+    [handleRowClick, handleShiftSelect, handleToggle, handleSelectAll, selectedPositionIds.size, onSelectionChange, onClose],
   );
 
   const statusBadgeStatus = useMemo(() => {
@@ -177,14 +274,20 @@ export function PositionLedger({
     return 'FORWARD' as const;
   }, [periodStatus]);
 
-  // Determine roving tabindex target
   const focusableRowIndex = useMemo(() => {
-    if (selectedPositionId && data) {
-      const idx = data.findIndex((r) => r.positionId === selectedPositionId);
+    if (activatedPositionId && data) {
+      const idx = data.findIndex((r) => r.positionId === activatedPositionId);
       if (idx >= 0) return idx;
     }
     return 0;
-  }, [data, selectedPositionId]);
+  }, [data, activatedPositionId]);
+
+  // Live region text for screen reader announcements
+  const liveText = useMemo(() => {
+    if (selectedPositionIds.size === 0) return '';
+    if (allSelected) return `All ${allPositionIds.length} positions selected`;
+    return `${selectedPositionIds.size} of ${allPositionIds.length} positions selected`;
+  }, [selectedPositionIds.size, allSelected, allPositionIds.length]);
 
   return (
     <section aria-label="Position Ledger" ref={sectionRef} tabIndex={-1}>
@@ -208,8 +311,13 @@ export function PositionLedger({
         </button>
       </div>
 
+      {/* Live region for selection announcements */}
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {liveText}
+      </div>
+
       {isLoading ? (
-        <SkeletonTable rows={8} columns={[10, 6, 10, 10, 8, 10, 11, 10, 12, 9, 10, 14]} />
+        <SkeletonTable rows={8} columns={[3, 10, 6, 10, 10, 8, 10, 11, 10, 12, 9, 10, 14]} />
       ) : !data || data.length === 0 ? (
         <EmptyState message="No position contributions for this period." />
       ) : (
@@ -217,6 +325,7 @@ export function PositionLedger({
           className="overflow-auto border border-border-grid rounded"
           role="grid"
           aria-label="Position contributions"
+          aria-multiselectable="true"
           aria-rowcount={data.length}
         >
           <table className="w-full border-collapse">
@@ -239,19 +348,24 @@ export function PositionLedger({
             <tbody>
               {table.getRowModel().rows.map((row, rowIndex) => {
                 const posId = row.original.positionId;
+                const isSelected = posId != null && selectedPositionIds.has(posId);
+                const isActivated = posId != null && posId === activatedPositionId;
                 return (
                   <tr
                     key={row.id}
                     ref={(el) => { rowRefs.current[rowIndex] = el; }}
                     role="row"
                     tabIndex={rowIndex === focusableRowIndex ? 0 : -1}
-                    aria-selected={posId === selectedPositionId}
+                    aria-selected={isSelected}
+                    aria-rowindex={rowIndex + 1}
                     className={cn(
                       'h-6 cursor-pointer transition-colors',
                       'hover:bg-interactive-row-hover',
                       'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-interactive-focus',
-                      posId === selectedPositionId && 'bg-interactive-row-selected',
-                      rowIndex % 2 === 1 && 'bg-bg-grid-even',
+                      isSelected && 'bg-interactive-row-selected',
+                      isActivated && !isSelected && 'bg-interactive-row-hover',
+                      isActivated && 'border-l-2 border-l-interactive-focus',
+                      rowIndex % 2 === 1 && !isSelected && 'bg-bg-grid-even',
                     )}
                     onClick={() => handleRowClick(row.original)}
                     onKeyDown={(e) => handleKeyDown(e, row.original, rowIndex)}

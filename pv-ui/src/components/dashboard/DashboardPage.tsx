@@ -34,12 +34,15 @@ export function DashboardPage({ portfolioId }: DashboardPageProps) {
   const timezone = useUserPreferences((s) => s.timezone);
   const {
     selectedPeriod,
-    selectedPositionId,
     selectedRangeStarts,
+    selectedPositionIds,
+    activatedPositionId,
     setSelectedPeriod,
     extendPeriodRange,
     clearRangeSelection,
-    setSelectedPosition,
+    setActivatedPosition,
+    setPositionSelection,
+    deselectAllPositions,
   } = useDashboardSelection();
 
   // Read filter state from store
@@ -58,11 +61,6 @@ export function DashboardPage({ portfolioId }: DashboardPageProps) {
   }, [portfolioId, storePortfolioId, setPortfolioId]);
 
   // Convert local dates to UTC boundaries for API calls.
-  // rangeStart: inclusive lower bound (midnight of the first day).
-  // rangeEnd: exclusive upper bound (midnight of the day AFTER the last day).
-  // The filter state stores inclusive end dates for display (e.g., '2026-09-30'),
-  // but the backend SQL uses exclusive upper bound (interval_start < :rangeEnd),
-  // so we advance by one day before converting to UTC.
   const rangeStartUtc = useMemo(
     () => localDateToUtcBoundary(dateRange.rangeStart, timezone),
     [dateRange.rangeStart, timezone],
@@ -98,7 +96,6 @@ export function DashboardPage({ portfolioId }: DashboardPageProps) {
   // Derive rollup rows for range extension (must match RollupGrid's derivation)
   const rollupRows = useMemo<RollupGridRow[]>(() => {
     if (!rollupQuery.data) return [];
-    // Import-free inline — mirrors RollupGrid's row derivation
     return rollupQuery.data.map((cell) => {
       const now = new Date().toISOString();
       let periodStatus: 'SETTLED' | 'TRANSITION' | 'FORWARD';
@@ -118,6 +115,31 @@ export function DashboardPage({ portfolioId }: DashboardPageProps) {
       return { ...cell, periodStatus, totalValue };
     });
   }, [rollupQuery.data]);
+
+  // Compute positionIds array for IntervalDetailPanel
+  const effectivePositionIds = useMemo<string[]>(() => {
+    if (selectedPositionIds.size >= 2) {
+      return Array.from(selectedPositionIds);
+    }
+    if (selectedPositionIds.size === 1) {
+      return Array.from(selectedPositionIds);
+    }
+    if (activatedPositionId) {
+      return [activatedPositionId];
+    }
+    return [];
+  }, [selectedPositionIds, activatedPositionId]);
+
+  // Compute trade IDs for NettedViewBanner display
+  const selectedTradeIds = useMemo<string[]>(() => {
+    if (!positionsQuery.data || selectedPositionIds.size < 2) return [];
+    return positionsQuery.data
+      .filter((p) => p.positionId != null && selectedPositionIds.has(p.positionId))
+      .map((p) => p.tradeId);
+  }, [positionsQuery.data, selectedPositionIds]);
+
+  // Show L4 if any positions are selected or activated
+  const showIntervalDetail = selectedPeriod && effectivePositionIds.length > 0;
 
   // Handlers
   const handleRollupRowClick = useCallback(
@@ -145,11 +167,18 @@ export function DashboardPage({ portfolioId }: DashboardPageProps) {
     [extendPeriodRange, rollupRows],
   );
 
-  const handlePositionRowClick = useCallback(
+  const handlePositionRowActivate = useCallback(
     (row: PositionContributionDto) => {
-      setSelectedPosition(row.positionId);
+      setActivatedPosition(row.positionId);
     },
-    [setSelectedPosition],
+    [setActivatedPosition],
+  );
+
+  const handleSelectionChange = useCallback(
+    (newSelection: ReadonlySet<string>) => {
+      setPositionSelection(newSelection);
+    },
+    [setPositionSelection],
   );
 
   const handlePositionLedgerClose = useCallback(() => {
@@ -157,8 +186,13 @@ export function DashboardPage({ portfolioId }: DashboardPageProps) {
   }, [setSelectedPeriod]);
 
   const handleIntervalDetailClose = useCallback(() => {
-    setSelectedPosition(null);
-  }, [setSelectedPosition]);
+    setActivatedPosition(null);
+    deselectAllPositions();
+  }, [setActivatedPosition, deselectAllPositions]);
+
+  const handleClearPositionSelection = useCallback(() => {
+    deselectAllPositions();
+  }, [deselectAllPositions]);
 
   const handlePortfolioSelect = useCallback(
     (id: string) => {
@@ -171,14 +205,16 @@ export function DashboardPage({ portfolioId }: DashboardPageProps) {
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (selectedPositionId) {
-          setSelectedPosition(null);
+        if (activatedPositionId) {
+          setActivatedPosition(null);
+        } else if (selectedPositionIds.size > 0) {
+          deselectAllPositions();
         } else if (selectedPeriod) {
           setSelectedPeriod(null);
         }
       }
     },
-    [selectedPeriod, selectedPositionId, setSelectedPeriod, setSelectedPosition],
+    [selectedPeriod, activatedPositionId, selectedPositionIds.size, setSelectedPeriod, setActivatedPosition, deselectAllPositions],
   );
 
   const periodLabel = selectedPeriod
@@ -245,22 +281,26 @@ export function DashboardPage({ portfolioId }: DashboardPageProps) {
             isLoading={positionsQuery.isLoading}
             periodLabel={periodLabel}
             periodStatus={selectedPeriod.status}
-            selectedPositionId={selectedPositionId}
-            onRowClick={handlePositionRowClick}
+            selectedPositionIds={selectedPositionIds}
+            activatedPositionId={activatedPositionId}
+            onRowActivate={handlePositionRowActivate}
+            onSelectionChange={handleSelectionChange}
             onClose={handlePositionLedgerClose}
           />
         </ErrorBoundary>
       )}
 
       {/* L4: Interval Detail (conditional) */}
-      {selectedPeriod && selectedPositionId && (
+      {showIntervalDetail && (
         <ErrorBoundary>
           <IntervalDetailPanel
             portfolioId={portfolioId}
             periodStart={selectedPeriod.start}
             periodEnd={selectedPeriod.end}
-            positionId={selectedPositionId}
+            positionIds={effectivePositionIds}
+            selectedTradeIds={selectedTradeIds}
             onClose={handleIntervalDetailClose}
+            onClearSelection={handleClearPositionSelection}
           />
         </ErrorBoundary>
       )}

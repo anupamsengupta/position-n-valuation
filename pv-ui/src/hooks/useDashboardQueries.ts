@@ -93,7 +93,7 @@ export function useDailyAggregates(
   portfolioId: string,
   monthStart: string | undefined,
   monthEnd: string | undefined,
-  positionId?: string,
+  positionIds: string[] = [],
 ) {
   const tenantId = useTenantStore((s) => s.tenantId);
   return useQuery({
@@ -102,10 +102,10 @@ export function useDailyAggregates(
       portfolioId,
       monthStart ?? '',
       monthEnd ?? '',
-      positionId,
+      positionIds,
     ),
     queryFn: () =>
-      fetchDailyAggregates(tenantId, portfolioId, monthStart!, monthEnd!, positionId),
+      fetchDailyAggregates(tenantId, portfolioId, monthStart!, monthEnd!, positionIds),
     enabled: !!tenantId && !!portfolioId && !!monthStart && !!monthEnd,
     staleTime: 30_000,
     gcTime: 300_000,
@@ -122,7 +122,7 @@ export function useSettledDayDetail(
   dayStart: string | undefined,
   dayEnd: string | undefined,
   granularity: SubDailyGranularity,
-  positionId?: string,
+  positionIds: string[] = [],
 ) {
   const tenantId = useTenantStore((s) => s.tenantId);
   return useQuery({
@@ -132,10 +132,10 @@ export function useSettledDayDetail(
       dayStart ?? '',
       dayEnd ?? '',
       granularity,
-      positionId,
+      positionIds,
     ),
     queryFn: () =>
-      fetchSettledDayDetail(tenantId, portfolioId, dayStart!, dayEnd!, granularity, positionId),
+      fetchSettledDayDetail(tenantId, portfolioId, dayStart!, dayEnd!, granularity, positionIds),
     enabled: !!tenantId && !!portfolioId && !!dayStart && !!dayEnd,
     staleTime: 120_000,
     gcTime: 300_000,
@@ -152,7 +152,7 @@ export function useForwardDayDetail(
   dayStart: string | undefined,
   dayEnd: string | undefined,
   granularity: SubDailyGranularity,
-  positionId?: string,
+  positionIds: string[] = [],
 ) {
   const tenantId = useTenantStore((s) => s.tenantId);
   return useQuery({
@@ -162,10 +162,10 @@ export function useForwardDayDetail(
       dayStart ?? '',
       dayEnd ?? '',
       granularity,
-      positionId,
+      positionIds,
     ),
     queryFn: () =>
-      fetchForwardDayDetail(tenantId, portfolioId, dayStart!, dayEnd!, granularity, positionId),
+      fetchForwardDayDetail(tenantId, portfolioId, dayStart!, dayEnd!, granularity, positionIds),
     enabled: !!tenantId && !!portfolioId && !!dayStart && !!dayEnd,
     staleTime: 15_000,
     gcTime: 300_000,

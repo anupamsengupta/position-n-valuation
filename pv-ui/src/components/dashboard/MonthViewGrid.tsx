@@ -18,7 +18,9 @@ export interface MonthViewGridProps {
   isLoading: boolean;
   timezone: string;
   selectedDay: string | null;
+  selectedDayRange: ReadonlySet<string>;
   onDayClick: (row: DailyAggregateDto) => void;
+  onDayShiftClick: (row: DailyAggregateDto) => void;
 }
 
 interface MonthViewRow extends DailyAggregateDto {
@@ -30,14 +32,16 @@ const columnHelper = createColumnHelper<MonthViewRow>();
 
 /**
  * L4 month view: daily aggregate rows within a delivery month.
- * Keyboard: ArrowUp/ArrowDown navigate rows, Enter/Space selects a day.
+ * Supports single-day click and Shift+Click contiguous range selection (F2).
  */
 export function MonthViewGrid({
   data,
   isLoading,
   timezone,
   selectedDay,
+  selectedDayRange,
   onDayClick,
+  onDayShiftClick,
 }: MonthViewGridProps) {
   const rowRefs = useRef<(HTMLTableRowElement | null)[]>([]);
 
@@ -138,26 +142,42 @@ export function MonthViewGrid({
   });
 
   const handleRowClick = useCallback(
-    (row: DailyAggregateDto) => {
-      onDayClick(row);
+    (e: React.MouseEvent, row: DailyAggregateDto) => {
+      if (e.shiftKey) {
+        onDayShiftClick(row);
+      } else {
+        onDayClick(row);
+      }
     },
-    [onDayClick],
+    [onDayClick, onDayShiftClick],
   );
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTableRowElement>, row: DailyAggregateDto, rowIndex: number) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
-        handleRowClick(row);
+        if (e.shiftKey) {
+          onDayShiftClick(row);
+        } else {
+          onDayClick(row);
+        }
       } else if (e.key === 'ArrowDown') {
         e.preventDefault();
+        if (e.shiftKey) {
+          const nextRow = rows[rowIndex + 1];
+          if (nextRow) onDayShiftClick(nextRow);
+        }
         rowRefs.current[rowIndex + 1]?.focus();
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
+        if (e.shiftKey) {
+          const prevRow = rows[rowIndex - 1];
+          if (prevRow) onDayShiftClick(prevRow);
+        }
         rowRefs.current[rowIndex - 1]?.focus();
       }
     },
-    [handleRowClick],
+    [onDayClick, onDayShiftClick, rows],
   );
 
   // Roving tabindex: selected day or first row
@@ -169,6 +189,12 @@ export function MonthViewGrid({
     return 0;
   }, [rows, selectedDay]);
 
+  // Live region for range announcements
+  const liveText = useMemo(() => {
+    if (selectedDayRange.size <= 1) return '';
+    return `${selectedDayRange.size} days selected`;
+  }, [selectedDayRange.size]);
+
   if (isLoading) {
     return <SkeletonTable rows={15} columns={[10, 9, 7, 10, 11, 12, 9, 10, 15]} />;
   }
@@ -178,60 +204,72 @@ export function MonthViewGrid({
   }
 
   return (
-    <div
-      className="overflow-auto border border-border-grid rounded max-h-[500px]"
-      role="grid"
-      aria-label="Daily aggregate data"
-      aria-rowcount={rows.length}
-    >
-      <table className="w-full border-collapse">
-        <thead className="sticky top-0 z-10 bg-bg-secondary">
-          {table.getHeaderGroups().map((headerGroup) => (
-            <tr key={headerGroup.id} role="row" className="h-7">
-              {headerGroup.headers.map((header) => (
-                <th
-                  key={header.id}
-                  role="columnheader"
-                  className="px-2 py-1 text-xs font-semibold text-text-secondary text-left whitespace-nowrap border-b border-border-grid"
-                  style={{ width: header.getSize() }}
+    <>
+      {/* Live region for screen reader range announcements */}
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {liveText}
+      </div>
+      <div
+        className="overflow-auto border border-border-grid rounded max-h-[500px]"
+        role="grid"
+        aria-label="Daily aggregate data"
+        aria-multiselectable="true"
+        aria-rowcount={rows.length}
+      >
+        <table className="w-full border-collapse">
+          <thead className="sticky top-0 z-10 bg-bg-secondary">
+            {table.getHeaderGroups().map((headerGroup) => (
+              <tr key={headerGroup.id} role="row" className="h-7">
+                {headerGroup.headers.map((header) => (
+                  <th
+                    key={header.id}
+                    role="columnheader"
+                    className="px-2 py-1 text-xs font-semibold text-text-secondary text-left whitespace-nowrap border-b border-border-grid"
+                    style={{ width: header.getSize() }}
+                  >
+                    {flexRender(header.column.columnDef.header, header.getContext())}
+                  </th>
+                ))}
+              </tr>
+            ))}
+          </thead>
+          <tbody>
+            {table.getRowModel().rows.map((row, rowIndex) => {
+              const isInRange = selectedDayRange.has(row.original.dayStart);
+              const isAnchor = row.original.dayStart === selectedDay;
+              return (
+                <tr
+                  key={row.id}
+                  ref={(el) => { rowRefs.current[rowIndex] = el; }}
+                  role="row"
+                  tabIndex={rowIndex === focusableRowIndex ? 0 : -1}
+                  aria-selected={isInRange}
+                  className={cn(
+                    'h-6 cursor-pointer transition-colors',
+                    'hover:bg-interactive-row-hover',
+                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-interactive-focus',
+                    isInRange && 'bg-interactive-row-selected',
+                    isAnchor && 'border-l-2 border-l-interactive-focus',
+                    rowIndex % 2 === 1 && !isInRange && 'bg-bg-grid-even',
+                  )}
+                  onClick={(e) => handleRowClick(e, row.original)}
+                  onKeyDown={(e) => handleKeyDown(e, row.original, rowIndex)}
                 >
-                  {flexRender(header.column.columnDef.header, header.getContext())}
-                </th>
-              ))}
-            </tr>
-          ))}
-        </thead>
-        <tbody>
-          {table.getRowModel().rows.map((row, rowIndex) => (
-            <tr
-              key={row.id}
-              ref={(el) => { rowRefs.current[rowIndex] = el; }}
-              role="row"
-              tabIndex={rowIndex === focusableRowIndex ? 0 : -1}
-              aria-selected={row.original.dayStart === selectedDay}
-              className={cn(
-                'h-6 cursor-pointer transition-colors',
-                'hover:bg-interactive-row-hover',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-interactive-focus',
-                row.original.dayStart === selectedDay && 'bg-interactive-row-selected',
-                rowIndex % 2 === 1 && 'bg-bg-grid-even',
-              )}
-              onClick={() => handleRowClick(row.original)}
-              onKeyDown={(e) => handleKeyDown(e, row.original, rowIndex)}
-            >
-              {row.getVisibleCells().map((cell) => (
-                <td
-                  key={cell.id}
-                  role="gridcell"
-                  className="px-2 py-0.5 text-xs whitespace-nowrap"
-                >
-                  {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+                  {row.getVisibleCells().map((cell) => (
+                    <td
+                      key={cell.id}
+                      role="gridcell"
+                      className="px-2 py-0.5 text-xs whitespace-nowrap"
+                    >
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }

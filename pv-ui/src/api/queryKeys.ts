@@ -41,9 +41,10 @@ export const dashboardKeys = {
     portfolioId: string,
     monthStart: string,
     monthEnd: string,
-    positionId?: string,
+    positionIds: string[] = [],
   ) =>
-    [...dashboardKeys.all, 'daily', tenantId, portfolioId, monthStart, monthEnd, positionId ?? 'all'] as const,
+    [...dashboardKeys.all, 'daily', tenantId, portfolioId, monthStart, monthEnd,
+     positionIds.length > 0 ? positionIds.slice().sort().join(',') : 'all'] as const,
 
   settledDay: (
     tenantId: string,
@@ -51,9 +52,10 @@ export const dashboardKeys = {
     dayStart: string,
     dayEnd: string,
     granularity: SubDailyGranularity,
-    positionId?: string,
+    positionIds: string[] = [],
   ) =>
-    [...dashboardKeys.all, 'settled-day', tenantId, portfolioId, dayStart, dayEnd, granularity, positionId ?? 'all'] as const,
+    [...dashboardKeys.all, 'settled-day', tenantId, portfolioId, dayStart, dayEnd, granularity,
+     positionIds.length > 0 ? positionIds.slice().sort().join(',') : 'all'] as const,
 
   forwardDay: (
     tenantId: string,
@@ -61,9 +63,10 @@ export const dashboardKeys = {
     dayStart: string,
     dayEnd: string,
     granularity: SubDailyGranularity,
-    positionId?: string,
+    positionIds: string[] = [],
   ) =>
-    [...dashboardKeys.all, 'forward-day', tenantId, portfolioId, dayStart, dayEnd, granularity, positionId ?? 'all'] as const,
+    [...dashboardKeys.all, 'forward-day', tenantId, portfolioId, dayStart, dayEnd, granularity,
+     positionIds.length > 0 ? positionIds.slice().sort().join(',') : 'all'] as const,
 
   cardSummary: (tenantId: string, portfolioId: string, rangeStart: string, rangeEnd: string) =>
     [...dashboardKeys.all, 'card-summary', tenantId, portfolioId, rangeStart, rangeEnd] as const,

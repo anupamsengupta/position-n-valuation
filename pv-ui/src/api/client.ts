@@ -23,7 +23,7 @@ export class ApiError extends Error {
 
 export async function apiFetch<T>(
   path: string,
-  params: Record<string, string | number | boolean | undefined>,
+  params: Record<string, string | number | boolean | string[] | undefined>,
   tenantId: string,
 ): Promise<T> {
   const url = new URL(`${BASE_URL}${path}`, window.location.origin);
@@ -31,9 +31,14 @@ export async function apiFetch<T>(
   // Always inject tenantId
   url.searchParams.set('tenantId', tenantId);
 
-  // Add other params
+  // Add other params (arrays produce repeated params, e.g. ?positionId=a&positionId=b)
   for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined) {
+    if (value === undefined) continue;
+    if (Array.isArray(value)) {
+      for (const v of value) {
+        url.searchParams.append(key, v);
+      }
+    } else {
       url.searchParams.set(key, String(value));
     }
   }

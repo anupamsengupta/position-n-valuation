@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { Fragment, useMemo } from 'react';
 import {
   createColumnHelper,
   flexRender,
@@ -8,8 +8,9 @@ import {
 import { NumericCell } from '@/components/primitives/NumericCell';
 import { SkeletonTable } from '@/components/primitives/SkeletonRow';
 import { EmptyState } from '@/components/primitives/EmptyState';
-import { formatIntervalTime, getDstInfo } from '@/lib/dateUtils';
+import { formatIntervalTime, formatLocalDate, getDstInfo } from '@/lib/dateUtils';
 import { cn } from '@/lib/cn';
+import { DayBoundaryRow } from './DayBoundaryRow';
 import type { ForwardIntervalDetailDto } from '@/schemas/api';
 
 export interface ForwardDayGridProps {
@@ -17,6 +18,7 @@ export interface ForwardDayGridProps {
   isLoading: boolean;
   timezone: string;
   expectedIntervalCount?: number;
+  isMultiDay?: boolean;
 }
 
 interface ForwardDayRow extends ForwardIntervalDetailDto {
@@ -92,6 +94,7 @@ export function ForwardDayGrid({
   isLoading,
   timezone,
   expectedIntervalCount,
+  isMultiDay = false,
 }: ForwardDayGridProps) {
   const rows = useMemo<ForwardDayRow[]>(() => {
     if (!data) return [];
@@ -100,6 +103,21 @@ export function ForwardDayGrid({
       return { ...cell, localTime: times.local, utcTime: times.utc };
     });
   }, [data, timezone]);
+
+  // Compute day boundaries for multi-day view
+  const dayBoundaries = useMemo(() => {
+    if (!isMultiDay || rows.length === 0) return new Set<number>();
+    const boundaries = new Set<number>();
+    let prevDate = '';
+    for (let i = 0; i < rows.length; i++) {
+      const localDate = formatLocalDate(rows[i]!.intervalStart, timezone);
+      if (localDate !== prevDate && prevDate !== '') {
+        boundaries.add(i);
+      }
+      prevDate = localDate;
+    }
+    return boundaries;
+  }, [isMultiDay, rows, timezone]);
 
   const dstInfo = useMemo(
     () => (expectedIntervalCount ? getDstInfo(expectedIntervalCount) : null),
@@ -151,24 +169,37 @@ export function ForwardDayGrid({
             ))}
           </thead>
           <tbody>
-            {table.getRowModel().rows.map((row, rowIndex) => (
-              <tr
-                key={row.id}
-                className={cn(
-                  'h-6',
-                  rowIndex % 2 === 1 && 'bg-bg-grid-even',
-                )}
-              >
-                {row.getVisibleCells().map((cell) => (
-                  <td
-                    key={cell.id}
-                    className="px-2 py-0.5 text-xs whitespace-nowrap"
+            {table.getRowModel().rows.map((row, rowIndex) => {
+              const boundary = dayBoundaries.has(rowIndex);
+              return (
+                <Fragment key={row.id}>
+                  {boundary && (
+                    <DayBoundaryRow
+                      key={`boundary-${rowIndex}`}
+                      dateLabel={new Date(row.original.intervalStart).toLocaleDateString('en-GB', {
+                        day: '2-digit', month: 'short', year: 'numeric', timeZone: timezone,
+                      })}
+                      columnCount={columns.length}
+                    />
+                  )}
+                  <tr
+                    className={cn(
+                      'h-6',
+                      rowIndex % 2 === 1 && 'bg-bg-grid-even',
+                    )}
                   >
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </td>
-                ))}
-              </tr>
-            ))}
+                    {row.getVisibleCells().map((cell) => (
+                      <td
+                        key={cell.id}
+                        className="px-2 py-0.5 text-xs whitespace-nowrap"
+                      >
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </td>
+                    ))}
+                  </tr>
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>
