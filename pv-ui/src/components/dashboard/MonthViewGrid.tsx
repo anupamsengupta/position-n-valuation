@@ -13,6 +13,7 @@ import { SelectAllCheckbox } from '@/components/primitives/SelectAllCheckbox';
 import { RowCheckbox } from '@/components/primitives/RowCheckbox';
 import { formatLocalDate, getDstInfo } from '@/lib/dateUtils';
 import { cn } from '@/lib/cn';
+import { parseNumericValue } from '@/lib/numberUtils';
 import type { DailyAggregateDto } from '@/schemas/api';
 
 export interface MonthViewGridProps {
@@ -30,6 +31,7 @@ export interface MonthViewGridProps {
   onDayShiftToggle: (row: DailyAggregateDto) => void;
   onSelectAllDays: () => void;
   onDeselectAllDays: () => void;
+  hideZeroRows?: boolean;
 }
 
 interface MonthViewRow extends DailyAggregateDto {
@@ -57,10 +59,15 @@ export function MonthViewGrid({
   onDayShiftToggle,
   onSelectAllDays,
   onDeselectAllDays,
+  hideZeroRows = false,
 }: MonthViewGridProps) {
   const rowRefs = useRef<(HTMLTableRowElement | null)[]>([]);
 
-  const rows = useMemo<MonthViewRow[]>(() => {
+  const MONTH_MEASURE_FIELDS: (keyof DailyAggregateDto)[] = [
+    'settledMw', 'settledMwh', 'realizedPnl', 'forwardMw', 'forwardMwh', 'forwardMarkValue',
+  ];
+
+  const allRows = useMemo<MonthViewRow[]>(() => {
     if (!data) return [];
     return data.map((row) => {
       const dateLabel = formatLocalDate(row.dayStart, timezone);
@@ -68,6 +75,16 @@ export function MonthViewGrid({
       return { ...row, dateLabel, dstLabel: dstInfo.isDstDay ? dstInfo.label : '' };
     });
   }, [data, timezone]);
+
+  const rows = useMemo(() => {
+    if (!hideZeroRows) return allRows;
+    return allRows.filter((row) =>
+      MONTH_MEASURE_FIELDS.some((f) => {
+        const v = parseNumericValue(row[f] as string | number | null | undefined);
+        return v !== null && v !== 0;
+      }),
+    );
+  }, [allRows, hideZeroRows]);
 
   // Checkbox header state
   const allChecked = rows.length > 0 && selectedDayIds.size === rows.length;

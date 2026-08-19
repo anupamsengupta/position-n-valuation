@@ -11,7 +11,9 @@ import { SkeletonTable } from '@/components/primitives/SkeletonRow';
 import { EmptyState } from '@/components/primitives/EmptyState';
 import { SelectAllCheckbox } from '@/components/primitives/SelectAllCheckbox';
 import { RowCheckbox } from '@/components/primitives/RowCheckbox';
+import { HideZeroToggle } from '@/components/primitives/HideZeroToggle';
 import { cn } from '@/lib/cn';
+import { parseNumericValue } from '@/lib/numberUtils';
 import type { PositionContributionDto } from '@/schemas/api';
 import type { PeriodStatus } from '@/schemas/types';
 
@@ -50,14 +52,29 @@ export function PositionLedger({
   const sectionRef = useRef<HTMLElement>(null);
   const rowRefs = useRef<(HTMLTableRowElement | null)[]>([]);
   const [anchorIndex, setAnchorIndex] = useState<number | null>(null);
+  const [hideZeroRows, setHideZeroRows] = useState(false);
 
   useEffect(() => {
     sectionRef.current?.focus();
   }, []);
 
+  const LEDGER_MEASURE_FIELDS: (keyof PositionContributionDto)[] = [
+    'settledMw', 'settledMwh', 'avgPrice', 'realizedPnl', 'forwardMw', 'forwardMwh', 'unrealizedMtm',
+  ];
+
+  const filteredData = useMemo(() => {
+    if (!data || !hideZeroRows) return data;
+    return data.filter((row) =>
+      LEDGER_MEASURE_FIELDS.some((f) => {
+        const v = parseNumericValue(row[f] as string | number | null | undefined);
+        return v !== null && v !== 0;
+      }),
+    );
+  }, [data, hideZeroRows]);
+
   const allPositionIds = useMemo(
-    () => (data ?? []).map((r) => r.positionId).filter((id): id is string => id != null),
-    [data],
+    () => (filteredData ?? []).map((r) => r.positionId).filter((id): id is string => id != null),
+    [filteredData],
   );
 
   const allSelected = allPositionIds.length > 0 && allPositionIds.every((id) => selectedPositionIds.has(id));
@@ -220,7 +237,7 @@ export function PositionLedger({
   );
 
   const table = useReactTable({
-    data: data ?? [],
+    data: filteredData ?? [],
     columns,
     getCoreRowModel: getCoreRowModel(),
     getRowId: (row) => row.positionId ?? `${row.tradeId}-${row.tradeLegId}`,
@@ -275,12 +292,12 @@ export function PositionLedger({
   }, [periodStatus]);
 
   const focusableRowIndex = useMemo(() => {
-    if (activatedPositionId && data) {
-      const idx = data.findIndex((r) => r.positionId === activatedPositionId);
+    if (activatedPositionId && filteredData) {
+      const idx = filteredData.findIndex((r) => r.positionId === activatedPositionId);
       if (idx >= 0) return idx;
     }
     return 0;
-  }, [data, activatedPositionId]);
+  }, [filteredData, activatedPositionId]);
 
   // Live region text for screen reader announcements
   const liveText = useMemo(() => {
@@ -299,16 +316,19 @@ export function PositionLedger({
           <span className="text-xs text-text-secondary">{periodLabel}</span>
           <StatusBadge status={statusBadgeStatus} />
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="px-2 py-1 text-xs text-text-secondary hover:text-text-primary
-                     border border-border-default rounded hover:bg-bg-secondary
-                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-interactive-focus"
-          aria-label="Close position ledger"
-        >
-          Close
-        </button>
+        <div className="flex items-center gap-3">
+          <HideZeroToggle checked={hideZeroRows} onChange={setHideZeroRows} />
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-2 py-1 text-xs text-text-secondary hover:text-text-primary
+                       border border-border-default rounded hover:bg-bg-secondary
+                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-interactive-focus"
+            aria-label="Close position ledger"
+          >
+            Close
+          </button>
+        </div>
       </div>
 
       {/* Live region for selection announcements */}
@@ -318,15 +338,15 @@ export function PositionLedger({
 
       {isLoading ? (
         <SkeletonTable rows={8} columns={[3, 10, 6, 10, 10, 8, 10, 11, 10, 12, 9, 10, 14]} />
-      ) : !data || data.length === 0 ? (
-        <EmptyState message="No position contributions for this period." />
+      ) : !filteredData || filteredData.length === 0 ? (
+        <EmptyState message={hideZeroRows ? "All rows are zero — toggle off to see data." : "No position contributions for this period."} />
       ) : (
         <div
           className="overflow-auto border border-border-grid rounded"
           role="grid"
           aria-label="Position contributions"
           aria-multiselectable="true"
-          aria-rowcount={data.length}
+          aria-rowcount={filteredData.length}
         >
           <table className="w-full border-collapse">
             <thead className="sticky top-0 z-10 bg-bg-secondary">

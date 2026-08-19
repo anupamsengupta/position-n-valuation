@@ -10,6 +10,7 @@ import { SkeletonTable } from '@/components/primitives/SkeletonRow';
 import { EmptyState } from '@/components/primitives/EmptyState';
 import { formatIntervalTime, formatLocalDate, getDstInfo } from '@/lib/dateUtils';
 import { cn } from '@/lib/cn';
+import { parseNumericValue } from '@/lib/numberUtils';
 import { DayBoundaryRow } from './DayBoundaryRow';
 import type { SettlementCellDto } from '@/schemas/api';
 
@@ -19,6 +20,7 @@ export interface SettledDayGridProps {
   timezone: string;
   expectedIntervalCount?: number;
   isMultiDay?: boolean;
+  hideZeroRows?: boolean;
 }
 
 interface SettledDayRow extends SettlementCellDto {
@@ -99,20 +101,35 @@ const columns = [
  * L4: Settled day interval grid showing settlement cells.
  * Displays 15-min / 30-min / hourly intervals with dual local+UTC time.
  */
+const SETTLED_MEASURE_FIELDS: (keyof SettlementCellDto)[] = [
+  'volumeMw', 'volumeMwh', 'amount', 'marketAmount', 'pnl',
+];
+
 export function SettledDayGrid({
   data,
   isLoading,
   timezone,
   expectedIntervalCount,
   isMultiDay = false,
+  hideZeroRows = false,
 }: SettledDayGridProps) {
-  const rows = useMemo<SettledDayRow[]>(() => {
+  const allRows = useMemo<SettledDayRow[]>(() => {
     if (!data) return [];
     return data.map((cell) => {
       const times = formatIntervalTime(cell.intervalStart, timezone);
       return { ...cell, localTime: times.local, utcTime: times.utc };
     });
   }, [data, timezone]);
+
+  const rows = useMemo(() => {
+    if (!hideZeroRows) return allRows;
+    return allRows.filter((row) =>
+      SETTLED_MEASURE_FIELDS.some((f) => {
+        const v = parseNumericValue(row[f] as string | number | null | undefined);
+        return v !== null && v !== 0;
+      }),
+    );
+  }, [allRows, hideZeroRows]);
 
   // Compute day boundaries for multi-day view
   const dayBoundaries = useMemo(() => {

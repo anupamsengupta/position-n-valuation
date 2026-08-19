@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { SubGranularityToggle } from '@/components/primitives/GranularityToggle';
+import { HideZeroToggle } from '@/components/primitives/HideZeroToggle';
 import { ViewLayoutToggle, type ViewLayout } from '@/components/primitives/ViewLayoutToggle';
 import { SettledDayGrid } from './SettledDayGrid';
 import { ForwardDayGrid } from './ForwardDayGrid';
@@ -68,6 +69,8 @@ export function IntervalDetailPanel({
 
   const [subGranularity, setSubGranularity] = useState<SubDailyGranularity>('MIN_15');
   const [viewLayout, setViewLayout] = useState<ViewLayout>('vertical');
+  const [hideDailySummaryZeros, setHideDailySummaryZeros] = useState(false);
+  const [hideSubDailyZeros, setHideSubDailyZeros] = useState(false);
 
   const isNetted = positionIds.length >= 2;
   const isContiguousMultiDay = selectedDayRange.size > 1;
@@ -317,7 +320,10 @@ export function IntervalDetailPanel({
 
       {/* Month view: always show daily aggregate rows */}
       <div className="mb-4">
-        <h4 className="text-xs font-medium text-text-secondary mb-2">Daily Summary</h4>
+        <div className="flex items-center justify-between mb-2">
+          <h4 className="text-xs font-medium text-text-secondary">Daily Summary</h4>
+          <HideZeroToggle checked={hideDailySummaryZeros} onChange={setHideDailySummaryZeros} />
+        </div>
         <MonthViewGrid
           data={dailyQuery.data}
           isLoading={dailyQuery.isLoading}
@@ -331,6 +337,7 @@ export function IntervalDetailPanel({
           onDayShiftToggle={handleDayShiftToggle}
           onSelectAllDays={handleSelectAllDays}
           onDeselectAllDays={deselectAllDays}
+          hideZeroRows={hideDailySummaryZeros}
         />
       </div>
 
@@ -354,6 +361,7 @@ export function IntervalDetailPanel({
                   : `Forward Mark Data (${forwardDayEntries.length} days)`}
             </h4>
             <div className="flex items-center gap-3">
+              <HideZeroToggle checked={hideSubDailyZeros} onChange={setHideSubDailyZeros} />
               <ViewLayoutToggle value={viewLayout} onChange={setViewLayout} />
               <SubGranularityToggle value={subGranularity} onChange={setSubGranularity} />
             </div>
@@ -373,6 +381,7 @@ export function IntervalDetailPanel({
                   timezone={timezone}
                   expectedIntervalCount={expectedIntervalCount}
                   isMultiDay={true}
+                  hideZeroRows={hideSubDailyZeros}
                 />
               ) : (
                 <HorizontalSettledGrid
@@ -380,6 +389,7 @@ export function IntervalDetailPanel({
                   isLoading={multiSettledLoading}
                   timezone={timezone}
                   expectedIntervalCount={expectedIntervalCount}
+                  hideZeroRows={hideSubDailyZeros}
                 />
               )}
             </>
@@ -399,6 +409,7 @@ export function IntervalDetailPanel({
                   timezone={timezone}
                   expectedIntervalCount={expectedIntervalCount}
                   isMultiDay={true}
+                  hideZeroRows={hideSubDailyZeros}
                 />
               ) : (
                 <HorizontalForwardGrid
@@ -406,6 +417,7 @@ export function IntervalDetailPanel({
                   isLoading={multiForwardLoading}
                   timezone={timezone}
                   expectedIntervalCount={expectedIntervalCount}
+                  hideZeroRows={hideSubDailyZeros}
                 />
               )}
             </>
@@ -426,6 +438,7 @@ export function IntervalDetailPanel({
                   : 'Forward Mark Data'}
             </h4>
             <div className="flex items-center gap-3">
+              <HideZeroToggle checked={hideSubDailyZeros} onChange={setHideSubDailyZeros} />
               <ViewLayoutToggle value={viewLayout} onChange={setViewLayout} />
               <SubGranularityToggle value={subGranularity} onChange={setSubGranularity} />
             </div>
@@ -439,6 +452,7 @@ export function IntervalDetailPanel({
                 timezone={timezone}
                 expectedIntervalCount={expectedIntervalCount}
                 isMultiDay={isContiguousMultiDay}
+                hideZeroRows={hideSubDailyZeros}
               />
             ) : (
               <HorizontalSettledGrid
@@ -446,6 +460,7 @@ export function IntervalDetailPanel({
                 isLoading={settledQuery.isLoading}
                 timezone={timezone}
                 expectedIntervalCount={expectedIntervalCount}
+                hideZeroRows={hideSubDailyZeros}
               />
             )
           )}
@@ -458,6 +473,7 @@ export function IntervalDetailPanel({
                 timezone={timezone}
                 expectedIntervalCount={expectedIntervalCount}
                 isMultiDay={isContiguousMultiDay}
+                hideZeroRows={hideSubDailyZeros}
               />
             ) : (
               <HorizontalForwardGrid
@@ -465,6 +481,7 @@ export function IntervalDetailPanel({
                 isLoading={forwardQuery.isLoading}
                 timezone={timezone}
                 expectedIntervalCount={expectedIntervalCount}
+                hideZeroRows={hideSubDailyZeros}
               />
             )
           )}

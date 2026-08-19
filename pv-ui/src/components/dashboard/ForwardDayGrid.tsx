@@ -10,6 +10,7 @@ import { SkeletonTable } from '@/components/primitives/SkeletonRow';
 import { EmptyState } from '@/components/primitives/EmptyState';
 import { formatIntervalTime, formatLocalDate, getDstInfo } from '@/lib/dateUtils';
 import { cn } from '@/lib/cn';
+import { parseNumericValue } from '@/lib/numberUtils';
 import { DayBoundaryRow } from './DayBoundaryRow';
 import type { ForwardIntervalDetailDto } from '@/schemas/api';
 
@@ -19,6 +20,7 @@ export interface ForwardDayGridProps {
   timezone: string;
   expectedIntervalCount?: number;
   isMultiDay?: boolean;
+  hideZeroRows?: boolean;
 }
 
 interface ForwardDayRow extends ForwardIntervalDetailDto {
@@ -89,20 +91,35 @@ const columns = [
  * L4: Forward day interval grid showing forward mark data.
  * EMIR labeling: all values are indicative current marks (ADR-002).
  */
+const FORWARD_MEASURE_FIELDS: (keyof ForwardIntervalDetailDto)[] = [
+  'resolvedQty', 'resolvedEnergy', 'evaluatedPrice', 'markValue',
+];
+
 export function ForwardDayGrid({
   data,
   isLoading,
   timezone,
   expectedIntervalCount,
   isMultiDay = false,
+  hideZeroRows = false,
 }: ForwardDayGridProps) {
-  const rows = useMemo<ForwardDayRow[]>(() => {
+  const allRows = useMemo<ForwardDayRow[]>(() => {
     if (!data) return [];
     return data.map((cell) => {
       const times = formatIntervalTime(cell.intervalStart, timezone);
       return { ...cell, localTime: times.local, utcTime: times.utc };
     });
   }, [data, timezone]);
+
+  const rows = useMemo(() => {
+    if (!hideZeroRows) return allRows;
+    return allRows.filter((row) =>
+      FORWARD_MEASURE_FIELDS.some((f) => {
+        const v = parseNumericValue(row[f] as string | number | null | undefined);
+        return v !== null && v !== 0;
+      }),
+    );
+  }, [allRows, hideZeroRows]);
 
   // Compute day boundaries for multi-day view
   const dayBoundaries = useMemo(() => {

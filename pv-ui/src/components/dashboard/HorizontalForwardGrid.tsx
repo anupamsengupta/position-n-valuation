@@ -9,6 +9,7 @@ import { NumericCell } from '@/components/primitives/NumericCell';
 import { SkeletonTable } from '@/components/primitives/SkeletonRow';
 import { EmptyState } from '@/components/primitives/EmptyState';
 import { getDstInfo } from '@/lib/dateUtils';
+import { parseNumericValue } from '@/lib/numberUtils';
 import { pivotForwardIntervals, type PivotRow } from '@/lib/pivotIntervals';
 import { cn } from '@/lib/cn';
 import type { ForwardDayGridProps } from './ForwardDayGrid';
@@ -22,11 +23,22 @@ export function HorizontalForwardGrid({
   isLoading,
   timezone,
   expectedIntervalCount,
+  hideZeroRows = false,
 }: ForwardDayGridProps) {
   const pivoted = useMemo(
     () => pivotForwardIntervals(data ?? [], timezone),
     [data, timezone],
   );
+
+  const filteredPivotRows = useMemo(() => {
+    if (!hideZeroRows) return pivoted.rows;
+    return pivoted.rows.filter((row) =>
+      pivoted.timeLabels.some((label) => {
+        const v = parseNumericValue(row[label] as string | number | null | undefined);
+        return v !== null && v !== 0;
+      }),
+    );
+  }, [pivoted, hideZeroRows]);
 
   const columns = useMemo<ColumnDef<PivotRow, unknown>[]>(() => {
     const cols: ColumnDef<PivotRow, unknown>[] = [
@@ -66,7 +78,7 @@ export function HorizontalForwardGrid({
   }, [pivoted.timeLabels]);
 
   const table = useReactTable({
-    data: pivoted.rows,
+    data: filteredPivotRows,
     columns,
     getCoreRowModel: getCoreRowModel(),
     getRowId: (row) => row.measure,
@@ -81,7 +93,7 @@ export function HorizontalForwardGrid({
     return <SkeletonTable rows={4} columns={[11, 7, 7, 7, 7, 7, 7, 7]} />;
   }
 
-  if (pivoted.rows.length === 0) {
+  if (filteredPivotRows.length === 0) {
     return (
       <EmptyState message="No forward mark data for this day. This may mean no volume is forecasted or no forward curve is available." />
     );
