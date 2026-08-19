@@ -9,6 +9,8 @@ import { NumericCell } from '@/components/primitives/NumericCell';
 import { StatusBadge } from '@/components/primitives/StatusBadge';
 import { SkeletonTable } from '@/components/primitives/SkeletonRow';
 import { EmptyState } from '@/components/primitives/EmptyState';
+import { SelectAllCheckbox } from '@/components/primitives/SelectAllCheckbox';
+import { RowCheckbox } from '@/components/primitives/RowCheckbox';
 import { formatLocalDate, getDstInfo } from '@/lib/dateUtils';
 import { cn } from '@/lib/cn';
 import type { DailyAggregateDto } from '@/schemas/api';
@@ -17,10 +19,17 @@ export interface MonthViewGridProps {
   data: DailyAggregateDto[] | undefined;
   isLoading: boolean;
   timezone: string;
+  // F2 contiguous range (keep)
   selectedDay: string | null;
   selectedDayRange: ReadonlySet<string>;
   onDayClick: (row: DailyAggregateDto) => void;
   onDayShiftClick: (row: DailyAggregateDto) => void;
+  // F4 checkbox multi-select (new)
+  selectedDayIds: ReadonlySet<string>;
+  onDayToggle: (row: DailyAggregateDto) => void;
+  onDayShiftToggle: (row: DailyAggregateDto) => void;
+  onSelectAllDays: () => void;
+  onDeselectAllDays: () => void;
 }
 
 interface MonthViewRow extends DailyAggregateDto {
@@ -32,7 +41,8 @@ const columnHelper = createColumnHelper<MonthViewRow>();
 
 /**
  * L4 month view: daily aggregate rows within a delivery month.
- * Supports single-day click and Shift+Click contiguous range selection (F2).
+ * Supports single-day click, Shift+Click contiguous range (F2),
+ * and checkbox-based multi-select for non-contiguous days (F4).
  */
 export function MonthViewGrid({
   data,
@@ -42,6 +52,11 @@ export function MonthViewGrid({
   selectedDayRange,
   onDayClick,
   onDayShiftClick,
+  selectedDayIds,
+  onDayToggle,
+  onDayShiftToggle,
+  onSelectAllDays,
+  onDeselectAllDays,
 }: MonthViewGridProps) {
   const rowRefs = useRef<(HTMLTableRowElement | null)[]>([]);
 
@@ -53,6 +68,10 @@ export function MonthViewGrid({
       return { ...row, dateLabel, dstLabel: dstInfo.isDstDay ? dstInfo.label : '' };
     });
   }, [data, timezone]);
+
+  // Checkbox header state
+  const allChecked = rows.length > 0 && selectedDayIds.size === rows.length;
+  const someChecked = selectedDayIds.size > 0 && selectedDayIds.size < rows.length;
 
   const columns = useMemo(
     () => [
@@ -154,12 +173,25 @@ export function MonthViewGrid({
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTableRowElement>, row: DailyAggregateDto, rowIndex: number) => {
-      if (e.key === 'Enter' || e.key === ' ') {
+      if (e.key === 'Enter') {
+        // Enter → activate (drill to sub-daily)
+        e.preventDefault();
+        onDayClick(row);
+      } else if (e.key === ' ') {
+        // Space → toggle checkbox; Shift+Space → range fill
         e.preventDefault();
         if (e.shiftKey) {
-          onDayShiftClick(row);
+          onDayShiftToggle(row);
         } else {
-          onDayClick(row);
+          onDayToggle(row);
+        }
+      } else if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
+        // Ctrl+A / Cmd+A → select all / deselect all
+        e.preventDefault();
+        if (allChecked) {
+          onDeselectAllDays();
+        } else {
+          onSelectAllDays();
         }
       } else if (e.key === 'ArrowDown') {
         e.preventDefault();
@@ -177,7 +209,7 @@ export function MonthViewGrid({
         rowRefs.current[rowIndex - 1]?.focus();
       }
     },
-    [onDayClick, onDayShiftClick, rows],
+    [onDayClick, onDayToggle, onDayShiftToggle, onDayShiftClick, onSelectAllDays, onDeselectAllDays, allChecked, rows],
   );
 
   // Roving tabindex: selected day or first row
@@ -189,14 +221,15 @@ export function MonthViewGrid({
     return 0;
   }, [rows, selectedDay]);
 
-  // Live region for range announcements
+  // Live region for range/checkbox announcements
   const liveText = useMemo(() => {
-    if (selectedDayRange.size <= 1) return '';
-    return `${selectedDayRange.size} days selected`;
-  }, [selectedDayRange.size]);
+    if (selectedDayIds.size >= 2) return `${selectedDayIds.size} days selected`;
+    if (selectedDayRange.size > 1) return `${selectedDayRange.size} days selected`;
+    return '';
+  }, [selectedDayIds.size, selectedDayRange.size]);
 
   if (isLoading) {
-    return <SkeletonTable rows={15} columns={[10, 9, 7, 10, 11, 12, 9, 10, 15]} />;
+    return <SkeletonTable rows={15} columns={[3, 10, 9, 7, 10, 11, 12, 9, 10, 15]} />;
   }
 
   if (rows.length === 0) {
@@ -205,7 +238,7 @@ export function MonthViewGrid({
 
   return (
     <>
-      {/* Live region for screen reader range announcements */}
+      {/* Live region for screen reader announcements */}
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
         {liveText}
       </div>
@@ -220,6 +253,19 @@ export function MonthViewGrid({
           <thead className="sticky top-0 z-10 bg-bg-secondary">
             {table.getHeaderGroups().map((headerGroup) => (
               <tr key={headerGroup.id} role="row" className="h-7">
+                {/* Checkbox header column */}
+                <th
+                  role="columnheader"
+                  className="px-1 py-1 text-xs text-left whitespace-nowrap border-b border-border-grid w-7"
+                >
+                  <SelectAllCheckbox
+                    checked={allChecked}
+                    indeterminate={someChecked}
+                    onChange={allChecked ? onDeselectAllDays : onSelectAllDays}
+                    totalCount={rows.length}
+                    selectedCount={selectedDayIds.size}
+                  />
+                </th>
                 {headerGroup.headers.map((header) => (
                   <th
                     key={header.id}
@@ -236,25 +282,48 @@ export function MonthViewGrid({
           <tbody>
             {table.getRowModel().rows.map((row, rowIndex) => {
               const isInRange = selectedDayRange.has(row.original.dayStart);
+              const isChecked = selectedDayIds.has(row.original.dayStart);
               const isAnchor = row.original.dayStart === selectedDay;
+              const isSelected = isInRange || isChecked;
               return (
                 <tr
                   key={row.id}
                   ref={(el) => { rowRefs.current[rowIndex] = el; }}
                   role="row"
                   tabIndex={rowIndex === focusableRowIndex ? 0 : -1}
-                  aria-selected={isInRange}
+                  aria-selected={isSelected}
                   className={cn(
                     'h-6 cursor-pointer transition-colors',
                     'hover:bg-interactive-row-hover',
                     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-interactive-focus',
-                    isInRange && 'bg-interactive-row-selected',
+                    isSelected && 'bg-interactive-row-selected',
                     isAnchor && 'border-l-2 border-l-interactive-focus',
-                    rowIndex % 2 === 1 && !isInRange && 'bg-bg-grid-even',
+                    rowIndex % 2 === 1 && !isSelected && 'bg-bg-grid-even',
                   )}
                   onClick={(e) => handleRowClick(e, row.original)}
                   onKeyDown={(e) => handleKeyDown(e, row.original, rowIndex)}
                 >
+                  {/* Checkbox cell — stopPropagation in RowCheckbox prevents row activation */}
+                  <td
+                    role="gridcell"
+                    className="px-1 py-0.5 w-7"
+                    onClick={(e) => {
+                      // RowCheckbox stopPropagation prevents this for normal clicks.
+                      // This only fires if user clicks the td padding around the checkbox.
+                      e.stopPropagation();
+                      if (e.shiftKey) {
+                        onDayShiftToggle(row.original);
+                      } else {
+                        onDayToggle(row.original);
+                      }
+                    }}
+                  >
+                    <RowCheckbox
+                      checked={isChecked}
+                      onChange={() => onDayToggle(row.original)}
+                      label={`Select ${row.original.dateLabel}`}
+                    />
+                  </td>
                   {row.getVisibleCells().map((cell) => (
                     <td
                       key={cell.id}

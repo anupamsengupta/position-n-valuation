@@ -174,6 +174,50 @@ export function useForwardDayDetail(
 }
 
 // ---------------------------------------------------------------------------
+// L4: Multi-Day Settled Detail (parallel queries for checkbox multi-select F4)
+// ---------------------------------------------------------------------------
+
+export function useMultiDaySettledDetail(
+  portfolioId: string,
+  days: Array<{ dayStart: string; dayEnd: string }>,
+  granularity: SubDailyGranularity,
+  positionIds: string[] = [],
+) {
+  const tenantId = useTenantStore((s) => s.tenantId);
+  return useQueries({
+    queries: days.map((day) => ({
+      queryKey: dashboardKeys.settledDay(tenantId, portfolioId, day.dayStart, day.dayEnd, granularity, positionIds),
+      queryFn: () => fetchSettledDayDetail(tenantId, portfolioId, day.dayStart, day.dayEnd, granularity, positionIds),
+      enabled: !!tenantId && !!portfolioId,
+      staleTime: 120_000,
+      gcTime: 300_000,
+    })),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// L4: Multi-Day Forward Detail (parallel queries for checkbox multi-select F4)
+// ---------------------------------------------------------------------------
+
+export function useMultiDayForwardDetail(
+  portfolioId: string,
+  days: Array<{ dayStart: string; dayEnd: string }>,
+  granularity: SubDailyGranularity,
+  positionIds: string[] = [],
+) {
+  const tenantId = useTenantStore((s) => s.tenantId);
+  return useQueries({
+    queries: days.map((day) => ({
+      queryKey: dashboardKeys.forwardDay(tenantId, portfolioId, day.dayStart, day.dayEnd, granularity, positionIds),
+      queryFn: () => fetchForwardDayDetail(tenantId, portfolioId, day.dayStart, day.dayEnd, granularity, positionIds),
+      enabled: !!tenantId && !!portfolioId,
+      staleTime: 15_000,
+      gcTime: 300_000,
+    })),
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Card Strip: All Portfolio Summaries (parallel)
 // ---------------------------------------------------------------------------
 

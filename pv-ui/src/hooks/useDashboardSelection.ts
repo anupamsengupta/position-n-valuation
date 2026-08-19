@@ -22,6 +22,10 @@ interface DashboardSelectionState {
   selectedDayRange: ReadonlySet<string>;
   selectedDayStatus: 'SETTLED' | 'TODAY' | 'FORWARD' | null;
 
+  // --- L4 day checkbox multi-select (F4) ---
+  selectedDayIds: ReadonlySet<string>;
+  dayAnchorId: string | null;
+
   // --- L2 actions (unchanged) ---
   setSelectedPeriod: (period: { start: string; end: string; status: PeriodStatus } | null) => void;
   extendPeriodRange: (
@@ -48,6 +52,13 @@ interface DashboardSelectionState {
     allDays: Pick<DailyAggregateDto, 'dayStart' | 'dayStatus'>[],
   ) => void;
   clearDayRange: () => void;
+
+  // --- L4 actions (F4: checkbox multi-select) ---
+  toggleDaySelection: (dayStart: string) => void;
+  setDaySelection: (dayStarts: ReadonlySet<string>) => void;
+  selectAllDays: (allDayStarts: string[]) => void;
+  deselectAllDays: () => void;
+  shiftSelectDay: (dayStart: string, allDayStarts: string[]) => void;
 
   clearAll: () => void;
 }
@@ -85,7 +96,26 @@ const CLEARED_DAY = {
   selectedDayEnd: null,
   selectedDayRange: EMPTY_SET,
   selectedDayStatus: null,
+  selectedDayIds: EMPTY_SET,
+  dayAnchorId: null,
 } as const;
+
+// Cleared checkbox-only fragment (for mutual exclusivity with contiguous range)
+const CLEARED_DAY_IDS = {
+  selectedDayIds: EMPTY_SET,
+  dayAnchorId: null,
+} as const;
+
+// Cleared contiguous range fragment (for mutual exclusivity with checkbox)
+const CLEARED_CONTIGUOUS_RANGE = {
+  selectedDay: null,
+  selectedDayEnd: null,
+  selectedDayRange: EMPTY_SET,
+  selectedDayStatus: null,
+} as const;
+
+/** Maximum number of days selectable via checkboxes to prevent excessive parallel requests. */
+const MAX_DAY_SELECTION = 10;
 
 // Shared cleared-position fragment
 const CLEARED_POSITION = {
@@ -115,6 +145,8 @@ export const useDashboardSelection = create<DashboardSelectionState>((set) => ({
   selectedDayEnd: null,
   selectedDayRange: EMPTY_SET,
   selectedDayStatus: null,
+  selectedDayIds: EMPTY_SET,
+  dayAnchorId: null,
 
   // --- L2 actions ---
 
@@ -275,6 +307,8 @@ export const useDashboardSelection = create<DashboardSelectionState>((set) => ({
       selectedDayEnd: null,
       selectedDayRange: day ? new Set([day]) : EMPTY_SET,
       selectedDayStatus: status,
+      // Mutual exclusivity: clear checkbox multi-select
+      ...CLEARED_DAY_IDS,
     }),
 
   setDayRange: (anchorDay, endDay, allDays) =>
@@ -299,11 +333,90 @@ export const useDashboardSelection = create<DashboardSelectionState>((set) => ({
         selectedDayEnd: rangeDays[rangeDays.length - 1]!.dayStart,
         selectedDayRange: rangeSet,
         selectedDayStatus: combinedStatus,
+        // Mutual exclusivity: clear checkbox multi-select
+        ...CLEARED_DAY_IDS,
       };
     }),
 
   clearDayRange: () =>
     set(CLEARED_DAY),
+
+  // --- L4 actions (F4: checkbox multi-select) ---
+
+  toggleDaySelection: (dayStart) =>
+    set((state) => {
+      const next = new Set(state.selectedDayIds);
+      if (next.has(dayStart)) {
+        next.delete(dayStart);
+        return {
+          selectedDayIds: next.size === 0 ? EMPTY_SET : next,
+          dayAnchorId: next.size === 0 ? null : state.dayAnchorId,
+          ...CLEARED_CONTIGUOUS_RANGE,
+        };
+      } else {
+        if (next.size >= MAX_DAY_SELECTION) return state; // cap at 10
+        next.add(dayStart);
+        return {
+          selectedDayIds: next,
+          dayAnchorId: dayStart,
+          ...CLEARED_CONTIGUOUS_RANGE,
+        };
+      }
+    }),
+
+  setDaySelection: (dayStarts) =>
+    set({
+      selectedDayIds: dayStarts.size === 0 ? EMPTY_SET : dayStarts,
+      dayAnchorId: null,
+      ...CLEARED_CONTIGUOUS_RANGE,
+    }),
+
+  selectAllDays: (allDayStarts) =>
+    set({
+      selectedDayIds: new Set(allDayStarts.slice(0, MAX_DAY_SELECTION)),
+      dayAnchorId: null,
+      ...CLEARED_CONTIGUOUS_RANGE,
+    }),
+
+  deselectAllDays: () =>
+    set({
+      ...CLEARED_DAY_IDS,
+    }),
+
+  shiftSelectDay: (dayStart, allDayStarts) =>
+    set((state) => {
+      const anchorId = state.dayAnchorId;
+      const targetIdx = allDayStarts.indexOf(dayStart);
+      if (targetIdx === -1) return state;
+
+      if (!anchorId) {
+        // No anchor — treat as single toggle
+        const next = new Set(state.selectedDayIds);
+        if (next.size >= MAX_DAY_SELECTION) return state;
+        next.add(dayStart);
+        return {
+          selectedDayIds: next,
+          dayAnchorId: dayStart,
+          ...CLEARED_CONTIGUOUS_RANGE,
+        };
+      }
+
+      const anchorIdx = allDayStarts.indexOf(anchorId);
+      if (anchorIdx === -1) return state;
+
+      const fromIdx = Math.min(anchorIdx, targetIdx);
+      const toIdx = Math.max(anchorIdx, targetIdx);
+      // Additive range fill, capped at MAX_DAY_SELECTION
+      const next = new Set(state.selectedDayIds);
+      for (let i = fromIdx; i <= toIdx && next.size < MAX_DAY_SELECTION; i++) {
+        next.add(allDayStarts[i]!);
+      }
+      return {
+        selectedDayIds: next,
+        // Anchor stays
+        ...CLEARED_CONTIGUOUS_RANGE,
+      };
+    }),
 
   clearAll: () =>
     set((state) => {
@@ -314,7 +427,8 @@ export const useDashboardSelection = create<DashboardSelectionState>((set) => ({
         state.selectedPositionIds.size === 0 &&
         state.activatedPositionId === null &&
         state.selectedDay === null &&
-        state.selectedDayRange.size === 0
+        state.selectedDayRange.size === 0 &&
+        state.selectedDayIds.size === 0
       ) {
         return state;
       }

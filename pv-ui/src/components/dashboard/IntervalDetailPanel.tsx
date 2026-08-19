@@ -7,10 +7,13 @@ import { HorizontalSettledGrid } from './HorizontalSettledGrid';
 import { HorizontalForwardGrid } from './HorizontalForwardGrid';
 import { MonthViewGrid } from './MonthViewGrid';
 import { NettedViewBanner } from './NettedViewBanner';
+import { DaySelectionBanner } from './DaySelectionBanner';
 import {
   useSettledDayDetail,
   useForwardDayDetail,
   useDailyAggregates,
+  useMultiDaySettledDetail,
+  useMultiDayForwardDetail,
 } from '@/hooks/useDashboardQueries';
 import { useDashboardSelection } from '@/hooks/useDashboardSelection';
 import { useUserPreferences } from '@/hooks/useUserPreferences';
@@ -30,7 +33,8 @@ export interface IntervalDetailPanelProps {
 
 /**
  * L4: Interval detail panel with month view, settled day, and forward day grids.
- * Supports multi-position netted views (F1) and multi-day ranges (F2).
+ * Supports multi-position netted views (F1), multi-day ranges (F2),
+ * and checkbox-based non-contiguous multi-day selection (F4).
  */
 export function IntervalDetailPanel({
   portfolioId,
@@ -48,9 +52,14 @@ export function IntervalDetailPanel({
     selectedDayEnd,
     selectedDayRange,
     selectedDayStatus,
+    selectedDayIds,
     setSelectedDay,
     setDayRange,
     clearDayRange,
+    toggleDaySelection,
+    shiftSelectDay,
+    selectAllDays,
+    deselectAllDays,
   } = useDashboardSelection();
 
   useEffect(() => {
@@ -61,7 +70,9 @@ export function IntervalDetailPanel({
   const [viewLayout, setViewLayout] = useState<ViewLayout>('vertical');
 
   const isNetted = positionIds.length >= 2;
-  const isMultiDay = selectedDayRange.size > 1;
+  const isContiguousMultiDay = selectedDayRange.size > 1;
+  const hasCheckboxSelection = selectedDayIds.size >= 1;
+  const isCheckboxMultiDay = selectedDayIds.size >= 2;
 
   // Fetch daily aggregates for the month view
   const dailyQuery = useDailyAggregates(
@@ -71,35 +82,91 @@ export function IntervalDetailPanel({
     positionIds,
   );
 
-  // Find the selected day's aggregate to get dayEnd and intervalCount
+  // Compute allDayStarts for checkbox operations
+  const allDayStarts = useMemo(
+    () => dailyQuery.data?.map((d) => d.dayStart) ?? [],
+    [dailyQuery.data],
+  );
+
+  // --- Contiguous range sub-daily queries (F2 / single-day) ---
   const selectedDayAggregate = dailyQuery.data?.find(
     (d) => d.dayStart === selectedDay,
   );
-  // For multi-day: find the last day's aggregate
   const selectedDayEndAggregate = selectedDayEnd
     ? dailyQuery.data?.find((d) => d.dayStart === selectedDayEnd)
     : selectedDayAggregate;
 
-  // Determine dayStart and dayEnd for sub-daily queries
   const subDayStart = selectedDay;
   const subDayEnd = selectedDayEndAggregate?.dayEnd ?? selectedDayAggregate?.dayEnd ?? null;
 
-  // Fetch sub-daily data when a day (or range) is selected
   const settledQuery = useSettledDayDetail(
     portfolioId,
-    selectedDayStatus === 'SETTLED' || selectedDayStatus === 'TODAY' ? subDayStart ?? undefined : undefined,
-    selectedDayStatus === 'SETTLED' || selectedDayStatus === 'TODAY' ? subDayEnd ?? undefined : undefined,
+    !hasCheckboxSelection && (selectedDayStatus === 'SETTLED' || selectedDayStatus === 'TODAY') ? subDayStart ?? undefined : undefined,
+    !hasCheckboxSelection && (selectedDayStatus === 'SETTLED' || selectedDayStatus === 'TODAY') ? subDayEnd ?? undefined : undefined,
     subGranularity,
     positionIds,
   );
 
   const forwardQuery = useForwardDayDetail(
     portfolioId,
-    selectedDayStatus === 'FORWARD' ? subDayStart ?? undefined : undefined,
-    selectedDayStatus === 'FORWARD' ? subDayEnd ?? undefined : undefined,
+    !hasCheckboxSelection && selectedDayStatus === 'FORWARD' ? subDayStart ?? undefined : undefined,
+    !hasCheckboxSelection && selectedDayStatus === 'FORWARD' ? subDayEnd ?? undefined : undefined,
     subGranularity,
     positionIds,
   );
+
+  // --- Checkbox parallel queries (F4) ---
+  const checkboxDayEntries = useMemo(() => {
+    if (!hasCheckboxSelection || !dailyQuery.data) return [];
+    return dailyQuery.data
+      .filter((d) => selectedDayIds.has(d.dayStart))
+      .map((d) => ({ dayStart: d.dayStart, dayEnd: d.dayEnd, dayStatus: d.dayStatus }));
+  }, [isCheckboxMultiDay, dailyQuery.data, selectedDayIds]);
+
+  // Separate settled vs forward days for checkbox mode
+  const settledDayEntries = useMemo(
+    () => checkboxDayEntries.filter((d) => d.dayStatus === 'SETTLED' || d.dayStatus === 'TODAY'),
+    [checkboxDayEntries],
+  );
+  const forwardDayEntries = useMemo(
+    () => checkboxDayEntries.filter((d) => d.dayStatus === 'FORWARD'),
+    [checkboxDayEntries],
+  );
+
+  const multiSettledResults = useMultiDaySettledDetail(
+    portfolioId,
+    hasCheckboxSelection ? settledDayEntries : [],
+    subGranularity,
+    positionIds,
+  );
+
+  const multiForwardResults = useMultiDayForwardDetail(
+    portfolioId,
+    hasCheckboxSelection ? forwardDayEntries : [],
+    subGranularity,
+    positionIds,
+  );
+
+  // Merge checkbox settled results
+  const mergedSettledData = useMemo(() => {
+    if (!hasCheckboxSelection || settledDayEntries.length === 0) return undefined;
+    return multiSettledResults
+      .flatMap((q) => q.data ?? [])
+      .sort((a, b) => a.intervalStart.localeCompare(b.intervalStart));
+  }, [hasCheckboxSelection, settledDayEntries.length, multiSettledResults]);
+
+  // Merge checkbox forward results
+  const mergedForwardData = useMemo(() => {
+    if (!hasCheckboxSelection || forwardDayEntries.length === 0) return undefined;
+    return multiForwardResults
+      .flatMap((q) => q.data ?? [])
+      .sort((a, b) => a.intervalStart.localeCompare(b.intervalStart));
+  }, [hasCheckboxSelection, forwardDayEntries.length, multiForwardResults]);
+
+  const multiSettledLoading = multiSettledResults.some((q) => q.isLoading);
+  const multiForwardLoading = multiForwardResults.some((q) => q.isLoading);
+
+  // --- Handlers ---
 
   const handleDayClick = useCallback(
     (row: DailyAggregateDto) => {
@@ -121,11 +188,31 @@ export function IntervalDetailPanel({
     [selectedDay, dailyQuery.data, setDayRange],
   );
 
+  const handleDayToggle = useCallback(
+    (row: DailyAggregateDto) => {
+      toggleDaySelection(row.dayStart);
+    },
+    [toggleDaySelection],
+  );
+
+  const handleDayShiftToggle = useCallback(
+    (row: DailyAggregateDto) => {
+      shiftSelectDay(row.dayStart, allDayStarts);
+    },
+    [shiftSelectDay, allDayStarts],
+  );
+
+  const handleSelectAllDays = useCallback(() => {
+    selectAllDays(allDayStarts);
+  }, [selectAllDays, allDayStarts]);
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
-        if (isMultiDay) {
+        if (hasCheckboxSelection) {
+          deselectAllDays();
+        } else if (isContiguousMultiDay) {
           clearDayRange();
         } else if (selectedDay) {
           setSelectedDay(null, null);
@@ -134,7 +221,7 @@ export function IntervalDetailPanel({
         }
       }
     },
-    [selectedDay, isMultiDay, setSelectedDay, clearDayRange, onClose],
+    [selectedDay, isContiguousMultiDay, hasCheckboxSelection, setSelectedDay, clearDayRange, deselectAllDays, onClose],
   );
 
   // Header text
@@ -148,26 +235,46 @@ export function IntervalDetailPanel({
     return null;
   }, [isNetted, positionIds]);
 
-  // Day range label
+  // Day range label (for contiguous mode)
   const dayRangeLabel = useMemo(() => {
     if (!selectedDay) return '';
-    if (isMultiDay && selectedDayEnd) {
+    if (isContiguousMultiDay && selectedDayEnd) {
       return `${formatLocalDate(selectedDay, timezone)} \u2013 ${formatLocalDate(selectedDayEnd, timezone)}`;
     }
     return formatLocalDate(selectedDay, timezone);
-  }, [selectedDay, selectedDayEnd, isMultiDay, timezone]);
+  }, [selectedDay, selectedDayEnd, isContiguousMultiDay, timezone]);
+
+  // Day labels for checkbox banner
+  const checkboxDayLabels = useMemo(() => {
+    if (!hasCheckboxSelection || !dailyQuery.data) return [];
+    return dailyQuery.data
+      .filter((d) => selectedDayIds.has(d.dayStart))
+      .map((d) => formatLocalDate(d.dayStart, timezone));
+  }, [hasCheckboxSelection, dailyQuery.data, selectedDayIds, timezone]);
 
   // Expected interval count for sub-daily grids
   const expectedIntervalCount = useMemo(() => {
-    if (!dailyQuery.data || selectedDayRange.size === 0) return undefined;
+    if (!dailyQuery.data) return undefined;
+    if (hasCheckboxSelection) {
+      let total = 0;
+      for (const d of dailyQuery.data) {
+        if (selectedDayIds.has(d.dayStart)) total += d.intervalCount;
+      }
+      return total || undefined;
+    }
+    if (selectedDayRange.size === 0) return undefined;
     let total = 0;
     for (const d of dailyQuery.data) {
-      if (selectedDayRange.has(d.dayStart)) {
-        total += d.intervalCount;
-      }
+      if (selectedDayRange.has(d.dayStart)) total += d.intervalCount;
     }
     return total || undefined;
-  }, [dailyQuery.data, selectedDayRange]);
+  }, [dailyQuery.data, selectedDayRange, selectedDayIds, hasCheckboxSelection]);
+
+  // Determine what sub-daily views to show
+  const showContiguousSubDaily = !hasCheckboxSelection && selectedDay && (selectedDayAggregate || isContiguousMultiDay);
+  const showCheckboxSubDaily = hasCheckboxSelection;
+  const hasSettledDays = settledDayEntries.length > 0;
+  const hasForwardDays = forwardDayEntries.length > 0;
 
   return (
     <section
@@ -197,7 +304,7 @@ export function IntervalDetailPanel({
         </button>
       </div>
 
-      {/* Netted view banner for multi-select */}
+      {/* Netted view banner for multi-position */}
       {isNetted && (
         <div className="mb-3">
           <NettedViewBanner
@@ -219,11 +326,95 @@ export function IntervalDetailPanel({
           selectedDayRange={selectedDayRange}
           onDayClick={handleDayClick}
           onDayShiftClick={handleDayShiftClick}
+          selectedDayIds={selectedDayIds}
+          onDayToggle={handleDayToggle}
+          onDayShiftToggle={handleDayShiftToggle}
+          onSelectAllDays={handleSelectAllDays}
+          onDeselectAllDays={deselectAllDays}
         />
       </div>
 
-      {/* Sub-daily view: show when a day (or range) is selected */}
-      {selectedDay && (selectedDayAggregate || isMultiDay) && (
+      {/* Checkbox multi-day sub-daily view (F4) */}
+      {showCheckboxSubDaily && (
+        <div className="mt-4">
+          {isCheckboxMultiDay && (
+            <DaySelectionBanner
+              selectedCount={selectedDayIds.size}
+              dayLabels={checkboxDayLabels}
+              onClear={deselectAllDays}
+            />
+          )}
+
+          <div className="flex items-center justify-between mb-2 mt-3">
+            <h4 className="text-xs font-medium text-text-secondary">
+              {hasSettledDays && hasForwardDays
+                ? 'Settlement & Forward Mark Data'
+                : hasSettledDays
+                  ? `Settlement Data (${settledDayEntries.length} days)`
+                  : `Forward Mark Data (${forwardDayEntries.length} days)`}
+            </h4>
+            <div className="flex items-center gap-3">
+              <ViewLayoutToggle value={viewLayout} onChange={setViewLayout} />
+              <SubGranularityToggle value={subGranularity} onChange={setSubGranularity} />
+            </div>
+          </div>
+
+          {hasSettledDays && (
+            <>
+              {hasForwardDays && (
+                <h5 className="text-[10px] font-medium text-text-muted mb-1">
+                  Settlement Data ({settledDayEntries.length} days)
+                </h5>
+              )}
+              {viewLayout === 'vertical' ? (
+                <SettledDayGrid
+                  data={mergedSettledData}
+                  isLoading={multiSettledLoading}
+                  timezone={timezone}
+                  expectedIntervalCount={expectedIntervalCount}
+                  isMultiDay={true}
+                />
+              ) : (
+                <HorizontalSettledGrid
+                  data={mergedSettledData}
+                  isLoading={multiSettledLoading}
+                  timezone={timezone}
+                  expectedIntervalCount={expectedIntervalCount}
+                />
+              )}
+            </>
+          )}
+
+          {hasForwardDays && (
+            <>
+              {hasSettledDays && (
+                <h5 className="text-[10px] font-medium text-text-muted mb-1 mt-3">
+                  Forward Mark Data ({forwardDayEntries.length} days)
+                </h5>
+              )}
+              {viewLayout === 'vertical' ? (
+                <ForwardDayGrid
+                  data={mergedForwardData}
+                  isLoading={multiForwardLoading}
+                  timezone={timezone}
+                  expectedIntervalCount={expectedIntervalCount}
+                  isMultiDay={true}
+                />
+              ) : (
+                <HorizontalForwardGrid
+                  data={mergedForwardData}
+                  isLoading={multiForwardLoading}
+                  timezone={timezone}
+                  expectedIntervalCount={expectedIntervalCount}
+                />
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Contiguous range / single-day sub-daily view (F2 / existing) */}
+      {showContiguousSubDaily && (
         <div className="mt-4">
           <div className="flex items-center justify-between mb-2">
             <h4 className="text-xs font-medium text-text-secondary">
@@ -247,7 +438,7 @@ export function IntervalDetailPanel({
                 isLoading={settledQuery.isLoading}
                 timezone={timezone}
                 expectedIntervalCount={expectedIntervalCount}
-                isMultiDay={isMultiDay}
+                isMultiDay={isContiguousMultiDay}
               />
             ) : (
               <HorizontalSettledGrid
@@ -266,7 +457,7 @@ export function IntervalDetailPanel({
                 isLoading={forwardQuery.isLoading}
                 timezone={timezone}
                 expectedIntervalCount={expectedIntervalCount}
-                isMultiDay={isMultiDay}
+                isMultiDay={isContiguousMultiDay}
               />
             ) : (
               <HorizontalForwardGrid
