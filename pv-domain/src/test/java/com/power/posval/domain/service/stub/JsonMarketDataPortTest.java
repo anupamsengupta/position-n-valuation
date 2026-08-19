@@ -23,7 +23,7 @@ class JsonMarketDataPortTest {
     void lookupFixingReturnsCorrectValue() {
         MarketDataLookup result = port.lookupFixing(
             "EPEX_DA15", Instant.parse("2025-03-01T00:00:00Z"));
-        assertEquals(new BigDecimal("25.62"), result.value());
+        assertEquals(new BigDecimal("83.04"), result.value());
         assertEquals("EPEX_DA15", result.series());
     }
 
@@ -47,7 +47,7 @@ class JsonMarketDataPortTest {
             "EEX_BASE_DE",
             YearMonth.of(2025, 3),
             Instant.parse("2025-02-28T18:00:00Z"));
-        assertEquals(new BigDecimal("74.2"), result.value());
+        assertEquals(new BigDecimal("80.0"), result.value());
     }
 
     @Test
@@ -61,14 +61,14 @@ class JsonMarketDataPortTest {
     void lookupSettlementSeries() {
         MarketDataLookup result = port.lookupFixing(
             "EPEX_DA15_SETTLE", Instant.parse("2025-03-01T00:00:00Z"));
-        assertEquals(new BigDecimal("24.86"), result.value());
+        assertEquals(new BigDecimal("83.9"), result.value());
     }
 
     @Test
     void lookupNordpoolSeries() {
         MarketDataLookup result = port.lookupFixing(
             "NORDPOOL_SYS", Instant.parse("2025-03-01T00:00:00Z"));
-        assertEquals(new BigDecimal("322.29"), result.value());
+        assertEquals(new BigDecimal("923.3"), result.value());
     }
 
     @Test
@@ -77,12 +77,12 @@ class JsonMarketDataPortTest {
         MarketDataLookup q1_2027 = port.lookupForwardCurve(
             "EEX_BASE_DE", YearMonth.of(2027, 1),
             Instant.parse("2025-02-28T18:00:00Z"));
-        assertEquals(new BigDecimal("93.1"), q1_2027.value());
+        assertEquals(new BigDecimal("84.75"), q1_2027.value());
 
         MarketDataLookup summer_2026 = port.lookupForwardCurve(
             "EEX_BASE_DE", YearMonth.of(2026, 7),
             Instant.parse("2025-02-28T18:00:00Z"));
-        assertEquals(new BigDecimal("56.9"), summer_2026.value());
+        assertEquals(new BigDecimal("87.75"), summer_2026.value());
     }
 
     @Test

@@ -118,12 +118,12 @@ class SettlementRevaluationServiceTest {
 
         assertEquals(0, new BigDecimal("85.00").compareTo(cell.price()));
         assertNotNull(cell.marketPrice());
-        assertTrue(cell.marketPrice().subtract(new BigDecimal("28.06")).abs()
+        assertTrue(cell.marketPrice().subtract(new BigDecimal("87.10")).abs()
             .compareTo(new BigDecimal("0.01")) < 0,
-            "Market price ≈ 28.06, got " + cell.marketPrice());
+            "Market price ≈ 87.10, got " + cell.marketPrice());
         assertNotNull(cell.pnl());
-        assertTrue(cell.pnl().compareTo(BigDecimal.ZERO) < 0,
-            "PnL should be negative (market < trade)");
+        assertTrue(cell.pnl().compareTo(BigDecimal.ZERO) > 0,
+            "PnL should be positive (market > trade)");
     }
 
     // --- helpers ---

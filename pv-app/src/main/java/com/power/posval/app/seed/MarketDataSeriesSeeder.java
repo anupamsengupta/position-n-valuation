@@ -25,13 +25,14 @@ import java.util.Random;
  *   <li><b>Indices</b>: HICP-DE monthly from 2023-11 → 2028-06</li>
  * </ul>
  *
- * Prices follow realistic EU power market patterns:
- * - Night (00–06): 15–35 EUR/MWh (low demand, wind dominant)
- * - Morning ramp (06–09): 35–75 EUR/MWh
- * - Midday solar dip (11–14): 25–55 EUR/MWh (solar oversupply)
- * - Evening peak (17–20): 60–120 EUR/MWh
- * - Weekends: ~30% lower than weekdays
- * - Seasonal: winter +20%, summer -10%
+ * Prices follow a mean-reverting random walk centred on current EU baseload (~85 EUR/MWh):
+ * - Inter-interval jitter: 1–2.5 EUR
+ * - Overall range: 80–90 EUR/MWh (base ± 5)
+ * - Direction biased toward base to prevent boundary sticking
+ * - NORDPOOL: ~950 NOK/MWh ± 55, jitter 10–28 NOK
+ *
+ * Consistent with stub/market-data.json so that JSON-backed tests and
+ * DB-seeded runtime produce comparable price levels.
  */
 public final class MarketDataSeriesSeeder {
 
@@ -45,6 +46,7 @@ public final class MarketDataSeriesSeeder {
      * Seed all 15-min market data. Returns [fixings, forwardCurves, fxRates, indices].
      */
     public static int[] seed(MarketDataRepository repo) {
+        prevPrice.clear();
         ZonedDateTime seriesStart = ZonedDateTime.of(2026, 7, 1, 0, 0, 0, 0, ZoneOffset.UTC);
         ZonedDateTime now = ZonedDateTime.now(ZoneOffset.UTC);
         ZonedDateTime seriesEnd = ZonedDateTime.of(2028, 7, 1, 0, 0, 0, 0, ZoneOffset.UTC);
@@ -133,9 +135,6 @@ public final class MarketDataSeriesSeeder {
             ZonedDateTime cursor = monthStart;
             while (cursor.isBefore(monthEnd)) {
                 double price = generatePrice(cursor, random, series);
-                // Forward curves have a slight contango premium over spot
-                double premium = 2.0 + random.nextGaussian() * 0.5;
-                price += premium;
 
                 Instant intervalStart = cursor.toInstant();
                 MarketDataLookup lookup = new MarketDataLookup(
@@ -200,67 +199,43 @@ public final class MarketDataSeriesSeeder {
         return count;
     }
 
+    // Per-series previous price for mean-reverting walk (reset per seed call via new Random)
+    private static final java.util.Map<String, Double> prevPrice = new java.util.concurrent.ConcurrentHashMap<>();
+
+    // EUR constants
+    private static final double EUR_BASE = 85.0;
+    private static final double EUR_TOL = 5.0;
+    private static final double EUR_JITTER_MIN = 1.0;
+    private static final double EUR_JITTER_MAX = 2.5;
+
+    // NOK constants (NORDPOOL)
+    private static final double NOK_BASE = 950.0;
+    private static final double NOK_TOL = 55.0;
+    private static final double NOK_JITTER_MIN = 10.0;
+    private static final double NOK_JITTER_MAX = 28.0;
+
     /**
-     * Generate a realistic EU power price for a given timestamp.
-     * Models intraday shape, weekend effect, and seasonal variation.
+     * Generate a price using a mean-reverting random walk.
+     * EUR series: centred on 85 EUR/MWh, range [80, 90], step 1–2.5 EUR.
+     * NORDPOOL: centred on 950 NOK/MWh, range [895, 1005], step 10–28 NOK.
+     * Direction biased toward centre to prevent boundary sticking.
      */
     private static double generatePrice(ZonedDateTime dt, Random random, String series) {
-        int hour = dt.getHour();
-        int dayOfWeek = dt.getDayOfWeek().getValue(); // 1=Mon, 7=Sun
-        int month = dt.getMonthValue();
         boolean isNordpool = "NORDPOOL_SYS".equals(series);
+        double base  = isNordpool ? NOK_BASE : EUR_BASE;
+        double tol   = isNordpool ? NOK_TOL : EUR_TOL;
+        double jmin  = isNordpool ? NOK_JITTER_MIN : EUR_JITTER_MIN;
+        double jmax  = isNordpool ? NOK_JITTER_MAX : EUR_JITTER_MAX;
 
-        // Base intraday shape (EUR/MWh)
-        double base;
-        if (hour >= 0 && hour < 6) {
-            // Night: low demand
-            base = 22.0 + 8.0 * Math.sin(hour * Math.PI / 6.0);
-        } else if (hour >= 6 && hour < 9) {
-            // Morning ramp
-            base = 35.0 + 25.0 * ((hour - 6) / 3.0);
-        } else if (hour >= 9 && hour < 11) {
-            // Morning plateau
-            base = 55.0 + 10.0 * Math.sin((hour - 9) * Math.PI / 4.0);
-        } else if (hour >= 11 && hour < 15) {
-            // Midday solar dip
-            base = 35.0 + 15.0 * Math.cos((hour - 13) * Math.PI / 4.0);
-        } else if (hour >= 15 && hour < 17) {
-            // Afternoon recovery
-            base = 50.0 + 15.0 * ((hour - 15) / 2.0);
-        } else if (hour >= 17 && hour < 21) {
-            // Evening peak
-            base = 70.0 + 30.0 * Math.sin((hour - 17) * Math.PI / 4.0);
-        } else {
-            // Late evening decline
-            base = 45.0 - 15.0 * ((hour - 21) / 3.0);
-        }
-
-        // Weekend discount (~30%)
-        if (dayOfWeek >= 6) {
-            base *= 0.70;
-        }
-
-        // Seasonal variation
-        if (month >= 11 || month <= 2) {
-            base *= 1.20; // Winter premium
-        } else if (month >= 6 && month <= 8) {
-            base *= 0.90; // Summer discount
-        }
-
-        // NORDPOOL is generally lower than EPEX, in NOK
-        if (isNordpool) {
-            base = base * 0.60 * 11.2; // Convert to NOK, hydro discount
-        }
-
-        // Add noise (±15%)
-        double noise = random.nextGaussian() * base * 0.10;
-
-        // Occasional negative prices (2% chance during solar midday in summer)
-        if (!isNordpool && month >= 5 && month <= 8 && hour >= 11 && hour < 15
-                && random.nextDouble() < 0.02) {
-            return -5.0 + random.nextGaussian() * 10.0;
-        }
-
-        return Math.max(isNordpool ? 50.0 : 0.5, base + noise);
+        double prev = prevPrice.getOrDefault(series, base);
+        double mag = jmin + random.nextDouble() * (jmax - jmin);
+        double dist = (prev - base) / tol; // -1 to +1
+        double pDown = 0.5 + 0.35 * dist;
+        double direction = random.nextDouble() < pDown ? -1.0 : 1.0;
+        double price = prev + direction * mag;
+        price = Math.max(base - tol, Math.min(base + tol, price));
+        price = Math.round(price * 100.0) / 100.0;
+        prevPrice.put(series, price);
+        return price;
     }
 }

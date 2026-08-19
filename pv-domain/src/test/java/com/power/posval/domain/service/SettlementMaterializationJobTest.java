@@ -193,8 +193,8 @@ class SettlementMaterializationJobTest {
 
         assertEquals(1, savedCells.size());
         SettlementCell cell = savedCells.get(0);
-        // EPEX_DA15_SETTLE at 2025-03-01T00:00:00Z = 24.86, + 3.20 = 28.06
-        assertEquals(0, new BigDecimal("28.06").compareTo(cell.price()), "price should be 28.06");
+        // EPEX_DA15_SETTLE at 2025-03-01T00:00:00Z = 83.90, + 3.20 = 87.10
+        assertEquals(0, new BigDecimal("87.10").compareTo(cell.price()), "price should be 87.10");
         assertTrue(cell.amount().compareTo(BigDecimal.ZERO) > 0);
         assertTrue(cell.activeLeaves().contains("EPEX_DA15"));
         assertTrue(cell.activeLeaves().contains("PREMIUM_3_20"));
@@ -254,18 +254,18 @@ class SettlementMaterializationJobTest {
 
         // Trade price = 85.00
         assertEquals(0, new BigDecimal("85.00").compareTo(cell.price()));
-        // Market price ≈ 28.06
+        // Market price ≈ 87.10 (EPEX_DA15_SETTLE 83.90 + spread 3.20)
         assertNotNull(cell.marketPrice());
-        assertTrue(cell.marketPrice().subtract(new BigDecimal("28.06")).abs()
+        assertTrue(cell.marketPrice().subtract(new BigDecimal("87.10")).abs()
             .compareTo(new BigDecimal("0.01")) < 0,
-            "Market price should be ~28.06, got " + cell.marketPrice());
+            "Market price should be ~87.10, got " + cell.marketPrice());
         // Market amount should be positive
         assertNotNull(cell.marketAmount());
         assertTrue(cell.marketAmount().compareTo(BigDecimal.ZERO) > 0);
-        // PnL = marketAmount - tradeAmount (negative since 28 < 85)
+        // PnL = marketAmount - tradeAmount (positive since 87.10 > 85)
         assertNotNull(cell.pnl());
-        assertTrue(cell.pnl().compareTo(BigDecimal.ZERO) < 0,
-            "PnL should be negative, got " + cell.pnl());
+        assertTrue(cell.pnl().compareTo(BigDecimal.ZERO) > 0,
+            "PnL should be positive, got " + cell.pnl());
         // Active leaves should contain leaves from both expressions
         assertTrue(cell.activeLeaves().contains("FIXED_85"));
         assertTrue(cell.activeLeaves().contains("EPEX_DA15"));
