@@ -9,6 +9,7 @@ import jakarta.persistence.EntityManager;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 
@@ -90,7 +91,14 @@ public class JpaTradeLegRollupRepository implements TradeLegRollupRepository {
             return;
         }
         var em = emProvider.get();
-        for (TradeLegRollupCell cell : cells) {
+        // Sort by unique key to guarantee deterministic lock acquisition order
+        // and prevent deadlocks when concurrent consumers upsert overlapping rows.
+        var sorted = cells.stream()
+                .sorted(Comparator.comparing((TradeLegRollupCell c) -> c.positionId().toString())
+                        .thenComparing(TradeLegRollupCell::periodStart)
+                        .thenComparing(c -> c.granularity().name()))
+                .toList();
+        for (TradeLegRollupCell cell : sorted) {
             em.createNativeQuery("""
                     INSERT INTO volume_series.trade_leg_rollup_cell
                       (position_id, tenant_id, trade_id, trade_leg_id, trade_version,

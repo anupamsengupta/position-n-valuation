@@ -9,6 +9,7 @@ import jakarta.persistence.EntityManager;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -74,7 +75,16 @@ public class JpaRollupRepository implements RollupRepository {
     @Override
     public void saveAll(String tenantId, List<RollupCell> cells) {
         var em = emProvider.get();
-        for (RollupCell cell : cells) {
+        // Sort by unique key to guarantee deterministic lock acquisition order
+        // and prevent deadlocks when concurrent consumers upsert overlapping rows.
+        var sorted = cells.stream()
+                .sorted(Comparator.comparing(RollupCell::deliveryPointId)
+                        .thenComparing(RollupCell::portfolioId)
+                        .thenComparing(RollupCell::periodStart)
+                        .thenComparing(c -> c.granularity().name())
+                        .thenComparing(RollupCell::isPeak))
+                .toList();
+        for (RollupCell cell : sorted) {
             em.createNativeQuery("""
                 INSERT INTO volume_series.rollup_cell
                   (tenant_id, delivery_point_id, portfolio_id,
