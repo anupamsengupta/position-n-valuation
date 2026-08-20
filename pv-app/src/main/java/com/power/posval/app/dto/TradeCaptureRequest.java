@@ -1,6 +1,7 @@
 package com.power.posval.app.dto;
 
 import com.power.posval.domain.command.TradeCapture;
+import com.power.posval.domain.model.TradeDirection;
 import com.power.posval.domain.model.VolumeUnit;
 import com.power.posval.domain.model.value.DeliveryPeriod;
 import com.power.posval.domain.model.value.SeriesKey;
@@ -20,6 +21,7 @@ public record TradeCaptureRequest(
         String deliveryEnd,
         String deliveryTimezone,
         String quantity,
+        String direction,
         String volumeUnit,
         String priceExpressionId,
         String marketPriceExpressionId,
@@ -44,6 +46,7 @@ public record TradeCaptureRequest(
                         ZonedDateTime.parse(deliveryEnd).withZoneSameInstant(tz),
                         tz),
                 new BigDecimal(quantity),
+                TradeDirection.valueOf(direction),
                 VolumeUnit.valueOf(volumeUnit),
                 UUID.fromString(priceExpressionId),
                 marketPriceExpressionId != null ? UUID.fromString(marketPriceExpressionId) : null,

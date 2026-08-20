@@ -2,6 +2,7 @@ package com.power.posval.domain.service;
 
 import com.power.posval.domain.command.TradeCapture;
 import com.power.posval.domain.model.PositionLedgerEntry;
+import com.power.posval.domain.model.TradeDirection;
 import com.power.posval.domain.model.VolumeUnit;
 import com.power.posval.domain.model.value.DeliveryPeriod;
 import com.power.posval.domain.model.value.SeriesKey;
@@ -108,7 +109,7 @@ class DefaultTradeCaptureHandlerTest {
             new DeliveryPeriod(
                 ZonedDateTime.of(2025, 3, 1, 0, 0, 0, 0, CET),
                 ZonedDateTime.of(2025, 4, 1, 0, 0, 0, 0, CET), CET),
-            new BigDecimal("10.0"), VolumeUnit.MW_CAPACITY,
+            new BigDecimal("10.0"), TradeDirection.BUY, VolumeUnit.MW_CAPACITY,
             UUID.randomUUID(), marketExprId, "PORTFOLIO-1", "DE_LU",
             "BILATERAL_TRADE", Instant.now(),
             null, BigDecimal.ONE,
@@ -124,7 +125,7 @@ class DefaultTradeCaptureHandlerTest {
         return new TradeCapture(
             "T-7788", 1, "LEG-1", "TN_0042",
             new DeliveryPeriod(start, end, CET),
-            new BigDecimal("10.0"), VolumeUnit.MW_CAPACITY,
+            new BigDecimal("10.0"), TradeDirection.BUY, VolumeUnit.MW_CAPACITY,
             UUID.randomUUID(), null, "PORTFOLIO-1", "DE_LU",
             "BILATERAL_TRADE", Instant.now(),
             null, BigDecimal.ONE,

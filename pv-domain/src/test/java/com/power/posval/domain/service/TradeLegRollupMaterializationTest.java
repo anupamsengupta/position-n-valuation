@@ -3,6 +3,7 @@ package com.power.posval.domain.service;
 import com.power.posval.domain.model.PositionLedgerEntry;
 import com.power.posval.domain.model.SettlementCell;
 import com.power.posval.domain.model.TimeGranularity;
+import com.power.posval.domain.model.TradeDirection;
 import com.power.posval.domain.model.VolumeUnit;
 import com.power.posval.domain.model.value.DeliveryRange;
 import com.power.posval.domain.port.DefaultNumericPrecision;
@@ -242,6 +243,7 @@ class TradeLegRollupMaterializationTest {
             .tradeVersion(1)
             .deliveryRange(DeliveryRange.ofMonth(YearMonth.of(2025, 3), CET))
             .quantity(BigDecimal.TEN)
+            .direction(TradeDirection.BUY)
             .volumeUnit(VolumeUnit.MW_CAPACITY)
             .priceExpressionId(UUID.randomUUID())
             .portfolioId("PF-001")
@@ -377,6 +379,7 @@ class TradeLegRollupMaterializationTest {
             .tradeVersion(1)
             .deliveryRange(DeliveryRange.ofMonth(YearMonth.of(2025, 3), CET))
             .quantity(new BigDecimal("100.0"))
+            .direction(TradeDirection.BUY)
             .volumeUnit(VolumeUnit.MW_CAPACITY)
             .priceExpressionId(UUID.randomUUID())
             .portfolioId("PF-001")

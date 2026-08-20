@@ -195,7 +195,7 @@ class FiveYearTradeIntegrationTest {
             new DeliveryPeriod(
                 ZonedDateTime.of(2025, 1, 1, 0, 0, 0, 0, CET),
                 ZonedDateTime.of(2030, 1, 1, 0, 0, 0, 0, CET), CET),
-            new BigDecimal("80.0"), VolumeUnit.MW_CAPACITY, EXPR_4_ID,
+            new BigDecimal("80.0"), TradeDirection.BUY, VolumeUnit.MW_CAPACITY, EXPR_4_ID,
             null,
             "PORTFOLIO-WIND", "DE_LU", "PPA_ONSHORE",
             Instant.parse("2024-12-01T00:00:00Z"),

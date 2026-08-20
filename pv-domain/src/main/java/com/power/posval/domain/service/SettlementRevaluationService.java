@@ -165,8 +165,14 @@ public class SettlementRevaluationService {
     private SettlementCell buildSettlementCell(PositionLedgerEntry position,
                                                 VolumeRecord volume,
                                                 PriceResolution price) {
+        // OQ-1, OQ-6, S14: sign energy at the settlement cell build site using quantity signum.
+        // signum(quantity) works for legacy entries that predate the direction field. FR-034.
+        int directionSign = position.quantity().signum();
+        BigDecimal signedEnergy = volume.energy().multiply(BigDecimal.valueOf(directionSign));
+        BigDecimal signedVolume = volume.volume().multiply(BigDecimal.valueOf(directionSign));
+
         BigDecimal tradeAmount = np.round(
-            price.value().multiply(volume.energy()), NumericPrecision.Domain.MONETARY);
+            price.value().multiply(signedEnergy), NumericPrecision.Domain.MONETARY);
 
         BigDecimal marketPrice = null;
         BigDecimal marketAmount = null;
@@ -187,7 +193,7 @@ public class SettlementRevaluationService {
 
             marketPrice = marketRes.value();
             marketAmount = np.round(
-                marketPrice.multiply(volume.energy()), NumericPrecision.Domain.MONETARY);
+                marketPrice.multiply(signedEnergy), NumericPrecision.Domain.MONETARY);
             pnl = np.round(
                 marketAmount.subtract(tradeAmount), NumericPrecision.Domain.MONETARY);
 
@@ -209,8 +215,8 @@ public class SettlementRevaluationService {
             "SETTLEMENT",
             "PROVISIONAL",
             price.value(),
-            volume.volume(),
-            volume.energy(),
+            signedVolume,
+            signedEnergy,
             tradeAmount,
             marketPrice,
             marketAmount,

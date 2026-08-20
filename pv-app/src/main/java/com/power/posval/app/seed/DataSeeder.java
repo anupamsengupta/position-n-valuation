@@ -111,9 +111,10 @@ public class DataSeeder implements ApplicationRunner {
         if (volumeExists) {
             log.info("Volume series already seeded, skipping");
         } else {
-            log.info("Seeding volume series (Jul 2026 → Jul 2028, 15-min UTC)...");
-            int[] volCounts = txExecutor.execute(() -> VolumeSeriesSeeder.seed(volumeSeriesRepo));
-            log.info("Seeded {} wind intervals, {} solar intervals", volCounts[0], volCounts[1]);
+            log.info("Seeding volume series (15-min, 30-min, 60-min, daily, monthly)...");
+            int[] vc = txExecutor.execute(() -> VolumeSeriesSeeder.seed(volumeSeriesRepo));
+            log.info("Seeded wind-15m={}, solar-15m={}, wind-30m={}, solar-60m={}, wind-daily={}, solar-monthly={}",
+                vc[0], vc[1], vc[2], vc[3], vc[4], vc[5]);
         }
     }
 

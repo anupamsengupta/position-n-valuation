@@ -48,6 +48,7 @@ public class DefaultTradeAmendHandler implements TradeAmendHandler {
                 .deliveryStart(existing.deliveryStart())
                 .deliveryEnd(existing.deliveryEnd())
                 .quantity(cmd.quantity() != null ? cmd.quantity() : existing.quantity())
+                .direction(existing.direction())
                 .volumeUnit(existing.volumeUnit())
                 .priceExpressionId(cmd.priceExpressionId() != null
                     ? cmd.priceExpressionId() : existing.priceExpressionId())

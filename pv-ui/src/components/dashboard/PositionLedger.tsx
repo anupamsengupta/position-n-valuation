@@ -154,6 +154,25 @@ export function PositionLedger({
         cell: (info) => <span className="text-text-secondary">{info.getValue()}</span>,
         size: 60,
       }),
+      columnHelper.accessor('direction', {
+        header: 'Dir',
+        cell: (info) => {
+          const dir = info.getValue();
+          return (
+            <span
+              className={cn(
+                'inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold leading-none',
+                dir === 'BUY'
+                  ? 'bg-emerald-500/15 text-emerald-400'
+                  : 'bg-red-500/15 text-red-400',
+              )}
+            >
+              {dir}
+            </span>
+          );
+        },
+        size: 50,
+      }),
       columnHelper.accessor('deliveryStart', {
         header: 'Start',
         cell: (info) => {
@@ -337,7 +356,7 @@ export function PositionLedger({
       </div>
 
       {isLoading ? (
-        <SkeletonTable rows={8} columns={[3, 10, 6, 10, 10, 8, 10, 11, 10, 12, 9, 10, 14]} />
+        <SkeletonTable rows={8} columns={[3, 10, 6, 5, 10, 10, 8, 10, 11, 10, 12, 9, 10, 14]} />
       ) : !filteredData || filteredData.length === 0 ? (
         <EmptyState message={hideZeroRows ? "All rows are zero — toggle off to see data." : "No position contributions for this period."} />
       ) : (

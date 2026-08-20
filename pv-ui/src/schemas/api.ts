@@ -76,6 +76,7 @@ export const positionContributionSchema = z.object({
   deliveryEnd: instantString,
   quantity: bigDecimalValue,
   volumeUnit: z.string(),
+  direction: z.enum(['BUY', 'SELL']),
   deliveryPointId: z.string(),
   deliveryStatus: z.string(),
   settledMw: bigDecimalNullable,

@@ -492,6 +492,7 @@ public class DefaultDashboardQueryService implements DashboardQueryService {
                 periodEnd,
                 first.quantity(),
                 first.volumeUnit(),
+                first.direction(),       // FR-034: propagate direction from rollup cell
                 first.deliveryPointId(),
                 deliveryStatus,
                 settledMw,
@@ -627,6 +628,11 @@ public class DefaultDashboardQueryService implements DashboardQueryService {
                 .map(PositionLedgerEntry::quantity)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
+            // FR-034: infer direction from first position (null-safe fallback for legacy entries)
+            String directionName = firstPos.direction() != null
+                ? firstPos.direction().name()
+                : (firstPos.quantity() != null && firstPos.quantity().signum() >= 0 ? "BUY" : "SELL");
+
             result.add(new PositionContribution(
                 firstPos.id(),
                 firstPos.tradeId(),
@@ -636,6 +642,7 @@ public class DefaultDashboardQueryService implements DashboardQueryService {
                 periodEnd,
                 totalQuantity,
                 firstPos.volumeUnit() != null ? firstPos.volumeUnit().name() : null,
+                directionName,
                 firstPos.deliveryPointId(),
                 deliveryStatus,
                 settled.netMw,

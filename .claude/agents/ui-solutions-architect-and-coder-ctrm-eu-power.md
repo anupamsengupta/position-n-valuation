@@ -16,7 +16,7 @@ You design UI architecture and you implement it. On this codebase, there is no e
 - **Domain concepts you must model correctly in the UI:**
     - **Trades** with legs, delivery months, physical delivery, EPEX / Nord Pool markets
     - **Positions** — bitemporal, grain = trade-leg × delivery-month
-    - **PriceExpression** — sealed hierarchy; fixed price is a degenerate expression
+    - **PriceExpression** — sealed hierarchy; fixed price is a degenerate expression****
     - **VolumeSeries** with `VolumeReference × multiplier` — forecast per asset, profile per trade
     - **Settlement cells** at 15-minute interval granularity, bitemporal
     - **Forward marks** — ephemeral current state

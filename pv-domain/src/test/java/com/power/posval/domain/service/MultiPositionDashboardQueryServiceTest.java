@@ -493,6 +493,7 @@ class MultiPositionDashboardQueryServiceTest {
             .deliveryStart(MONTH_START)
             .deliveryEnd(MONTH_END)
             .quantity(new BigDecimal("100"))
+            .direction(com.power.posval.domain.model.TradeDirection.BUY)
             .volumeUnit(VolumeUnit.MW_CAPACITY)
             .priceExpressionId(UUID.fromString("00000000-0000-0000-0000-000000000099"))
             .portfolioId(PORTFOLIO)

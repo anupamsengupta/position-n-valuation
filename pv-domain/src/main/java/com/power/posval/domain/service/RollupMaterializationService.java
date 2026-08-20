@@ -357,6 +357,11 @@ public class RollupMaterializationService {
         String versionHash = Integer.toHexString(
             Objects.hash(cells.size(), totalMwh, totalAmount));
 
+        // FR-034: derive direction string from direction field (with fallback for legacy entries)
+        String directionName = pos.direction() != null
+            ? pos.direction().name()
+            : (pos.quantity() != null && pos.quantity().signum() >= 0 ? "BUY" : "SELL");
+
         return new TradeLegRollupCell(
             pos.id(),
             tenantId,
@@ -378,6 +383,7 @@ public class RollupMaterializationService {
             deliveryStatus,
             pos.quantity() != null ? pos.quantity() : BigDecimal.ZERO,
             pos.volumeUnit() != null ? pos.volumeUnit().name() : null,
+            directionName,
             currency,
             versionHash,
             Instant.now()

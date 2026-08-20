@@ -55,7 +55,7 @@ public class JpaTradeLegRollupRepository implements TradeLegRollupRepository {
                                period_start, period_end, granularity,
                                settled_mw, settled_mwh, avg_price, settled_value, market_value,
                                realized_pnl, has_forward_intervals, delivery_status,
-                               quantity, volume_unit, currency, version_hash, refreshed_at
+                               quantity, volume_unit, direction, currency, version_hash, refreshed_at
                         FROM volume_series.trade_leg_rollup_cell
                         WHERE tenant_id = :tenantId
                           AND portfolio_id = :portfolioId
@@ -98,13 +98,13 @@ public class JpaTradeLegRollupRepository implements TradeLegRollupRepository {
                        period_start, period_end, granularity,
                        settled_mw, settled_mwh, avg_price, settled_value, market_value,
                        realized_pnl, has_forward_intervals, delivery_status,
-                       quantity, volume_unit, currency, version_hash, refreshed_at)
+                       quantity, volume_unit, direction, currency, version_hash, refreshed_at)
                     VALUES (:positionId, :tenantId, :tradeId, :tradeLegId, :tradeVersion,
                             :deliveryPointId, :portfolioId,
                             :periodStart, :periodEnd, :granularity,
                             :settledMw, :settledMwh, :avgPrice, :settledValue, :marketValue,
                             :realizedPnl, :hasForwardIntervals, :deliveryStatus,
-                            :quantity, :volumeUnit, :currency, :versionHash, :refreshedAt)
+                            :quantity, :volumeUnit, :direction, :currency, :versionHash, :refreshedAt)
                     ON CONFLICT (tenant_id, position_id, period_start, granularity)
                     DO UPDATE SET
                         trade_id             = EXCLUDED.trade_id,
@@ -123,6 +123,7 @@ public class JpaTradeLegRollupRepository implements TradeLegRollupRepository {
                         delivery_status      = EXCLUDED.delivery_status,
                         quantity             = EXCLUDED.quantity,
                         volume_unit          = EXCLUDED.volume_unit,
+                        direction            = EXCLUDED.direction,
                         currency             = EXCLUDED.currency,
                         version_hash         = EXCLUDED.version_hash,
                         refreshed_at         = EXCLUDED.refreshed_at
@@ -147,6 +148,7 @@ public class JpaTradeLegRollupRepository implements TradeLegRollupRepository {
                     .setParameter("deliveryStatus", cell.deliveryStatus())
                     .setParameter("quantity", cell.quantity())
                     .setParameter("volumeUnit", cell.volumeUnit())
+                    .setParameter("direction", cell.direction())
                     .setParameter("currency", cell.currency())
                     .setParameter("versionHash", cell.versionHash())
                     .setParameter("refreshedAt", cell.refreshedAt())
@@ -185,7 +187,8 @@ public class JpaTradeLegRollupRepository implements TradeLegRollupRepository {
      * granularity[9], settled_mw[10], settled_mwh[11], avg_price[12],
      * settled_value[13], market_value[14], realized_pnl[15],
      * has_forward_intervals[16], delivery_status[17], quantity[18],
-     * volume_unit[19], currency[20], version_hash[21], refreshed_at[22].
+     * volume_unit[19], direction[20], currency[21], version_hash[22], refreshed_at[23].
+     * FR-034: direction added at index 20; currency/version_hash/refreshed_at shifted by 1.
      */
     private static TradeLegRollupCell mapToRollupCell(Object[] row) {
         return new TradeLegRollupCell(
@@ -209,9 +212,10 @@ public class JpaTradeLegRollupRepository implements TradeLegRollupRepository {
                 (String) row[17],                                 // deliveryStatus
                 toBigDecimal(row[18]),                            // quantity
                 (String) row[19],                                 // volumeUnit
-                row[20] != null ? (String) row[20] : "EUR",      // currency
-                (String) row[21],                                 // versionHash
-                toInstant(row[22])                                // refreshedAt
+                (String) row[20],                                 // direction
+                row[21] != null ? (String) row[21] : "EUR",      // currency
+                (String) row[22],                                 // versionHash
+                toInstant(row[23])                                // refreshedAt
         );
     }
 

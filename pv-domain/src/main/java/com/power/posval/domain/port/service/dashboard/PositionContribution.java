@@ -28,6 +28,8 @@ public record PositionContribution(
         Instant deliveryEnd,
         BigDecimal quantity,
         String volumeUnit,
+        /** Trade direction: "BUY" or "SELL". FR-034, D-1. */
+        String direction,
         String deliveryPointId,
         /** SETTLED | PARTIAL | FORWARD */
         String deliveryStatus,
@@ -52,5 +54,6 @@ public record PositionContribution(
         java.util.Objects.requireNonNull(positionId, "positionId");
         java.util.Objects.requireNonNull(tradeId, "tradeId");
         java.util.Objects.requireNonNull(tradeLegId, "tradeLegId");
+        java.util.Objects.requireNonNull(direction, "direction");
     }
 }

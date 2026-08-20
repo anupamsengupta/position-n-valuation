@@ -40,6 +40,7 @@ import java.util.UUID;
  * @param deliveryStatus      SETTLED / PARTIAL / FORWARD — derived from S5a and S6b presence
  * @param quantity            signed position quantity from S1 (VOLUME domain)
  * @param volumeUnit          volume unit name from S1
+ * @param direction           trade direction: "BUY" or "SELL" (FR-034, S4.5)
  * @param currency            currency code (from S5a or defaulted to EUR)
  * @param versionHash         content hash for staleness detection
  * @param refreshedAt         timestamp of last materialization
@@ -65,6 +66,7 @@ public record TradeLegRollupCell(
         String deliveryStatus,
         BigDecimal quantity,
         String volumeUnit,
+        String direction,
         String currency,
         String versionHash,
         Instant refreshedAt

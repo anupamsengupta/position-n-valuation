@@ -2,6 +2,7 @@ package com.power.posval.domain.service;
 
 import com.power.posval.domain.command.TradeAmend;
 import com.power.posval.domain.model.PositionLedgerEntry;
+import com.power.posval.domain.model.TradeDirection;
 import com.power.posval.domain.model.VolumeUnit;
 import com.power.posval.domain.model.value.DeliveryPeriod;
 import com.power.posval.domain.model.value.DeliveryRange;
@@ -38,6 +39,7 @@ class DefaultTradeAmendHandlerTest {
             .tradeVersion(1)
             .deliveryRange(DeliveryRange.ofMonth(YearMonth.of(2025, 3), CET))
             .quantity(new BigDecimal("10.0"))
+            .direction(TradeDirection.BUY)
             .volumeUnit(VolumeUnit.MW_CAPACITY)
             .priceExpressionId(UUID.randomUUID())
             .validFrom(Instant.now())
@@ -96,6 +98,7 @@ class DefaultTradeAmendHandlerTest {
             .tradeVersion(1)
             .deliveryRange(DeliveryRange.ofMonth(YearMonth.of(2025, 3), CET))
             .quantity(new BigDecimal("10.0"))
+            .direction(TradeDirection.BUY)
             .volumeUnit(VolumeUnit.MW_CAPACITY)
             .priceExpressionId(UUID.randomUUID())
             .marketPriceExpressionId(marketExprId)
@@ -154,6 +157,7 @@ class DefaultTradeAmendHandlerTest {
             .tradeVersion(1)
             .deliveryRange(DeliveryRange.ofMonth(YearMonth.of(2025, 3), CET))
             .quantity(new BigDecimal("10.0"))
+            .direction(TradeDirection.BUY)
             .volumeUnit(VolumeUnit.MW_CAPACITY)
             .priceExpressionId(UUID.randomUUID())
             .marketPriceExpressionId(oldMarketExprId)

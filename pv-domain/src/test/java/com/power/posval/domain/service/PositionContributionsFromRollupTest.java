@@ -3,6 +3,7 @@ package com.power.posval.domain.service;
 import com.power.posval.domain.model.PositionLedgerEntry;
 import com.power.posval.domain.model.SettlementCell;
 import com.power.posval.domain.model.TimeGranularity;
+import com.power.posval.domain.model.TradeDirection;
 import com.power.posval.domain.model.VolumeUnit;
 import com.power.posval.domain.model.value.DeliveryRange;
 import com.power.posval.domain.port.DefaultNumericPrecision;
@@ -221,6 +222,7 @@ class PositionContributionsFromRollupTest {
             .deliveryStart(PERIOD_START)
             .deliveryEnd(PERIOD_END)
             .quantity(new BigDecimal("100"))
+            .direction(TradeDirection.BUY)
             .volumeUnit(VolumeUnit.MW_CAPACITY)
             .priceExpressionId(UUID.randomUUID())
             .validFrom(PERIOD_START)
@@ -375,6 +377,7 @@ class PositionContributionsFromRollupTest {
             deliveryStatus,
             new BigDecimal("100.00000000"),       // quantity
             "MW_CAPACITY",
+            "BUY",                                // direction (FR-034)
             "EUR",
             "abc123",
             Instant.parse("2025-03-15T10:00:00Z")

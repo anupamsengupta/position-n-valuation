@@ -1,6 +1,7 @@
 package com.power.posval.persistence.adapter;
 
 import com.power.posval.domain.model.PositionLedgerEntry;
+import com.power.posval.domain.model.TradeDirection;
 import com.power.posval.domain.model.VolumeUnit;
 import com.power.posval.domain.model.value.DeliveryRange;
 import com.power.posval.domain.model.value.SeriesKey;
@@ -289,6 +290,8 @@ public class JpaPositionLedgerRepository implements PositionLedgerRepository {
         e.setKnownFrom(d.knownFrom());
         e.setKnownTo(d.knownTo());
         e.setStatus(d.status() != null ? d.status() : "ACTIVE");
+        // FR-034: direction is mandatory on PositionLedgerEntry; safe to call .name()
+        e.setDirection(d.direction().name());
         e.setCascadeParentId(d.cascadeParentId());
         e.setCascadeGeneration(d.cascadeGeneration());
         return e;
@@ -309,6 +312,11 @@ public class JpaPositionLedgerRepository implements PositionLedgerRepository {
             .deliveryStart(e.getDeliveryStart())
             .deliveryEnd(e.getDeliveryEnd())
             .quantity(e.getQuantity())
+            // FR-034: null-safe fallback — infers direction from quantity sign for legacy rows
+            // that predate the direction column (migration transition window, OQ-3).
+            .direction(e.getDirection() != null
+                ? TradeDirection.valueOf(e.getDirection())
+                : (e.getQuantity().signum() >= 0 ? TradeDirection.BUY : TradeDirection.SELL))
             .volumeUnit(VolumeUnit.valueOf(e.getVolumeUnit()))
             .priceExpressionId(e.getPriceExpressionId())
             .marketPriceExpressionId(e.getMarketPriceExpressionId())

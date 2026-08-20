@@ -4,6 +4,7 @@ import com.power.posval.domain.command.TradeCapture;
 import com.power.posval.domain.event.PositionEntryCaptured;
 import com.power.posval.domain.event.SettlementComputed;
 import com.power.posval.domain.model.*;
+import com.power.posval.domain.model.TradeDirection;
 import com.power.posval.domain.model.value.DeliveryPeriod;
 import com.power.posval.domain.model.value.DeliveryRange;
 import com.power.posval.domain.model.value.SeriesKey;
@@ -270,7 +271,7 @@ class TradeToSettlementIntegrationTest {
             new DeliveryPeriod(
                 ZonedDateTime.of(2025, 3, 1, 0, 0, 0, 0, CET),
                 ZonedDateTime.of(2025, 6, 1, 0, 0, 0, 0, CET), CET),
-            new BigDecimal("50.0"), VolumeUnit.MW_CAPACITY, exprId,
+            new BigDecimal("50.0"), TradeDirection.BUY, VolumeUnit.MW_CAPACITY, exprId,
             null,
             "PORTFOLIO-1", "DE_LU", "BILATERAL_TRADE",
             Instant.parse("2025-02-15T00:00:00Z"),
@@ -344,7 +345,7 @@ class TradeToSettlementIntegrationTest {
             new DeliveryPeriod(
                 ZonedDateTime.of(2025, 3, 1, 0, 0, 0, 0, CET),
                 ZonedDateTime.of(2025, 4, 1, 0, 0, 0, 0, CET), CET),
-            new BigDecimal("50.0"), VolumeUnit.MW_CAPACITY, priceExpressionId,
+            new BigDecimal("50.0"), TradeDirection.BUY, VolumeUnit.MW_CAPACITY, priceExpressionId,
             marketPriceExpressionId,
             "PORTFOLIO-1", "DE_LU", "BILATERAL_TRADE",
             Instant.parse("2025-02-15T00:00:00Z"),

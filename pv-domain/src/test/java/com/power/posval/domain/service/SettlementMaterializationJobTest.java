@@ -126,6 +126,7 @@ class SettlementMaterializationJobTest {
             .tradeVersion(1)
             .deliveryRange(range)
             .quantity(BigDecimal.TEN)
+            .direction(TradeDirection.BUY)
             .volumeUnit(VolumeUnit.MW_CAPACITY)
             .priceExpressionId(fixedPriceExprId)
             .volumeSeriesKey(seriesKey)
@@ -182,6 +183,7 @@ class SettlementMaterializationJobTest {
             .tradeVersion(1)
             .deliveryRange(range)
             .quantity(BigDecimal.TEN)
+            .direction(TradeDirection.BUY)
             .volumeUnit(VolumeUnit.MW_CAPACITY)
             .priceExpressionId(indexSpreadExprId)
             .volumeSeriesKey(seriesKey)
@@ -239,6 +241,7 @@ class SettlementMaterializationJobTest {
             .tradeVersion(1)
             .deliveryRange(range)
             .quantity(BigDecimal.TEN)
+            .direction(TradeDirection.BUY)
             .volumeUnit(VolumeUnit.MW_CAPACITY)
             .priceExpressionId(tradePriceExprId)
             .marketPriceExpressionId(marketPriceExprId)
@@ -269,6 +272,131 @@ class SettlementMaterializationJobTest {
         // Active leaves should contain leaves from both expressions
         assertTrue(cell.activeLeaves().contains("FIXED_85"));
         assertTrue(cell.activeLeaves().contains("EPEX_DA15"));
+    }
+
+    @Test
+    void sellDirection_producesNegativeVolumeAndAmount() {
+        var marketData = new JsonMarketDataPort();
+        var exprRepo = new JsonPriceExpressionRepository();
+        var priceEvaluator = new PriceExpressionBasedEvaluator(new DefaultNumericPrecision());
+
+        var savedCells = new ArrayList<SettlementCell>();
+        DomainEventPublisher eventPublisher = e -> {};
+
+        UUID fixedPriceExprId = UUID.fromString("00000000-0000-0000-0000-000000000001");
+        SeriesKey seriesKey = new SeriesKey("VS-TEST-SELL");
+        DeliveryRange range = DeliveryRange.ofMonth(YearMonth.of(2025, 3), CET);
+
+        List<VolumeInterval> intervals = List.of(
+            new DefaultVolumeInterval(
+                UUID.randomUUID(),
+                Instant.parse("2025-03-01T00:00:00Z"),
+                Instant.parse("2025-03-01T00:15:00Z"),
+                new BigDecimal("50.0"),
+                new BigDecimal("12.5"),
+                1, null));
+
+        var seriesRepo = stubSeriesRepo(seriesKey, range, intervals);
+        var resolver = new ProfileResolver(seriesRepo, new DefaultNumericPrecision());
+
+        var job = new SettlementMaterializationJob(
+            resolver, priceEvaluator, marketData, exprRepo,
+            capturingCellRepo(savedCells), eventPublisher, new DefaultNumericPrecision(), NO_OP_INDEX);
+
+        // SELL direction: quantity is negative (signed by handler)
+        var position = PositionLedgerEntry.builder()
+            .id(UUID.randomUUID())
+            .tenantId("TN_0042")
+            .tradeId("T-SELL-001")
+            .tradeLegId("LEG-1")
+            .tradeVersion(1)
+            .deliveryRange(range)
+            .quantity(BigDecimal.TEN.negate()) // -10 MW (SELL)
+            .direction(TradeDirection.SELL)
+            .volumeUnit(VolumeUnit.MW_CAPACITY)
+            .priceExpressionId(fixedPriceExprId)
+            .volumeSeriesKey(seriesKey)
+            .validFrom(Instant.parse("2025-02-15T00:00:00Z"))
+            .knownFrom(Instant.parse("2025-02-15T00:00:00Z"))
+            .build();
+
+        job.execute(position, range);
+
+        assertEquals(1, savedCells.size());
+        SettlementCell cell = savedCells.get(0);
+
+        // Price remains unsigned (it's the expression result)
+        assertEquals(0, new BigDecimal("85.00").compareTo(cell.price()));
+        // Volume and energy should be negative for SELL
+        assertTrue(cell.volumeMw().signum() < 0, "volumeMw should be negative for SELL, got " + cell.volumeMw());
+        assertTrue(cell.volumeMwh().signum() < 0, "volumeMwh should be negative for SELL, got " + cell.volumeMwh());
+        // Amount = price * signedEnergy → negative
+        assertTrue(cell.amount().signum() < 0, "amount should be negative for SELL, got " + cell.amount());
+    }
+
+    @Test
+    void sellDirection_withMarketPrice_producesCorrectPnl() {
+        var marketData = new JsonMarketDataPort();
+        var exprRepo = new JsonPriceExpressionRepository();
+        var priceEvaluator = new PriceExpressionBasedEvaluator(new DefaultNumericPrecision());
+
+        var savedCells = new ArrayList<SettlementCell>();
+        DomainEventPublisher eventPublisher = e -> {};
+
+        // Trade price: EXPR-1 (fixed 85.00), Market price: EXPR-2 (EPEX+spread ~87.10)
+        UUID tradePriceExprId = UUID.fromString("00000000-0000-0000-0000-000000000001");
+        UUID marketPriceExprId = UUID.fromString("00000000-0000-0000-0000-000000000002");
+        SeriesKey seriesKey = new SeriesKey("VS-TEST-SELL-PNL");
+        DeliveryRange range = DeliveryRange.ofMonth(YearMonth.of(2025, 3), CET);
+
+        List<VolumeInterval> intervals = List.of(
+            new DefaultVolumeInterval(
+                UUID.randomUUID(),
+                Instant.parse("2025-03-01T00:00:00Z"),
+                Instant.parse("2025-03-01T00:15:00Z"),
+                new BigDecimal("50.0"),
+                new BigDecimal("12.5"),
+                1, null));
+
+        var seriesRepo = stubSeriesRepo(seriesKey, range, intervals);
+        var resolver = new ProfileResolver(seriesRepo, new DefaultNumericPrecision());
+
+        var job = new SettlementMaterializationJob(
+            resolver, priceEvaluator, marketData, exprRepo,
+            capturingCellRepo(savedCells), eventPublisher, new DefaultNumericPrecision(), NO_OP_INDEX);
+
+        // SELL: market price (87.10) > trade price (85.00) → loss for seller
+        var position = PositionLedgerEntry.builder()
+            .id(UUID.randomUUID())
+            .tenantId("TN_0042")
+            .tradeId("T-SELL-PNL")
+            .tradeLegId("LEG-1")
+            .tradeVersion(1)
+            .deliveryRange(range)
+            .quantity(BigDecimal.TEN.negate()) // SELL
+            .direction(TradeDirection.SELL)
+            .volumeUnit(VolumeUnit.MW_CAPACITY)
+            .priceExpressionId(tradePriceExprId)
+            .marketPriceExpressionId(marketPriceExprId)
+            .volumeSeriesKey(seriesKey)
+            .validFrom(Instant.parse("2025-02-15T00:00:00Z"))
+            .knownFrom(Instant.parse("2025-02-15T00:00:00Z"))
+            .build();
+
+        job.execute(position, range);
+
+        assertEquals(1, savedCells.size());
+        SettlementCell cell = savedCells.get(0);
+
+        // For SELL: market > trade → PnL negative (loss for the seller)
+        // pnl = marketAmount - tradeAmount = (87.10 * -12.5) - (85.00 * -12.5)
+        //     = -1088.75 - (-1062.50) = -26.25
+        assertNotNull(cell.pnl());
+        assertTrue(cell.pnl().signum() < 0,
+            "PnL should be negative when market > trade for SELL, got " + cell.pnl());
+        // Amounts should be negative
+        assertTrue(cell.amount().signum() < 0, "tradeAmount negative for SELL");
+        assertTrue(cell.marketAmount().signum() < 0, "marketAmount negative for SELL");
     }
 
     /**
@@ -320,6 +448,7 @@ class SettlementMaterializationJobTest {
             .tradeVersion(1)
             .deliveryRange(range)
             .quantity(BigDecimal.TEN)
+            .direction(TradeDirection.BUY)
             .volumeUnit(VolumeUnit.MW_CAPACITY)
             .priceExpressionId(escalatedCollarExprId)
             .volumeSeriesKey(seriesKey)

@@ -18,6 +18,7 @@ public record PositionContributionDto(
         Instant deliveryEnd,
         BigDecimal quantity,
         String volumeUnit,
+        String direction,
         String deliveryPointId,
         String deliveryStatus,
 
@@ -47,6 +48,7 @@ public record PositionContributionDto(
                 c.deliveryEnd(),
                 c.quantity(),
                 c.volumeUnit(),
+                c.direction(),
                 c.deliveryPointId(),
                 c.deliveryStatus(),
                 c.settledMw(),

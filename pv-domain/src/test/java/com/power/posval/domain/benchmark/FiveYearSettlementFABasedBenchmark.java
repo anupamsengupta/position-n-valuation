@@ -115,6 +115,7 @@ public class FiveYearSettlementFABasedBenchmark {
                 .tradeVersion(1)
                 .deliveryRange(range)
                 .quantity(new BigDecimal("80.0"))
+                .direction(TradeDirection.BUY)
                 .volumeUnit(VolumeUnit.MW_CAPACITY)
                 .priceExpressionId(priceExprId)
                 .volumeSeriesKey(seriesKey)
