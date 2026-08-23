@@ -2,6 +2,7 @@ package com.power.posval.kafka;
 
 import com.power.posval.domain.event.SettlementRevaluationRequested;
 import com.power.posval.domain.model.PositionLedgerEntry;
+import com.power.posval.domain.model.TradeDirection;
 import com.power.posval.domain.model.VolumeUnit;
 import com.power.posval.domain.model.value.DeliveryRange;
 import com.power.posval.domain.port.repository.PositionLedgerRepository;
@@ -82,6 +83,7 @@ class SettlementRevaluationConsumerTest {
             .tradeVersion(1)
             .deliveryRange(DeliveryRange.ofMonth(YearMonth.of(2025, 3), CET))
             .quantity(BigDecimal.TEN)
+            .direction(TradeDirection.BUY)
             .volumeUnit(VolumeUnit.MW_CAPACITY)
             .priceExpressionId(UUID.randomUUID())
             .validFrom(Instant.now())

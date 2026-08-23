@@ -1,6 +1,7 @@
 package com.power.posval.persistence.adapter;
 
 import com.power.posval.domain.model.PositionLedgerEntry;
+import com.power.posval.domain.model.TradeDirection;
 import com.power.posval.domain.model.VolumeUnit;
 import com.power.posval.domain.model.value.DeliveryRange;
 import com.power.posval.domain.model.value.SeriesKey;
@@ -200,6 +201,52 @@ public class JpaPositionLedgerRepository implements PositionLedgerRepository {
             .toList();
     }
 
+    /**
+     * Q-2: Current-knowledge ACTIVE positions for a portfolio within a delivery range.
+     * Filters: knownTo IS NULL AND status = 'ACTIVE' and delivery overlap.
+     * Uses partial index {@code idx_ple_portfolio_delivery} (§7.2).
+     * Pattern #18, §6.2.
+     */
+    @Override
+    public List<PositionLedgerEntry> findByPortfolioAndDeliveryRange(String tenantId,
+                                                                       String portfolioId,
+                                                                       Instant deliveryStart,
+                                                                       Instant deliveryEnd) {
+        return emProvider.get()
+            .createQuery("""
+                SELECT e FROM PositionLedgerEntryEntity e
+                WHERE e.tenantId    = :tenantId
+                  AND e.portfolioId = :portfolioId
+                  AND e.deliveryStart < :deliveryEnd
+                  AND e.deliveryEnd > :deliveryStart
+                  AND e.knownTo IS NULL
+                  AND e.status = 'ACTIVE'
+                ORDER BY e.tradeLegId, e.deliveryStart
+                """, PositionLedgerEntryEntity.class)
+            .setParameter("tenantId", tenantId)
+            .setParameter("portfolioId", portfolioId)
+            .setParameter("deliveryStart", deliveryStart)
+            .setParameter("deliveryEnd", deliveryEnd)
+            .getResultStream()
+            .map(this::toDomain)
+            .toList();
+    }
+
+    @Override
+    public List<String> findDistinctPortfolios(String tenantId) {
+        return emProvider.get()
+            .createQuery("""
+                SELECT DISTINCT e.portfolioId FROM PositionLedgerEntryEntity e
+                WHERE e.tenantId = :tenantId
+                  AND e.knownTo IS NULL
+                  AND e.status = 'ACTIVE'
+                  AND e.portfolioId IS NOT NULL
+                ORDER BY e.portfolioId
+                """, String.class)
+            .setParameter("tenantId", tenantId)
+            .getResultList();
+    }
+
     @Override
     public void supersede(List<PositionLedgerEntry> entriesToClose,
                           List<PositionLedgerEntry> newEntries) {
@@ -234,6 +281,8 @@ public class JpaPositionLedgerRepository implements PositionLedgerRepository {
         e.setVolumeUnit(d.volumeUnit().name());
         e.setPriceExpressionId(d.priceExpressionId());
         e.setMarketPriceExpressionId(d.marketPriceExpressionId());
+        e.setPortfolioId(d.portfolioId());
+        e.setDeliveryPointId(d.deliveryPointId());
         e.setVolumeSeriesKey(d.volumeSeriesKey() != null ? d.volumeSeriesKey().value() : null);
         e.setMultiplier(d.multiplier());
         e.setValidFrom(d.validFrom());
@@ -241,6 +290,8 @@ public class JpaPositionLedgerRepository implements PositionLedgerRepository {
         e.setKnownFrom(d.knownFrom());
         e.setKnownTo(d.knownTo());
         e.setStatus(d.status() != null ? d.status() : "ACTIVE");
+        // FR-034: direction is mandatory on PositionLedgerEntry; safe to call .name()
+        e.setDirection(d.direction().name());
         e.setCascadeParentId(d.cascadeParentId());
         e.setCascadeGeneration(d.cascadeGeneration());
         return e;
@@ -261,9 +312,16 @@ public class JpaPositionLedgerRepository implements PositionLedgerRepository {
             .deliveryStart(e.getDeliveryStart())
             .deliveryEnd(e.getDeliveryEnd())
             .quantity(e.getQuantity())
+            // FR-034: null-safe fallback — infers direction from quantity sign for legacy rows
+            // that predate the direction column (migration transition window, OQ-3).
+            .direction(e.getDirection() != null
+                ? TradeDirection.valueOf(e.getDirection())
+                : (e.getQuantity().signum() >= 0 ? TradeDirection.BUY : TradeDirection.SELL))
             .volumeUnit(VolumeUnit.valueOf(e.getVolumeUnit()))
             .priceExpressionId(e.getPriceExpressionId())
             .marketPriceExpressionId(e.getMarketPriceExpressionId())
+            .portfolioId(e.getPortfolioId())
+            .deliveryPointId(e.getDeliveryPointId())
             .volumeSeriesKey(e.getVolumeSeriesKey() != null
                 ? new SeriesKey(e.getVolumeSeriesKey()) : null)
             .multiplier(e.getMultiplier())

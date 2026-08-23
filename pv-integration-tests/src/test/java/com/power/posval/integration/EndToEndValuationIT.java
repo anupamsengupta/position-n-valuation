@@ -4,6 +4,7 @@ import com.power.posval.domain.command.TradeCapture;
 import com.power.posval.domain.event.PositionEntryCaptured;
 import com.power.posval.domain.model.PositionLedgerEntry;
 import com.power.posval.domain.model.SettlementCell;
+import com.power.posval.domain.model.TradeDirection;
 import com.power.posval.domain.model.VolumeUnit;
 import com.power.posval.domain.model.value.DeliveryPeriod;
 import com.power.posval.domain.model.value.SeriesKey;
@@ -115,7 +116,7 @@ class EndToEndValuationIT {
                 TradeCapture command = new TradeCapture(
                     tradeId, 1, "LEG-1", IntegrationTestWiring.TENANT_ID,
                     deliveryPeriod,
-                    new BigDecimal("80.0"), VolumeUnit.MW_CAPACITY, EXPR_4_ID,
+                    new BigDecimal("80.0"), TradeDirection.BUY, VolumeUnit.MW_CAPACITY, EXPR_4_ID,
                     null,
                     "PORTFOLIO-RENEW", "DE_LU", "PPA_ONSHORE",
                     Instant.parse("2026-06-01T00:00:00Z"),
@@ -269,7 +270,7 @@ class EndToEndValuationIT {
 
         TradeCapture cmd = new TradeCapture(
             "T-COLLAR-TEST", 1, "LEG-1", IntegrationTestWiring.TENANT_ID,
-            dp, new BigDecimal("80.0"), VolumeUnit.MW_CAPACITY, EXPR_4_ID,
+            dp, new BigDecimal("80.0"), TradeDirection.BUY, VolumeUnit.MW_CAPACITY, EXPR_4_ID,
             null,
             "PORTFOLIO-TEST", "DE_LU", "PPA_ONSHORE",
             Instant.parse("2026-06-01T00:00:00Z"),
@@ -318,7 +319,7 @@ class EndToEndValuationIT {
 
         TradeCapture cmd = new TradeCapture(
             "T-JPQL-TEST", 1, "LEG-1", IntegrationTestWiring.TENANT_ID,
-            dp, new BigDecimal("80.0"), VolumeUnit.MW_CAPACITY, EXPR_4_ID,
+            dp, new BigDecimal("80.0"), TradeDirection.BUY, VolumeUnit.MW_CAPACITY, EXPR_4_ID,
             null,
             "PORTFOLIO-TEST", "DE_LU", "PPA_ONSHORE",
             Instant.parse("2026-06-01T00:00:00Z"),

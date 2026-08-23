@@ -77,4 +77,32 @@ public interface SettlementCellRepository {
         return !findByPosition(tenantId, positionId,
                 Instant.EPOCH, Instant.parse("2100-01-01T00:00:00Z")).isEmpty();
     }
+
+    /**
+     * Bulk-fetch settlement cells for multiple positions within a range.
+     *
+     * <p>Replaces per-position {@link #findByPosition} N+1 pattern for L3 queries.
+     * The adapter issues a single SQL query with a {@code position_id IN (...)}
+     * clause. For >100 position IDs, the adapter batches into chunks of 100 to
+     * avoid PostgreSQL parameter limits.
+     *
+     * <p>The service groups the returned cells by {@code positionId} in application
+     * memory and applies FR-035 aggregation (TWA for MW, sum for MWh/amounts,
+     * volume-weighted avg for prices) per position.
+     *
+     * <p>Pattern #18 (Repository Port + Adapter), §5.4a.
+     *
+     * @param tenantId    tenant identifier (D-14, Pattern #32)
+     * @param positionIds position identifiers (may be empty — returns empty list)
+     * @param rangeStart  interval range start (UTC, inclusive)
+     * @param rangeEnd    interval range end (UTC, exclusive)
+     * @return all settlement cells for the given positions in the range,
+     *         ordered by positionId then intervalStart
+     */
+    default List<SettlementCell> findByPositionIds(String tenantId,
+                                                    List<UUID> positionIds,
+                                                    Instant rangeStart,
+                                                    Instant rangeEnd) {
+        throw new UnsupportedOperationException("findByPositionIds not implemented");
+    }
 }

@@ -63,6 +63,7 @@ public class DomainBenchmarkSuite {
             .deliveryRange(DeliveryRange.ofMonth(
                 java.time.YearMonth.of(2025, 3), CET))
             .quantity(new BigDecimal("30.00"))
+            .direction(TradeDirection.BUY)
             .volumeUnit(VolumeUnit.MW_CAPACITY)
             .priceExpressionId(UUID.randomUUID())
             .portfolioId("PORTFOLIO-1")

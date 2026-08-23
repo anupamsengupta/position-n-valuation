@@ -3,7 +3,7 @@ server:
 
 pv:
   pricing:
-    strategy: expression  # "expression" or "rule-engine"
+    strategy: rule-engine  # "expression" or "rule-engine"
   datasource:
     url: jdbc:postgresql://localhost:9432/posval
     username: posval
@@ -13,7 +13,7 @@ pv:
     bootstrap-servers: localhost:9092
     consumer:
       max-poll-records: 50
-      concurrency: 5
+      concurrency: 16
   redis:
     host: localhost
     port: 6379
@@ -23,7 +23,18 @@ pv:
     relay-interval-ms: 500
   seed:
     enabled: true
+  da:
+    poller:
+      enabled: false              # set to true to activate the auction folder poller (S9.4, D-14)
+      inbox-directory: ./da-import/inbox
+      processed-directory: ./da-import/processed
+      failed-directory: ./da-import/failed
+      interval-ms: 60000          # fixed-delay in milliseconds between polls (default: 60s)
+      file-pattern: "*.csv"       # glob pattern for auction result files
   cache:
+    l1:
+      max-size: 2000000
+      ttl-hours: 24
     ttl:
       market-data-stable-hours: 24    # fixings, FX rates, indexes, spreads
       market-data-volatile-hours: 1   # forward curves, vol surfaces

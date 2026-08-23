@@ -115,6 +115,7 @@ public class FiveYearSettlementFABasedBenchmark {
                 .tradeVersion(1)
                 .deliveryRange(range)
                 .quantity(new BigDecimal("80.0"))
+                .direction(TradeDirection.BUY)
                 .volumeUnit(VolumeUnit.MW_CAPACITY)
                 .priceExpressionId(priceExprId)
                 .volumeSeriesKey(seriesKey)
@@ -171,8 +172,12 @@ public class FiveYearSettlementFABasedBenchmark {
                         new IndexLeaf("HICP_DE_CURRENT", "HICP-DE", "deliveryYear-1:November"),
                         new ConstantLeaf("HICP_DE_BASE_2023", new BigDecimal("108.70"), "INDEX")))));
 
-        PriceExpressionRepository exprRepo = id ->
-            id.equals(priceExprId) ? Optional.of(expr4) : Optional.empty();
+        PriceExpressionRepository exprRepo = new PriceExpressionRepository() {
+            @Override public Optional<PriceExpression> findById(java.util.UUID id) {
+                return id.equals(priceExprId) ? Optional.of(expr4) : Optional.empty();
+            }
+            @Override public void save(java.util.UUID id, PriceExpression expression) { /* benchmark no-op */ }
+        };
 
         // --- Wire the job ---
         var priceEvaluator = new PriceExpressionBasedEvaluator(new DefaultNumericPrecision());
@@ -194,6 +199,28 @@ public class FiveYearSettlementFABasedBenchmark {
                 @Override public java.util.List<com.power.posval.domain.port.repository.DependencyEdge> findAffectedCells(
                     String t, String k, java.time.Instant rs, java.time.Instant re, String f) { return List.of(); }
                 @Override public void prune(String t, com.power.posval.domain.service.PrunePolicy p) {}
+            };
+        com.power.posval.domain.port.repository.MarketDataRepository noOpMarketDataRepo =
+            new com.power.posval.domain.port.repository.MarketDataRepository() {
+                @Override public java.util.Optional<com.power.posval.domain.port.marketdata.MarketDataLookup> findFixing(String t, String s, java.time.Instant i) { return java.util.Optional.empty(); }
+                @Override public java.util.Optional<com.power.posval.domain.port.marketdata.MarketDataLookup> findIndex(String t, String s, String r) { return java.util.Optional.empty(); }
+                @Override public java.util.Optional<com.power.posval.domain.port.marketdata.MarketDataLookup> findForwardCurve(String t, String s, java.time.YearMonth p, java.time.Instant a) { return java.util.Optional.empty(); }
+                @Override public java.util.Optional<com.power.posval.domain.port.marketdata.MarketDataLookup> findFxRate(String t, String s, java.time.Instant r) { return java.util.Optional.empty(); }
+                @Override public java.util.Optional<com.power.posval.domain.port.marketdata.MarketDataLookup> findSpread(String t, String s, java.time.Instant i) { return java.util.Optional.empty(); }
+                @Override public java.util.Optional<com.power.posval.domain.port.marketdata.VolSurfaceLookup> findVolSurface(String t, String s, double d, String e, java.time.Instant a) { return java.util.Optional.empty(); }
+                @Override public java.util.Optional<com.power.posval.domain.port.marketdata.MarketDataLookup> findAtVersion(String t, String s, java.time.Instant i, long v) { return java.util.Optional.empty(); }
+                @Override public void saveFixing(String t, String s, java.time.Instant i, com.power.posval.domain.port.marketdata.MarketDataLookup l) {}
+                @Override public void saveForwardCurve(String t, String s, java.time.YearMonth p, java.time.Instant a, com.power.posval.domain.port.marketdata.MarketDataLookup l) {}
+                @Override public void saveFxRate(String t, String s, java.time.Instant r, com.power.posval.domain.port.marketdata.MarketDataLookup l) {}
+                @Override public void saveIndex(String t, String s, String r, com.power.posval.domain.port.marketdata.MarketDataLookup l) {}
+                @Override public void saveSpread(String t, String s, java.time.Instant i, com.power.posval.domain.port.marketdata.MarketDataLookup l) {}
+                @Override public void saveVolSurface(String t, String s, double d, String e, java.time.Instant a, com.power.posval.domain.port.marketdata.VolSurfaceLookup l) {}
+            };
+        com.power.posval.domain.port.tenant.TenantContext stubTenantContext =
+            new com.power.posval.domain.port.tenant.TenantContext() {
+                @Override public String currentTenantId() { return "bench-tenant"; }
+                @Override public void setTenant(String tenantId) {}
+                @Override public void clear() {}
             };
         settlementJob = new SettlementMaterializationJob(
             volumeResolver, priceEvaluator, marketData, exprRepo,

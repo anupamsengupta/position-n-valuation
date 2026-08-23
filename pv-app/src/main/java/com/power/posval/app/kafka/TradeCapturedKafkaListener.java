@@ -1,5 +1,6 @@
 package com.power.posval.app.kafka;
 
+import com.power.posval.app.event.DashboardDataChangedEvent;
 import com.power.posval.app.provider.TransactionalExecutor;
 import com.power.posval.domain.event.PositionEntryCaptured;
 import com.power.posval.domain.model.PositionLedgerEntry;
@@ -8,6 +9,7 @@ import com.power.posval.persistence.tenant.ThreadLocalTenantContext;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Component;
@@ -40,13 +42,16 @@ public class TradeCapturedKafkaListener {
     private final TradeCapturedConsumer tradeCapturedConsumer;
     private final TransactionalExecutor txExecutor;
     private final ThreadLocalTenantContext tenantContext;
+    private final ApplicationEventPublisher eventPublisher;
 
     public TradeCapturedKafkaListener(TradeCapturedConsumer tradeCapturedConsumer,
                                        TransactionalExecutor txExecutor,
-                                       ThreadLocalTenantContext tenantContext) {
+                                       ThreadLocalTenantContext tenantContext,
+                                       ApplicationEventPublisher eventPublisher) {
         this.tradeCapturedConsumer = tradeCapturedConsumer;
         this.txExecutor = txExecutor;
         this.tenantContext = tenantContext;
+        this.eventPublisher = eventPublisher;
     }
 
     @KafkaListener(
@@ -92,6 +97,8 @@ public class TradeCapturedKafkaListener {
             CompletableFuture.allOf(settlement, cache).join();
 
             ack.acknowledge();
+            eventPublisher.publishEvent(new DashboardDataChangedEvent(
+                    this, tenantId, DashboardDataChangedEvent.ChangeType.POSITION_CAPTURED, null));
             log.info("Processed PositionEntryCaptured positionId={}", event.positionId());
         } finally {
             tenantContext.clear();

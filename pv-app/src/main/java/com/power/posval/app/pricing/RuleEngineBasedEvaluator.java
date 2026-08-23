@@ -4,6 +4,7 @@ import com.ctrm.ruleengine.api.RuleContext;
 import com.ctrm.ruleengine.api.RuleEngine;
 import com.ctrm.ruleengine.api.RuleResultContext;
 import com.ctrm.ruleengine.api.WorkflowPoint;
+import com.power.posval.domain.model.expression.ConstantLeaf;
 import com.power.posval.domain.model.expression.PriceExpression;
 import com.power.posval.domain.model.value.DeliveryPeriod;
 import com.power.posval.domain.port.NumericPrecision;
@@ -48,6 +49,15 @@ public class RuleEngineBasedEvaluator implements PriceEvaluator {
             DeliveryPeriod interval,
             ResolutionPurpose purpose,
             MarketDataPort marketData) {
+
+        // Fast path: ConstantLeaf (e.g. DA fixed clearing prices) needs no rule engine.
+        // D-2: fixed price = degenerate expression tree → just return the constant value.
+        if (expression instanceof ConstantLeaf c) {
+            return new PriceResolution(
+                np.round(c.value(), NumericPrecision.Domain.PRICE),
+                Set.of(c.leafId()),
+                Map.of());
+        }
 
         // 1. Reverse-lookup expression ID
         String exprId = expressionToId.get(expression);

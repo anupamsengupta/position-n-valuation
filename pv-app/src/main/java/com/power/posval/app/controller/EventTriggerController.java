@@ -5,10 +5,12 @@ import com.power.posval.app.dto.MarketDataUpdatedRequest;
 import com.power.posval.app.dto.VolumeSupersededRequest;
 import com.power.posval.app.provider.TransactionalExecutor;
 import com.power.posval.domain.port.event.DomainEventPublisher;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.*;
 
 /**
- * REST endpoints for triggering domain events through the outbox → Kafka pipeline.
+ * REST endpoints for triggering domain events through the outbox -> Kafka pipeline.
  *
  * <p>These endpoints allow testing the full production flow end-to-end via HTTP:
  * <ul>
@@ -18,12 +20,14 @@ import org.springframework.web.bind.annotation.*;
  *   <li>Consumer performs cache invalidation, dependency lookup, revaluation</li>
  * </ul>
  *
- * <p>Not intended for production use — these events are normally produced by
+ * <p>Not intended for production use -- these events are normally produced by
  * internal domain operations (market data ingestion, volume series updates).
  */
 @RestController
 @RequestMapping("/api/events")
 public class EventTriggerController {
+
+    private static final Logger log = LoggerFactory.getLogger(EventTriggerController.class);
 
     private final DomainEventPublisher eventPublisher;
     private final TransactionalExecutor txExecutor;
@@ -35,23 +39,29 @@ public class EventTriggerController {
     }
 
     /**
-     * Trigger a MarketDataUpdated event through the outbox → Kafka pipeline.
-     * Exercises: cache invalidation → S8 dependency index lookup → settlement revaluation.
+     * Trigger a MarketDataUpdated event through the outbox -> Kafka pipeline.
+     * Exercises: cache invalidation -> S8 dependency index lookup -> settlement revaluation.
      */
     @PostMapping("/market-data-updated")
     public ApiResponse<String> publishMarketDataUpdated(@RequestBody MarketDataUpdatedRequest request) {
+        log.info("POST /api/events/market-data-updated tenantId={} series={} dataType={}",
+            request.tenantId(), request.series(), request.dataType());
         txExecutor.run(() -> eventPublisher.publish(request.toEvent()));
+        log.info("POST /api/events/market-data-updated => published to outbox");
         return ApiResponse.ok("MarketDataUpdated event published to outbox",
                 "Event will be relayed to posval.MarketDataUpdated topic");
     }
 
     /**
-     * Trigger a VolumeSuperseded event through the outbox → Kafka pipeline.
-     * Exercises: cache invalidation → position lookup by seriesKey → settlement revaluation.
+     * Trigger a VolumeSuperseded event through the outbox -> Kafka pipeline.
+     * Exercises: cache invalidation -> position lookup by seriesKey -> settlement revaluation.
      */
     @PostMapping("/volume-superseded")
     public ApiResponse<String> publishVolumeSuperseded(@RequestBody VolumeSupersededRequest request) {
+        log.info("POST /api/events/volume-superseded seriesKey={} layer={}",
+            request.seriesKey(), request.layer());
         txExecutor.run(() -> eventPublisher.publish(request.toEvent()));
+        log.info("POST /api/events/volume-superseded => published to outbox");
         return ApiResponse.ok("VolumeSuperseded event published to outbox",
                 "Event will be relayed to posval.VolumeSuperseded topic");
     }

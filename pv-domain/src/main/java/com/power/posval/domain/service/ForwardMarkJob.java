@@ -5,6 +5,7 @@ import com.power.posval.domain.model.value.DeliveryPeriod;
 import com.power.posval.domain.model.value.DeliveryRange;
 import com.power.posval.domain.model.value.VolumeReference;
 import com.power.posval.domain.port.ForwardMarkStore;
+import com.power.posval.domain.port.NumericPrecision;
 import com.power.posval.domain.port.marketdata.MarketDataPort;
 import com.power.posval.domain.port.repository.PriceExpressionRepository;
 
@@ -20,18 +21,22 @@ import java.util.UUID;
  * Forward mark materialization job (S5b).
  * Purpose=FORWARD, overwrites ephemeral mark via ForwardMarkStore.
  * Pattern #15, FR-075, S5b.
+ * TODO: Wire ForwardMarkJob with NumericPrecision in Guice when binding is created.
  */
 public class ForwardMarkJob extends AbstractMaterializationJob<ForwardMarkJob.MarkEntry> {
 
     private final ForwardMarkStore markStore;
+    private final NumericPrecision np;
 
     public ForwardMarkJob(VolumeResolver volumeResolver,
                            PriceEvaluator priceEvaluator,
                            MarketDataPort marketData,
                            PriceExpressionRepository priceExpressionRepo,
-                           ForwardMarkStore markStore) {
+                           ForwardMarkStore markStore,
+                           NumericPrecision np) {
         super(volumeResolver, priceEvaluator, marketData, priceExpressionRepo);
         this.markStore = markStore;
+        this.np = np;
     }
 
     record MarkEntry(Instant start, Instant end, BigDecimal value,
@@ -61,7 +66,12 @@ public class ForwardMarkJob extends AbstractMaterializationJob<ForwardMarkJob.Ma
     protected MarkEntry buildResult(PositionLedgerEntry position,
                                      VolumeRecord volume,
                                      PriceResolution price) {
-        BigDecimal markValue = price.value().multiply(volume.energy());
+        // OQ-1, S14: sign energy using quantity signum — forward marks must reflect trade direction.
+        // D-3: forward marks are ephemeral (overwritten on recomputation). FR-034, FR-075.
+        int directionSign = position.quantity().signum();
+        BigDecimal signedEnergy = volume.energy().multiply(BigDecimal.valueOf(directionSign));
+        BigDecimal markValue = np.round(
+            price.value().multiply(signedEnergy), NumericPrecision.Domain.MONETARY);
         return new MarkEntry(
             volume.intervalStart(),
             volume.intervalEnd(),

@@ -17,6 +17,13 @@ public interface DependencyIndex {
     /** Upsert a dependency edge: cell depends on input series. */
     void upsert(DependencyEdge edge);
 
+    /** Batch upsert dependency edges. Default loops; adapters may override with JDBC batch. */
+    default void upsertAll(List<DependencyEdge> edges) {
+        for (DependencyEdge edge : edges) {
+            upsert(edge);
+        }
+    }
+
     /**
      * Find all cells affected by an input series change within a reference range.
      * FR-102: index lookup, never a valuation-store scan.

@@ -1396,7 +1396,7 @@ Quick reference for when you're reading code and hit an unfamiliar type:
 | `MarketDataRepository` | `domain.port.repository` | Persistence port for market data (Postgres-backed) |
 | `CachingMarketDataPort` | `domain.service` | Production MarketDataPort: cache → DB → populate |
 | `MarketDataUpdated` | `domain.event` | Cache invalidation event for market data changes |
-| `CurveTick` | `domain.event` | Forward curve update event triggering S5b recalc |
+| `CurveTick` | `domain.event` | Forward curve update event triggering S5b (Forward Marks) recalc |
 | `DependencyEdge` | `domain.port.repository` | "Cell X depends on input Y" |
 | `VolumeSeriesImporter` | `domain.port.ingest` | Port for CSV/Excel/programmatic volume import |
 | `SeriesImportRequest` | `domain.port.ingest` | One series to import (header + intervals) |

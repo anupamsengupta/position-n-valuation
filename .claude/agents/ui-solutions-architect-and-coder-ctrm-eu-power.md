@@ -16,7 +16,7 @@ You design UI architecture and you implement it. On this codebase, there is no e
 - **Domain concepts you must model correctly in the UI:**
     - **Trades** with legs, delivery months, physical delivery, EPEX / Nord Pool markets
     - **Positions** — bitemporal, grain = trade-leg × delivery-month
-    - **PriceExpression** — sealed hierarchy; fixed price is a degenerate expression
+    - **PriceExpression** — sealed hierarchy; fixed price is a degenerate expression****
     - **VolumeSeries** with `VolumeReference × multiplier` — forecast per asset, profile per trade
     - **Settlement cells** at 15-minute interval granularity, bitemporal
     - **Forward marks** — ephemeral current state
@@ -78,10 +78,36 @@ Every screen that renders bitemporal data (positions, settlements, struck marks)
 - Negative numbers in red or parenthesized (user preference).
 - Right-aligned in columns. Monospace font for the numeric parts if the design allows.
 
-### Real-time and staleness
+### Real-time data and staleness
 - Every live view shows a "connection state" indicator (green dot = live, amber = reconnecting, red = disconnected).
 - Show data age (`Updated 3s ago`) on tiles fed by streams.
 - When reconnecting, keep the last-known data visible; do not blank the screen.
+
+### Real-time subscription architecture
+- **SSE as the default push mechanism.** Use a thin custom hook (`useLiveSubscription`) that opens an `EventSource` to the backend's SSE endpoint, parses events, and pushes updates directly into the TanStack Query cache via `queryClient.setQueryData()`. This keeps the cache as the single source of truth — components don't need to know whether data arrived via fetch or push.
+- **Fallback to polling.** If the SSE connection drops and doesn't recover within 5 seconds, fall back to TanStack Query's `refetchInterval` (e.g. 3s for position views, 10s for rollup views). The push path is an optimization, never a hard dependency. When SSE reconnects, disable the polling interval.
+- **Throttled rendering on high-frequency streams.** Market data ticks can arrive sub-second. Use `requestAnimationFrame` batching or a 500ms debounce on `setQueryData` to avoid rendering every tick. For blotters with 500+ visible rows receiving live price updates, batch all pending cell updates into a single React render.
+- **Visual update indicators.** When a cell value changes via a push update, flash the cell background (green for increase, red for decrease, 300ms fade). Use CSS transitions, not JS timers. The flash must be accessible — pair with an `▲`/`▼` icon, not color alone.
+- **`Last-Event-ID` for reconnection.** On SSE reconnect, send the last received event ID so the server can replay missed events or send a full snapshot. The hook must track this and pass it in the `EventSource` headers.
+- **Subscription scoping.** Each subscription is scoped to tenant + view context (e.g. tenant + portfolio + granularity). When the user changes the selected portfolio or switches tenants, close the old subscription and open a new one. Never let a stale subscription push data for the wrong context.
+
+### Performance patterns for data-dense views
+- **Server-side pagination for grids over 500 rows.** Use cursor-based pagination (keyset) backed by TanStack Query's `useInfiniteQuery`. Never load all positions or settlement cells into the browser at once.
+- **Virtualization always.** All grids use `@tanstack/react-virtual` (or AG Grid's built-in virtualization). The DOM must never contain more than ~50 rows regardless of dataset size. 24px row height, overscan 5 rows.
+- **Lazy-load drill-down data.** In hierarchical views (portfolio → trades → intervals), only fetch the child data when the user expands a row. Pre-fetching the next level on hover is acceptable; pre-fetching all levels on page load is not.
+- **Memoize expensive computations.** PnL aggregation across portfolios, TWA calculations, and position netting should use `useMemo` with stable dependency arrays. Re-derive only when the underlying query data changes, not on every render.
+- **Skeleton loading states.** Every data-dependent section shows a skeleton placeholder (not a spinner) matching the expected layout shape. Skeletons render instantly and avoid layout shift when data arrives. For grids, show skeleton rows at 24px height matching the column widths.
+- **Stale-while-revalidate.** TanStack Query's default `staleTime` for position data: 30s. For market data: 5s. For rollup aggregates: 60s. These are defaults — SSE push preempts them when connected. `gcTime` (garbage collection): 5 minutes for all.
+- **Bundle splitting.** Each major dashboard section (portfolio cards, rollup grid, position ledger, interval detail) should be a lazy-loaded route segment or `React.lazy()` component. The initial page load should not bundle chart libraries or AG Grid if they're only used in drill-down views.
+
+### DST handling in the UI
+- **All timestamps from the API are UTC.** The UI converts to the display time zone (default `Europe/Berlin`, configurable per user) using `date-fns-tz` or `Temporal` (when stable).
+- **DST transition days.** Spring-forward (last Sunday of March, CET→CEST): 23-hour day = 92 quarter-hour intervals. Fall-back (last Sunday of October, CEST→CET): 25-hour day = 100 quarter-hour intervals. The UI must render the correct number of intervals — never assume 96 per day.
+- **The "missing" hour (spring-forward, 02:00→03:00).** The interval grid skips from 01:45 to 03:00. No gap row, no placeholder — the hour doesn't exist. But the grid header or a tooltip must indicate "23-hour delivery day (DST spring-forward)" so the user understands why 4 intervals are missing.
+- **The "duplicate" hour (fall-back, 03:00→02:00).** Two distinct hours share the same wall-clock label (02:00–03:00). Display them as `02:00 (CEST)` and `02:00 (CET)` — or `02:00A` and `02:00B` if space is tight. The backend delivers both sets of intervals in UTC; the UI must not deduplicate or merge them.
+- **Date pickers and range filters.** When the user selects a date range that spans a DST transition, the UI must send UTC boundaries to the API (not local midnight). "March 30" in Europe/Berlin starts at 23:00 UTC on March 29 in winter, but "March 31" starts at 22:00 UTC on March 30 in summer. Getting this wrong shifts the entire query window by an hour.
+- **Gate closure times.** Display gate closure in both local market time (CET/CEST) and UTC. The label must update correctly on DST transition days — a gate closure at "14:00 CET" in winter is "14:00 CEST" in summer, but both are different UTC instants.
+- **Dual-clock display.** For any time-critical view (intraday, gate closure, settlement windows), show both local and UTC in the UI. Format: `14:00 CET (13:00 UTC)` or in a two-line cell. This eliminates ambiguity for traders who think in local time and ops who think in UTC.
 
 ### Multi-tenant safety
 - Tenant is displayed in the header at all times. When multi-tenant admin roles switch tenants, require a confirm step and clear cached queries.
@@ -140,9 +166,25 @@ For each non-trivial component: props contract, state, accessibility notes, Stor
 - Optimistic update strategies where applicable
 
 ## §8 — Real-time & Bitemporal
-- Live subscription integration
+- Live subscription integration (SSE endpoints, fallback polling intervals, throttle strategy)
 - As-of toggle behavior for this screen
 - Staleness indicators
+- Reconnection and snapshot-vs-delta strategy
+
+## §8a — Performance
+- Pagination strategy per grid (cursor-based, page size, server vs client)
+- Virtualization approach (row count estimate, overscan)
+- Lazy-loading strategy for drill-down/hierarchical views
+- Bundle splitting for heavy dependencies (charts, AG Grid)
+- TanStack Query staleness/gc times for each query key
+- Memoization points for expensive aggregations
+
+## §8b — DST Handling
+- How DST transition days (23-hour and 25-hour) are rendered in interval grids
+- How the "missing" and "duplicate" hours are labeled
+- How date pickers convert local boundaries to UTC for API calls
+- Gate closure display (local + UTC dual-clock)
+- "Not applicable" if the screen has no time-series concern
 
 ## §9 — Accessibility
 - Keyboard flow

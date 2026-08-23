@@ -34,10 +34,10 @@ public class PositionLedgerEntryEntity {
     @Column(name = "tenant_id", nullable = false)
     private String tenantId;
 
-    @Column(name = "trade_id", length = 64, nullable = false)
+    @Column(name = "trade_id", length = 255, nullable = false)
     private String tradeId;
 
-    @Column(name = "trade_leg_id", length = 64, nullable = false)
+    @Column(name = "trade_leg_id", length = 255, nullable = false)
     private String tradeLegId;
 
     @Column(name = "trade_version", nullable = false)
@@ -64,6 +64,12 @@ public class PositionLedgerEntryEntity {
     @Column(name = "market_price_expression_id")
     private UUID marketPriceExpressionId;
 
+    @Column(name = "portfolio_id", length = 64)
+    private String portfolioId;
+
+    @Column(name = "delivery_point_id", length = 64)
+    private String deliveryPointId;
+
     @Column(name = "volume_series_key", length = 128)
     private String volumeSeriesKey;
 
@@ -84,6 +90,15 @@ public class PositionLedgerEntryEntity {
 
     @Column(name = "status", length = 16, nullable = false)
     private String status;
+
+    /**
+     * Trade direction: BUY or SELL. Stored as VARCHAR(4).
+     * Default 'BUY' for hbm2ddl simulator path (D-14, OI-6).
+     * In production the Flyway migration backfills CASE WHEN quantity >= 0 THEN 'BUY' ELSE 'SELL' END.
+     * FR-034.
+     */
+    @Column(name = "direction", nullable = false, length = 4)
+    private String direction = "BUY";
 
     @Column(name = "cascade_parent_id", length = 64)
     private String cascadeParentId;
@@ -132,6 +147,12 @@ public class PositionLedgerEntryEntity {
     public UUID getMarketPriceExpressionId() { return marketPriceExpressionId; }
     public void setMarketPriceExpressionId(UUID marketPriceExpressionId) { this.marketPriceExpressionId = marketPriceExpressionId; }
 
+    public String getPortfolioId() { return portfolioId; }
+    public void setPortfolioId(String portfolioId) { this.portfolioId = portfolioId; }
+
+    public String getDeliveryPointId() { return deliveryPointId; }
+    public void setDeliveryPointId(String deliveryPointId) { this.deliveryPointId = deliveryPointId; }
+
     public String getVolumeSeriesKey() { return volumeSeriesKey; }
     public void setVolumeSeriesKey(String volumeSeriesKey) { this.volumeSeriesKey = volumeSeriesKey; }
 
@@ -152,6 +173,9 @@ public class PositionLedgerEntryEntity {
 
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+
+    public String getDirection() { return direction; }
+    public void setDirection(String direction) { this.direction = direction; }
 
     public String getCascadeParentId() { return cascadeParentId; }
     public void setCascadeParentId(String cascadeParentId) { this.cascadeParentId = cascadeParentId; }

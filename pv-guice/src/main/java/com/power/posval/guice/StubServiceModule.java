@@ -29,5 +29,9 @@ public class StubServiceModule extends AbstractModule {
         bind(MeteredActualRepository.class)
             .to(JsonMeteredActualRepository.class)
             .in(Singleton.class);
+
+        // ForwardMarkService binding moved to DomainModule (ADR-002 delivered).
+        // DefaultForwardMarkService computes forward MtM on demand from
+        // S6b volumes + S4 curves via PriceEvaluator.
     }
 }

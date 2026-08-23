@@ -24,6 +24,7 @@ public final class PositionLedgerEntry {
     private final Instant deliveryStart;        // exact trade delivery start (sub-month precision)
     private final Instant deliveryEnd;          // exact trade delivery end (sub-month precision)
     private final BigDecimal quantity;          // signed: +long, -short
+    private final TradeDirection direction;     // BUY or SELL — denormalized for display/audit (FR-034)
     private final VolumeUnit volumeUnit;
     private final UUID priceExpressionId;
     private final UUID marketPriceExpressionId;  // nullable — market-to-market price expression
@@ -54,6 +55,7 @@ public final class PositionLedgerEntry {
         this.deliveryEnd = b.deliveryEnd != null ? b.deliveryEnd
                 : b.deliveryRange.endInstant().toInstant();
         this.quantity = b.quantity;
+        this.direction = b.direction;
         this.volumeUnit = b.volumeUnit;
         this.priceExpressionId = b.priceExpressionId;
         this.marketPriceExpressionId = b.marketPriceExpressionId;
@@ -83,6 +85,7 @@ public final class PositionLedgerEntry {
     public Instant deliveryStart() { return deliveryStart; }
     public Instant deliveryEnd() { return deliveryEnd; }
     public BigDecimal quantity() { return quantity; }
+    public TradeDirection direction() { return direction; }
     public VolumeUnit volumeUnit() { return volumeUnit; }
     public UUID priceExpressionId() { return priceExpressionId; }
     public UUID marketPriceExpressionId() { return marketPriceExpressionId; }
@@ -112,6 +115,7 @@ public final class PositionLedgerEntry {
         private Instant deliveryStart;
         private Instant deliveryEnd;
         private BigDecimal quantity;
+        private TradeDirection direction;
         private VolumeUnit volumeUnit;
         private UUID priceExpressionId;
         private UUID marketPriceExpressionId;
@@ -138,6 +142,7 @@ public final class PositionLedgerEntry {
         public Builder deliveryStart(Instant v) { this.deliveryStart = v; return this; }
         public Builder deliveryEnd(Instant v) { this.deliveryEnd = v; return this; }
         public Builder quantity(BigDecimal v) { this.quantity = v; return this; }
+        public Builder direction(TradeDirection v) { this.direction = v; return this; }
         public Builder volumeUnit(VolumeUnit v) { this.volumeUnit = v; return this; }
         public Builder priceExpressionId(UUID v) { this.priceExpressionId = v; return this; }
         public Builder marketPriceExpressionId(UUID v) { this.marketPriceExpressionId = v; return this; }
@@ -161,6 +166,7 @@ public final class PositionLedgerEntry {
             Objects.requireNonNull(tradeLegId, "tradeLegId");
             Objects.requireNonNull(deliveryRange, "deliveryRange");
             Objects.requireNonNull(quantity, "quantity");
+            Objects.requireNonNull(direction, "direction");
             Objects.requireNonNull(volumeUnit, "volumeUnit");
             Objects.requireNonNull(priceExpressionId, "priceExpressionId");
             Objects.requireNonNull(validFrom, "validFrom");

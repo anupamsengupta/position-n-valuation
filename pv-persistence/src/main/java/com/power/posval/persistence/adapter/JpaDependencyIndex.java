@@ -56,6 +56,46 @@ public class JpaDependencyIndex implements DependencyIndex {
     }
 
     @Override
+    public void upsertAll(List<DependencyEdge> edges) {
+        if (edges.isEmpty()) return;
+        EntityManager em = emProvider.get();
+        em.unwrap(org.hibernate.Session.class).doWork(connection -> {
+            try (var ps = connection.prepareStatement("""
+                    INSERT INTO valuation.dependency_edge
+                        (tenant_id, cell_id, cell_type, input_series_key, input_type,
+                         affected_range_start, affected_range_end, active_leaves, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), ?)
+                    ON CONFLICT (tenant_id, cell_id, input_series_key)
+                    DO UPDATE SET
+                        active_leaves = CAST(EXCLUDED.active_leaves AS jsonb),
+                        affected_range_start = EXCLUDED.affected_range_start,
+                        affected_range_end = EXCLUDED.affected_range_end,
+                        pruned_at = NULL
+                    """)) {
+                int count = 0;
+                for (DependencyEdge edge : edges) {
+                    ps.setString(1, edge.tenantId());
+                    ps.setObject(2, edge.cellId());
+                    ps.setString(3, edge.cellType());
+                    ps.setString(4, edge.inputSeriesKey());
+                    ps.setString(5, edge.inputType());
+                    ps.setTimestamp(6, java.sql.Timestamp.from(edge.affectedRangeStart()));
+                    ps.setTimestamp(7, java.sql.Timestamp.from(edge.affectedRangeEnd()));
+                    ps.setString(8, toJsonArray(edge.activeLeaves()));
+                    ps.setTimestamp(9, java.sql.Timestamp.from(edge.createdAt()));
+                    ps.addBatch();
+                    if (++count % 500 == 0) {
+                        ps.executeBatch();
+                    }
+                }
+                if (count % 500 != 0) {
+                    ps.executeBatch();
+                }
+            }
+        });
+    }
+
+    @Override
     @SuppressWarnings("unchecked")
     public List<DependencyEdge> findAffectedCells(String tenantId,
                                                     String inputSeriesKey,
@@ -210,10 +250,16 @@ public class JpaDependencyIndex implements DependencyIndex {
             (String) row[2],                                                // cellType
             (String) row[3],                                                // inputSeriesKey
             (String) row[4],                                                // inputType
-            ((java.sql.Timestamp) row[5]).toInstant(),                      // affectedRangeStart
-            ((java.sql.Timestamp) row[6]).toInstant(),                      // affectedRangeEnd
+            toInstant(row[5]),                                              // affectedRangeStart
+            toInstant(row[6]),                                              // affectedRangeEnd
             parseJsonArray(row[7] != null ? row[7].toString() : "[]"),     // activeLeaves
-            ((java.sql.Timestamp) row[8]).toInstant(),                      // createdAt
-            row[9] != null ? ((java.sql.Timestamp) row[9]).toInstant() : null); // prunedAt
+            toInstant(row[8]),                                              // createdAt
+            row[9] != null ? toInstant(row[9]) : null);                    // prunedAt
+    }
+
+    private static java.time.Instant toInstant(Object v) {
+        if (v instanceof java.time.Instant i) return i;
+        if (v instanceof java.sql.Timestamp ts) return ts.toInstant();
+        throw new IllegalArgumentException("Cannot convert " + v.getClass().getName() + " to Instant");
     }
 }

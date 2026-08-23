@@ -1,5 +1,6 @@
 package com.power.posval.domain.command;
 
+import com.power.posval.domain.model.TradeDirection;
 import com.power.posval.domain.model.VolumeUnit;
 import com.power.posval.domain.model.value.DeliveryPeriod;
 import com.power.posval.domain.model.value.SeriesKey;
@@ -25,7 +26,7 @@ class CommandSmokeTest {
         var dp = new DeliveryPeriod(START, END, CET);
         var cmd = new TradeCapture(
             "T-100", 1, "LEG-1", "TENANT-1", dp,
-            new BigDecimal("50"), VolumeUnit.MW_CAPACITY, UUID.randomUUID(),
+            new BigDecimal("50"), TradeDirection.BUY, VolumeUnit.MW_CAPACITY, UUID.randomUUID(),
             null, "PF-A", "DP-1", "BILATERAL_TRADE", NOW,
             null, BigDecimal.ONE, new SeriesKey("VS-1"), null);
         assertEquals("T-100", cmd.tradeId());

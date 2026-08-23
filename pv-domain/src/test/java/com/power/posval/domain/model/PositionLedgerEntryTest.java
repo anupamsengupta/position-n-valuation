@@ -2,6 +2,7 @@ package com.power.posval.domain.model;
 
 import com.power.posval.domain.model.value.DeliveryRange;
 import com.power.posval.domain.model.value.SeriesKey;
+import com.power.posval.domain.model.TradeDirection;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -25,6 +26,7 @@ class PositionLedgerEntryTest {
             .tradeVersion(1)
             .deliveryRange(DeliveryRange.ofMonth(YearMonth.of(2025, 3), CET))
             .quantity(new BigDecimal("50.0"))
+            .direction(TradeDirection.BUY)
             .volumeUnit(VolumeUnit.MW_CAPACITY)
             .priceExpressionId(UUID.randomUUID())
             .portfolioId("PF-A")
@@ -86,6 +88,12 @@ class PositionLedgerEntryTest {
     void missingQuantityThrows() {
         assertThrows(NullPointerException.class,
             () -> validBuilder().quantity(null).build());
+    }
+
+    @Test
+    void missingDirectionThrows() {
+        assertThrows(NullPointerException.class,
+            () -> validBuilder().direction(null).build());
     }
 
     @Test

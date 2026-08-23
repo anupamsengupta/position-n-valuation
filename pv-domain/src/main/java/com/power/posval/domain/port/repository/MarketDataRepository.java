@@ -5,6 +5,7 @@ import com.power.posval.domain.port.marketdata.VolSurfaceLookup;
 
 import java.time.Instant;
 import java.time.YearMonth;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -34,6 +35,19 @@ public interface MarketDataRepository {
 
     Optional<MarketDataLookup> findAtVersion(String tenantId, String series,
                                               Instant intervalStart, long versionId);
+
+    /** Bulk load fixings for a series within [rangeStart, rangeEnd). Returns latest version per interval. */
+    default List<MarketDataLookup> findFixingsInRange(String tenantId, String series,
+                                                       Instant rangeStart, Instant rangeEnd) {
+        return List.of(); // default no-op; JPA adapter overrides
+    }
+
+    /** Bulk load forward curves for a series and pillar range. Returns latest version per interval. */
+    default List<MarketDataLookup> findForwardCurvesInRange(String tenantId, String series,
+                                                              YearMonth pillarStart, YearMonth pillarEnd,
+                                                              Instant asOfDate) {
+        return List.of(); // default no-op; JPA adapter overrides
+    }
 
     // --- writes ---
 

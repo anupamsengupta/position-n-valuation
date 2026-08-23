@@ -22,6 +22,18 @@
         <class>com.power.posval.persistence.entity.TradeIntervalCacheEntity</class>
         <class>com.power.posval.persistence.entity.OutboxEntity</class>
 
+        <!-- DA Exchange Spot entities (S9) -->
+        <class>com.power.posval.persistence.entity.TARGET2CalendarEntity</class>
+        <class>com.power.posval.persistence.entity.HolidayCalendarEntity</class>
+        <class>com.power.posval.persistence.entity.BalancingGroupEntity</class>
+        <class>com.power.posval.persistence.entity.AssetToBalancingGroupMappingEntity</class>
+        <class>com.power.posval.persistence.entity.BlockDefinitionEntity</class>
+        <class>com.power.posval.persistence.entity.ExchangeFeeScheduleEntity</class>
+        <class>com.power.posval.persistence.entity.AuctionImportSessionEntity</class>
+        <class>com.power.posval.persistence.entity.NominationRecordEntity</class>
+        <class>com.power.posval.persistence.entity.ImbalanceRecordEntity</class>
+        <class>com.power.posval.persistence.entity.OperationalAlertEntity</class>
+
         <exclude-unlisted-classes>true</exclude-unlisted-classes>
 
         <properties>

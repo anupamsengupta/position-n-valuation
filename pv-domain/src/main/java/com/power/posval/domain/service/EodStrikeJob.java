@@ -5,6 +5,7 @@ import com.power.posval.domain.model.StruckMark;
 import com.power.posval.domain.model.value.DeliveryPeriod;
 import com.power.posval.domain.model.value.DeliveryRange;
 import com.power.posval.domain.model.value.VolumeReference;
+import com.power.posval.domain.port.NumericPrecision;
 import com.power.posval.domain.port.marketdata.MarketDataPort;
 import com.power.posval.domain.port.repository.PriceExpressionRepository;
 import com.power.posval.domain.port.repository.StruckMarkRepository;
@@ -23,21 +24,25 @@ import java.util.UUID;
  * EOD struck mark materialization job (S5c).
  * Persists immutable struck mark.
  * Pattern #15, FR-077, FR-078, S5c.
+ * TODO: Wire EodStrikeJob with NumericPrecision in Guice when binding is created.
  */
 public class EodStrikeJob extends AbstractMaterializationJob<StruckMark> {
 
     private final StruckMarkRepository markRepo;
     private final LocalDate strikeDate;
+    private final NumericPrecision np;
 
     public EodStrikeJob(VolumeResolver volumeResolver,
                          PriceEvaluator priceEvaluator,
                          MarketDataPort marketData,
                          PriceExpressionRepository priceExpressionRepo,
                          StruckMarkRepository markRepo,
-                         LocalDate strikeDate) {
+                         LocalDate strikeDate,
+                         NumericPrecision np) {
         super(volumeResolver, priceEvaluator, marketData, priceExpressionRepo);
         this.markRepo = markRepo;
         this.strikeDate = strikeDate;
+        this.np = np;
     }
 
     @Override
@@ -64,7 +69,12 @@ public class EodStrikeJob extends AbstractMaterializationJob<StruckMark> {
     protected StruckMark buildResult(PositionLedgerEntry position,
                                       VolumeRecord volume,
                                       PriceResolution price) {
-        BigDecimal markValue = price.value().multiply(volume.energy());
+        // OQ-1, S14: sign energy using quantity signum — struck marks must reflect trade direction.
+        // OI-7: apply NumericPrecision.MONETARY rounding (pre-existing gap fixed here). FR-034, FR-077.
+        int directionSign = position.quantity().signum();
+        BigDecimal signedEnergy = volume.energy().multiply(BigDecimal.valueOf(directionSign));
+        BigDecimal markValue = np.round(
+            price.value().multiply(signedEnergy), NumericPrecision.Domain.MONETARY);
         YearMonth deliveryMonth = YearMonth.from(
             volume.intervalStart().atZone(position.deliveryRange().deliveryTimezone()));
 

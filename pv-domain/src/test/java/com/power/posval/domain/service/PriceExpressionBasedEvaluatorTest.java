@@ -294,7 +294,10 @@ class PriceExpressionBasedEvaluatorTest {
             @Override
             public MarketDataLookup lookupIndex(String s, String r, DeliveryPeriod dp) { return null; }
             @Override
-            public MarketDataLookup lookupForwardCurve(String s, YearMonth p, Instant a) { return null; }
+            public MarketDataLookup lookupForwardCurve(String s, YearMonth p, Instant a) {
+                long ver = "SERIES_A".equals(s) ? 5L : 10L;
+                return new MarketDataLookup(new BigDecimal("42"), ver, s, a, null);
+            }
             @Override
             public MarketDataLookup lookupFxRate(String c, Instant r) { return null; }
             @Override

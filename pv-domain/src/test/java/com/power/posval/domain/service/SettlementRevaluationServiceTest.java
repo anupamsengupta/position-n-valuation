@@ -118,12 +118,72 @@ class SettlementRevaluationServiceTest {
 
         assertEquals(0, new BigDecimal("85.00").compareTo(cell.price()));
         assertNotNull(cell.marketPrice());
-        assertTrue(cell.marketPrice().subtract(new BigDecimal("28.06")).abs()
+        assertTrue(cell.marketPrice().subtract(new BigDecimal("87.10")).abs()
             .compareTo(new BigDecimal("0.01")) < 0,
-            "Market price ≈ 28.06, got " + cell.marketPrice());
+            "Market price ≈ 87.10, got " + cell.marketPrice());
         assertNotNull(cell.pnl());
-        assertTrue(cell.pnl().compareTo(BigDecimal.ZERO) < 0,
-            "PnL should be negative (market < trade)");
+        assertTrue(cell.pnl().compareTo(BigDecimal.ZERO) > 0,
+            "PnL should be positive (market > trade)");
+    }
+
+    @Test
+    void sellDirection_producesNegativePnl_whenMarketExceedsTrade() {
+        var savedCells = new ArrayList<SettlementCell>();
+
+        var service = buildService(savedCells, new ArrayList<>(), new ArrayList<>());
+
+        // Trade price: EXPR-1 (85.00), Market price: EXPR-2 (EPEX+spread ~87.10)
+        // SELL position: market > trade → loss
+        var position = testPositionWithDirection(
+            UUID.fromString("00000000-0000-0000-0000-000000000001"),
+            UUID.fromString("00000000-0000-0000-0000-000000000002"),
+            TradeDirection.SELL);
+
+        Instant start = Instant.parse("2025-03-01T00:00:00Z");
+        Instant end = Instant.parse("2025-03-01T00:15:00Z");
+
+        service.revalue(position, start, end);
+
+        assertEquals(1, savedCells.size());
+        SettlementCell cell = savedCells.get(0);
+
+        assertEquals(0, new BigDecimal("85.00").compareTo(cell.price()));
+        // Volumes and amounts should be negative for SELL
+        assertTrue(cell.volumeMwh().signum() < 0, "volumeMwh should be negative for SELL");
+        assertTrue(cell.amount().signum() < 0, "tradeAmount should be negative for SELL");
+        assertTrue(cell.marketAmount().signum() < 0, "marketAmount should be negative for SELL");
+        // PnL should be negative: market > trade is a loss for seller
+        assertNotNull(cell.pnl());
+        assertTrue(cell.pnl().signum() < 0,
+            "PnL should be negative when market > trade for SELL, got " + cell.pnl());
+    }
+
+    @Test
+    void sellDirection_producesPositivePnl_whenTradeExceedsMarket() {
+        var savedCells = new ArrayList<SettlementCell>();
+
+        var service = buildService(savedCells, new ArrayList<>(), new ArrayList<>());
+
+        // Trade price: EXPR-2 (87.10), Market price: EXPR-1 (fixed 85.00)
+        // SELL position: trade > market → profit for seller
+        var position = testPositionWithDirection(
+            UUID.fromString("00000000-0000-0000-0000-000000000002"),
+            UUID.fromString("00000000-0000-0000-0000-000000000001"),
+            TradeDirection.SELL);
+
+        Instant start = Instant.parse("2025-03-01T00:00:00Z");
+        Instant end = Instant.parse("2025-03-01T00:15:00Z");
+
+        service.revalue(position, start, end);
+
+        assertEquals(1, savedCells.size());
+        SettlementCell cell = savedCells.get(0);
+
+        // PnL should be positive: trade > market is a profit for seller
+        // pnl = marketAmount - tradeAmount = (85 * -12.5) - (87.10 * -12.5) = -1062.50 - (-1088.75) = +26.25
+        assertNotNull(cell.pnl());
+        assertTrue(cell.pnl().signum() > 0,
+            "PnL should be positive when trade > market for SELL, got " + cell.pnl());
     }
 
     // --- helpers ---
@@ -172,6 +232,27 @@ class SettlementRevaluationServiceTest {
             cellRepo, eventPublisher, new DefaultNumericPrecision(), noOpIndex);
     }
 
+    private PositionLedgerEntry testPositionWithDirection(UUID priceExprId, UUID marketPriceExprId,
+                                                            TradeDirection direction) {
+        BigDecimal qty = direction == TradeDirection.SELL ? BigDecimal.TEN.negate() : BigDecimal.TEN;
+        return PositionLedgerEntry.builder()
+            .id(UUID.randomUUID())
+            .tenantId("TN_0042")
+            .tradeId("T-REVAL")
+            .tradeLegId("LEG-1")
+            .tradeVersion(1)
+            .deliveryRange(DeliveryRange.ofMonth(YearMonth.of(2025, 3), CET))
+            .quantity(qty)
+            .direction(direction)
+            .volumeUnit(VolumeUnit.MW_CAPACITY)
+            .priceExpressionId(priceExprId)
+            .marketPriceExpressionId(marketPriceExprId)
+            .volumeSeriesKey(new SeriesKey("VS-REVAL-001"))
+            .validFrom(Instant.parse("2025-02-15T00:00:00Z"))
+            .knownFrom(Instant.parse("2025-02-15T00:00:00Z"))
+            .build();
+    }
+
     private PositionLedgerEntry testPosition(UUID priceExprId, UUID marketPriceExprId) {
         return PositionLedgerEntry.builder()
             .id(UUID.randomUUID())
@@ -181,6 +262,7 @@ class SettlementRevaluationServiceTest {
             .tradeVersion(1)
             .deliveryRange(DeliveryRange.ofMonth(YearMonth.of(2025, 3), CET))
             .quantity(BigDecimal.TEN)
+            .direction(TradeDirection.BUY)
             .volumeUnit(VolumeUnit.MW_CAPACITY)
             .priceExpressionId(priceExprId)
             .marketPriceExpressionId(marketPriceExprId)

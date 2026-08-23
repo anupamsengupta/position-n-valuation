@@ -9,8 +9,10 @@ import java.io.InputStreamReader;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.Objects;
 
 /**
  * JSON-resource-backed stub for PriceExpressionRepository.
@@ -24,12 +26,26 @@ public class JsonPriceExpressionRepository implements PriceExpressionRepository 
     private final Map<UUID, PriceExpression> expressions;
 
     public JsonPriceExpressionRepository() {
-        this.expressions = loadExpressions();
+        this.expressions = new ConcurrentHashMap<>(loadExpressions());
     }
 
     @Override
     public Optional<PriceExpression> findById(UUID id) {
         return Optional.ofNullable(expressions.get(id));
+    }
+
+    /**
+     * Persist a price expression in the in-memory map. Idempotent on the same id —
+     * if an entry already exists it is not overwritten (D-2, S10.5).
+     *
+     * @param id         the UUID key; never null
+     * @param expression the expression tree root; never null
+     */
+    @Override
+    public void save(UUID id, PriceExpression expression) {
+        Objects.requireNonNull(id,         "id");
+        Objects.requireNonNull(expression, "expression");
+        expressions.putIfAbsent(id, expression);
     }
 
     private Map<UUID, PriceExpression> loadExpressions() {

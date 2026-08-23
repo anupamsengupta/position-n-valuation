@@ -43,8 +43,25 @@ For a new feature or change:
 6. **Design the event flow.** Which events fire, which outbox rows get written, which consumers subscribe. Reference §15 for topic naming (`posval.` + event class simple name).
 7. **Design the wiring.** New Guice bindings in the appropriate module (`DomainModule`, `PersistenceModule`, `TenantModule`, `EventModule`, `CacheModule`, `KafkaModule`). If any part crosses into `pv-app`, describe how the Spring host exposes the Guice-created instance — NEVER a `new` call in a `@Bean` method.
 8. **Design the tests.** Unit tests with mock ports (JUnit + hand-mocked). Integration tests via Testcontainers PG16 (NOT H2). Contract tests for new port ↔ adapter pairs (§18.3).
-9. **Identify constraint compatibility.** For each of D-1..D-14, state either "not applicable" or "compatible because X". If any constraint is violated, the design is wrong — redesign or escalate.
-10. **List open questions** rather than inventing answers. Prefer honest gaps over confident guesses.
+9. **Design the performance profile.** For every new query path or API endpoint:
+   - **Pagination strategy.** Cursor-based (keyset) for large result sets (positions, settlement cells, rollup grids). Never unbounded `SELECT *`. Offset-based only for small, bounded sets (<500 rows). Specify default and max page sizes.
+   - **Response size budget.** Target <100KB per API response for interactive views. Grids with 10K+ rows must use server-side pagination or streaming; do not design an endpoint that returns the full dataset in one call.
+   - **Query performance.** Identify which queries hit the S8 Dependency Index vs brute-force scans. For any query that touches settlement cells at 15-min granularity across a month (up to 2,880 intervals per position), specify the index strategy and whether a materialized aggregate (S7 Rollups) should be used instead.
+   - **Caching layers.** Specify Redis cache TTL and invalidation trigger for each read path. Market data and forward marks are volatile (short TTL or event-driven invalidation via `MarketDataUpdated`). Position and rollup data changes on trade capture or revaluation events — specify which Kafka events invalidate which cache keys. Cache keys must include tenantId (D-14 cross-tenant safety).
+   - **Connection pooling.** If the design introduces a new DataSource or connection path, specify the HikariCP pool sizing rationale. Default: writer pool 10, reader pool 20 per tenant group.
+10. **Design the real-time push path (if applicable).** When the UI needs live updates (position changes, market data ticks, PnL recalculations):
+    - **Push mechanism.** SSE (Server-Sent Events) for one-way server→client streams (market data, position updates). WebSocket only if bidirectional communication is needed (rare for CTRM read views). Specify the endpoint path and event format.
+    - **Event source.** Which Kafka topic drives the push? The outbox relay produces to `posval.<EventName>` — the push adapter consumes from the relevant topic and fans out to connected SSE/WebSocket clients. Never push directly from a domain service.
+    - **Tenant isolation on the push path.** Each SSE/WebSocket connection is scoped to a tenant. The push adapter must filter events by tenant before sending. Cross-tenant push is a data leak — same severity as a cross-tenant query.
+    - **Backpressure and throttling.** Market data ticks can arrive at high frequency (sub-second on intraday continuous). Specify the throttle strategy: latest-value-wins with a configurable floor (e.g. push at most once per 500ms per subscription), or batch-and-flush. The UI must handle bursts gracefully.
+    - **Reconnection contract.** When the client reconnects after a drop, specify whether it receives a full snapshot or only the delta since `Last-Event-ID` (SSE standard). For position views, full snapshot on reconnect is safer — deltas on bitemporal data are error-prone.
+    - **Graceful degradation.** If the push path is down, the UI must still function via polling (TanStack Query refetchInterval fallback). The push path is an optimization, not a dependency. Design the API so the same data is available via REST poll and via push — never push-only.
+11. **Design DST handling for time-series APIs.** Any API that returns 15-minute interval data, daily aggregates, or date-range filters must specify:
+    - **Time zone convention.** All timestamps in API responses are UTC (`Instant`). The API accepts optional `timezone` parameter (default `Europe/Berlin`) for endpoints that return daily/monthly aggregates, so the server can compute day boundaries correctly.
+    - **DST transition days.** Spring-forward day (last Sunday of March, CET→CEST): 23-hour day = 92 quarter-hour intervals. Fall-back day (last Sunday of October, CEST→CET): 25-hour day = 100 quarter-hour intervals. Any endpoint returning 15-min intervals for a delivery day must return the correct count — not 96 always. Specify how the "missing" hour (spring) and "duplicate" hour (fall) are represented in the response.
+    - **Gate closure alignment.** Gate closure times are in local market time (CET/CEST). An API that filters by gate closure window must convert correctly — a gate closure at "14:00 CET" is 13:00 UTC in summer and 13:00 UTC in winter. Specify whether the filter parameter is local time or UTC and how conversion happens.
+12. **Identify constraint compatibility.** For each of D-1..D-14, state either "not applicable" or "compatible because X". If any constraint is violated, the design is wrong — redesign or escalate.
+13. **List open questions** rather than inventing answers. Prefer honest gaps over confident guesses.
 
 ## Output format
 
@@ -89,6 +106,15 @@ For a new-feature or new-subsystem design, produce a tech-spec document with the
 
 ## §10 — Cross-Cutting
 (tenant handling, bitemporal invariants, transaction boundaries, cache invalidation)
+
+## §10a — Performance Profile
+(pagination strategy per endpoint, response size budgets, query indexes, Redis cache TTL and invalidation triggers, connection pool sizing)
+
+## §10b — Real-Time Push
+(SSE/WebSocket endpoints if applicable, Kafka topic source, tenant isolation, throttle strategy, reconnection contract, graceful degradation to REST polling. Explicit "not applicable" if no push path needed.)
+
+## §10c — DST Handling
+(time zone convention for API responses, interval count on DST transition days, gate closure time conversion. Explicit "not applicable" if the feature has no time-series or date-range concern.)
 
 ## §11 — Regulatory Impact
 (REMIT / EMIR / MiFID II implications, if any — explicit "none" is a valid answer)

@@ -40,7 +40,7 @@ public class VolumeSeriesEntity {
     @Column(name = "asset_id", length = 64)
     private String assetId;
 
-    @Column(name = "trade_leg_id", length = 64)
+    @Column(name = "trade_leg_id", length = 255)
     private String tradeLegId;
 
     @Column(name = "version_id", nullable = false)

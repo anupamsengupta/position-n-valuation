@@ -12,11 +12,16 @@ import com.power.posval.domain.service.*;
 
 /**
  * Guice module for domain service bindings. §16.1.
+ *
+ * <p>Installs {@link DaExchangeModule} as a focused submodule for DA-specific
+ * bindings (S9.1). All DA service, parser, and strategy bindings live there.
  */
 public class DomainModule extends AbstractModule {
 
     @Override
     protected void configure() {
+        // DA Exchange Spot feature — service, strategy, and parser bindings. S9.1.
+        install(new DaExchangeModule());
         bind(NumericPrecision.class)
             .to(DefaultNumericPrecision.class)
             .in(Singleton.class);
@@ -52,6 +57,19 @@ public class DomainModule extends AbstractModule {
         bind(MarketDataService.class).to(DefaultMarketDataService.class).in(Singleton.class);
         bind(VolumeSeriesQueryService.class).to(DefaultVolumeSeriesQueryService.class).in(Singleton.class);
         bind(RollupQueryService.class).to(DefaultRollupQueryService.class).in(Singleton.class);
+
+        // ForwardMarkService — ADR-002: compute-on-demand.
+        // Replaces StubForwardMarkService. Uses S6b volumes + S4 curves
+        // via PriceEvaluator to compute forward MtM at query time.
+        bind(ForwardMarkService.class)
+            .to(DefaultForwardMarkService.class)
+            .in(Singleton.class);
+
+        // Dashboard query facade — Pattern #18, §9.1.
+        // Binds DashboardQueryService → DefaultDashboardQueryService (Singleton).
+        bind(DashboardQueryService.class)
+            .to(DefaultDashboardQueryService.class)
+            .in(Singleton.class);
     }
 
     /**

@@ -11,6 +11,7 @@ import com.power.posval.domain.port.repository.PositionLedgerRepository;
 import com.power.posval.domain.port.repository.SettlementCellRepository;
 
 import jakarta.inject.Inject;
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -61,6 +62,11 @@ public class DefaultTradeCaptureHandler implements TradeCaptureHandler {
         // FR-030: decompose delivery period into monthly blocks
         List<DeliveryRange> monthBlocks = cmd.deliveryPeriod().toMonthBlocks();
 
+        // FR-034: compute signed quantity from absolute value and direction sign.
+        // abs() guards against pre-signed quantities from legacy callers — direction is authoritative.
+        BigDecimal signedQuantity = cmd.quantity().abs()
+            .multiply(BigDecimal.valueOf(cmd.direction().sign()));
+
         // Trade's exact delivery boundaries
         Instant tradeStart = cmd.deliveryPeriod().start().toInstant();
         Instant tradeEnd = cmd.deliveryPeriod().end().toInstant();
@@ -82,7 +88,8 @@ public class DefaultTradeCaptureHandler implements TradeCaptureHandler {
                     .deliveryRange(block)
                     .deliveryStart(effectiveStart)
                     .deliveryEnd(effectiveEnd)
-                    .quantity(cmd.quantity())
+                    .quantity(signedQuantity)
+                    .direction(cmd.direction())
                     .volumeUnit(cmd.volumeUnit())
                     .priceExpressionId(cmd.priceExpressionId())
                     .marketPriceExpressionId(cmd.marketPriceExpressionId())

@@ -44,9 +44,12 @@ public class GuiceConfig {
                                   TenantContext tenantContext) {
 
         String pricingStrategy = env.getProperty("pv.pricing.strategy", "expression");
+        long l1MaxSize = env.getProperty("pv.cache.l1.max-size", Long.class, 2_000_000L);
+        long l1TtlHours = env.getProperty("pv.cache.l1.ttl-hours", Long.class, 24L);
 
         ConfigModule configModule = new ConfigModule(
-                pricingStrategy, emProvider, volumeCache, marketDataCache, tenantContext);
+                pricingStrategy, emProvider, volumeCache, marketDataCache, tenantContext,
+                l1MaxSize, l1TtlHours);
 
         // DomainModule binds PriceEvaluator → PriceExpressionBasedEvaluator by default.
         // When pricingStrategy="rule-engine", ConfigModule overrides that binding.

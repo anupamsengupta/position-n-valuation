@@ -1,5 +1,6 @@
 package com.power.posval.app.kafka;
 
+import com.power.posval.app.event.DashboardDataChangedEvent;
 import com.power.posval.app.provider.TransactionalExecutor;
 import com.power.posval.domain.event.MarketDataUpdated;
 import com.power.posval.kafka.MarketDataUpdatedConsumer;
@@ -7,6 +8,7 @@ import com.power.posval.persistence.tenant.ThreadLocalTenantContext;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Component;
@@ -30,13 +32,16 @@ public class MarketDataUpdatedKafkaListener {
     private final MarketDataUpdatedConsumer marketDataUpdatedConsumer;
     private final TransactionalExecutor txExecutor;
     private final ThreadLocalTenantContext tenantContext;
+    private final ApplicationEventPublisher eventPublisher;
 
     public MarketDataUpdatedKafkaListener(MarketDataUpdatedConsumer marketDataUpdatedConsumer,
                                            TransactionalExecutor txExecutor,
-                                           ThreadLocalTenantContext tenantContext) {
+                                           ThreadLocalTenantContext tenantContext,
+                                           ApplicationEventPublisher eventPublisher) {
         this.marketDataUpdatedConsumer = marketDataUpdatedConsumer;
         this.txExecutor = txExecutor;
         this.tenantContext = tenantContext;
+        this.eventPublisher = eventPublisher;
     }
 
     @KafkaListener(
@@ -50,6 +55,8 @@ public class MarketDataUpdatedKafkaListener {
             tenantContext.setTenant(event.tenantId());
             txExecutor.run(() -> marketDataUpdatedConsumer.handle(event));
             ack.acknowledge();
+            eventPublisher.publishEvent(new DashboardDataChangedEvent(
+                    this, event.tenantId(), DashboardDataChangedEvent.ChangeType.MARKET_DATA_REVALUED, null));
             log.info("Processed MarketDataUpdated series={} range=[{}, {})",
                 event.series(), event.affectedRangeStart(), event.affectedRangeEnd());
         } finally {

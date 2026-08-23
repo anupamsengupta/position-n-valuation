@@ -223,15 +223,15 @@ public class BitemporalAuditListener {
 
 | Topic | Key | Payload Record | Partition Key | Consumers |
 |-------|-----|----------------|---------------|-----------|
-| `trade.position.captured` | `{trade_id}` | `PositionCaptured` | `trade_id` | Volume service, slot cache, S6b |
-| `trade.position.amended` | `{trade_id}` | `PositionAmended` | `trade_id` | Volume service, valuation, slot cache |
-| `trade.position.cancelled` | `{trade_id}` | `PositionCancelled` | `trade_id` | Volume service, valuation, slot cache |
-| `volume.series.published` | `{series_key}` | `VolumePublished` | `series_key` | Valuation (S5b), slot cache (S6), S6b |
-| `volume.series.superseded` | `{series_key}` | `VolumeSuperseded` | `series_key` | Valuation (S5a, S5b), slot cache, S6b, dependency index |
-| `valuation.settlement.computed` | `{position_id}` | `SettlementComputed` | `position_id` | Dependency index, rollups |
-| `marketdata.fixing.published` | `{series}` | `SettlementPublished` | `series` | Valuation (S5a) |
-| `marketdata.curve.tick` | `{series}` | `CurveTick` | `series` | Valuation (S5b), forward marks |
-| `marketdata.updated` | `{series}` | `MarketDataUpdated` | `series` | Market data cache invalidation (S4) |
+| `trade.position.captured` | `{trade_id}` | `PositionCaptured` | `trade_id` | Volume service, slot cache (S6), S6b (Trade Interval Cache) |
+| `trade.position.amended` | `{trade_id}` | `PositionAmended` | `trade_id` | Volume service, valuation, slot cache (S6) |
+| `trade.position.cancelled` | `{trade_id}` | `PositionCancelled` | `trade_id` | Volume service, valuation, slot cache (S6) |
+| `volume.series.published` | `{series_key}` | `VolumePublished` | `series_key` | Valuation (S5b — Forward Marks), slot cache (S6), S6b |
+| `volume.series.superseded` | `{series_key}` | `VolumeSuperseded` | `series_key` | Valuation (S5a — Settlement Cells, S5b), slot cache (S6), S6b, dependency index (S8) |
+| `valuation.settlement.computed` | `{position_id}` | `SettlementComputed` | `position_id` | Dependency index (S8), rollups (S7) |
+| `marketdata.fixing.published` | `{series}` | `SettlementPublished` | `series` | Valuation (S5a — Settlement Cells) |
+| `marketdata.curve.tick` | `{series}` | `CurveTick` | `series` | Valuation (S5b — Forward Marks) |
+| `marketdata.updated` | `{series}` | `MarketDataUpdated` | `series` | Market data cache invalidation (S4 — Market Data) |
 
 **Headers** (on all messages):
 
@@ -887,8 +887,8 @@ void bitemporalReconstruction_multipleVersions() {
 
 | Benchmark | Target p95 | Component | Pattern |
 |-----------|-----------|-----------|---------|
-| `PriceExpressionEvaluation` — 13-node collar PPA tree | < 50 µs | `PriceEvaluator` (S2) | #10, #12 |
-| `VolumeReferenceResolution` — single interval × multiplier | < 10 µs | `VolumeResolver` (S3) | #9 |
+| `PriceExpressionEvaluation` — 13-node collar PPA tree | < 50 µs | `PriceEvaluator` (S2 — PriceExpression) | #10, #12 |
+| `VolumeReferenceResolution` — single interval × multiplier | < 10 µs | `VolumeResolver` (S3 — Volume Series) | #9 |
 | `VolumeSeriesSpecComposition` — 5-predicate `.and()` chain | < 5 µs | `VolumeSeriesSpec` (S3) | #19 |
 | `QualityStateTransition` — all valid transitions | < 1 µs | `QualityState` enum | #4, #16 |
 | `DeliveryPeriodToMonthBlocks` — 12-month decomposition | < 10 µs | `DeliveryPeriod` | #3, #8 |
@@ -940,7 +940,7 @@ public class PriceExpressionBenchmark {
 | Portfolio position query (slot cache hit) | 1000 req/sec | < 30 ms | 1 zone × 1 day × 96 intervals |
 | Bitemporal as-of reconstruction | 100 req/sec | < 100 ms | 5 trade versions, 12 monthly blocks |
 | Redis MGET bulk interval fetch | 500 req/sec | < 5 ms | 2,976 keys per request |
-| S6b rebuild (single trade-leg, 12 months) | 10/sec | < 2 sec | ~35K intervals |
+| S6b (Trade Interval Cache) rebuild (single trade-leg, 12 months) | 10/sec | < 2 sec | ~35K intervals |
 
 **Gatling scenario example:**
 
@@ -1015,35 +1015,35 @@ Reproduced from V2.0 §14 for reference — these are the binding targets:
 
 | Metric Name | Type | Labels | Subsystem | Description |
 |-------------|------|--------|-----------|-------------|
-| `pv.trade.capture.total` | Counter | `tenant_id`, `status` | S1 | Trade captures processed (success/failure) |
+| `pv.trade.capture.total` | Counter | `tenant_id`, `status` | S1 (Position Ledger) | Trade captures processed (success/failure) |
 | `pv.trade.capture.duration` | Timer | `tenant_id` | S1 | End-to-end trade capture latency (command → ledger write → outbox) |
 | `pv.trade.amend.total` | Counter | `tenant_id`, `reason` | S1 | Trade amendments by reason (BACKDATED/FORWARD) |
 | `pv.trade.cancel.total` | Counter | `tenant_id` | S1 | Trade cancellations |
 | `pv.position.ledger.entries` | Gauge | `tenant_id`, `status` | S1 | Current ledger entry count by status (ACTIVE/SUPERSEDED/CANCELLED) |
-| `pv.price.evaluation.duration` | Timer | `tenant_id`, `expression_depth` | S2 | Price expression tree evaluation latency |
+| `pv.price.evaluation.duration` | Timer | `tenant_id`, `expression_depth` | S2 (PriceExpression) | Price expression tree evaluation latency |
 | `pv.price.evaluation.active_leaves` | Histogram | `tenant_id` | S2 | Distribution of active leaf count per evaluation (FR-048f blast-radius signal) |
-| `pv.volume.resolution.duration` | Timer | `tenant_id`, `resolver_type`, `purpose` | S3 | Volume resolution latency by resolver (PROFILE/FORECAST) and purpose (SETTLEMENT/FORWARD) |
+| `pv.volume.resolution.duration` | Timer | `tenant_id`, `resolver_type`, `purpose` | S3 (Volume Series) | Volume resolution latency by resolver (PROFILE/FORECAST) and purpose (SETTLEMENT/FORWARD) |
 | `pv.volume.resolution.intervals` | Histogram | `tenant_id` | S3 | Intervals resolved per call (capacity planning signal) |
 | `pv.materialization.chunk.duration` | Timer | `tenant_id`, `strategy` | S3 | Chunk materialization wall-clock time |
 | `pv.materialization.chunk.intervals` | Counter | `tenant_id`, `strategy` | S3 | Intervals materialized per chunk |
-| `pv.settlement.computation.duration` | Timer | `tenant_id` | S5a | Settlement cell computation latency |
+| `pv.settlement.computation.duration` | Timer | `tenant_id` | S5a (Settlement Cells) | Settlement cell computation latency |
 | `pv.settlement.computation.total` | Counter | `tenant_id`, `status` | S5a | Settlement computations (PROVISIONAL/FINAL) |
-| `pv.forward_mark.write.total` | Counter | `tenant_id` | S5b | Forward mark writes to Redis |
-| `pv.eod_strike.batch.duration` | Timer | `tenant_id` | S5c | EOD strike batch wall-clock time |
+| `pv.forward_mark.write.total` | Counter | `tenant_id` | S5b (Forward Marks) | Forward mark writes to Redis |
+| `pv.eod_strike.batch.duration` | Timer | `tenant_id` | S5c (EOD Struck Marks) | EOD strike batch wall-clock time |
 | `pv.eod_strike.batch.positions` | Counter | `tenant_id` | S5c | Positions struck per batch |
 
 #### 18b.2.2 Cache Metrics
 
 | Metric Name | Type | Labels | Subsystem | Description |
 |-------------|------|--------|-----------|-------------|
-| `pv.cache.volume.hit` | Counter | `tenant_id` | S6 | Volume cache hits |
+| `pv.cache.volume.hit` | Counter | `tenant_id` | S6 (Slot Cache) | Volume cache hits |
 | `pv.cache.volume.miss` | Counter | `tenant_id` | S6 | Volume cache misses (triggers read-through) |
 | `pv.cache.volume.hit_ratio` | Gauge | `tenant_id` | S6 | Rolling 5-minute hit ratio (derived) |
 | `pv.cache.volume.eviction` | Counter | `tenant_id`, `reason` | S6 | Cache evictions by reason (TTL/INVALIDATION/CAPACITY) |
 | `pv.cache.volume.invalidation.duration` | Timer | `tenant_id`, `scope` | S6 | Invalidation latency by scope (RANGE/ALL) |
 | `pv.cache.volume.mget.keys` | Histogram | `tenant_id` | S6 | Keys per MGET call (capacity signal; expected ~2,976 for monthly chunk) |
 | `pv.cache.volume.mget.duration` | Timer | `tenant_id` | S6 | MGET round-trip latency |
-| `pv.cache.trade_interval.rebuild.duration` | Timer | `tenant_id` | S6b | S6b rebuild wall-clock time per trade-leg |
+| `pv.cache.trade_interval.rebuild.duration` | Timer | `tenant_id` | S6b (Trade Interval Cache) | S6b rebuild wall-clock time per trade-leg |
 | `pv.cache.trade_interval.rebuild.months` | Histogram | `tenant_id` | S6b | Months rebuilt per invocation (virtual thread parallelism signal) |
 
 #### 18b.2.3 Infrastructure Metrics

@@ -5,6 +5,8 @@ import com.power.posval.app.dto.RollupCellDto;
 import com.power.posval.app.provider.TransactionalExecutor;
 import com.power.posval.domain.model.TimeGranularity;
 import com.power.posval.domain.port.service.RollupQueryService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.Instant;
@@ -13,6 +15,8 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/rollups")
 public class RollupController {
+
+    private static final Logger log = LoggerFactory.getLogger(RollupController.class);
 
     private final RollupQueryService rollupService;
     private final TransactionalExecutor txExecutor;
@@ -31,10 +35,13 @@ public class RollupController {
             @RequestParam String rangeStart,
             @RequestParam String rangeEnd,
             @RequestParam(defaultValue = "MONTHLY") String granularity) {
+        log.info("GET /api/rollups tenantId={} deliveryPoint={} portfolio={} range=[{} .. {}] granularity={}",
+            tenantId, deliveryPointId, portfolioId, rangeStart, rangeEnd, granularity);
         var cells = txExecutor.execute(
                 () -> rollupService.findByRange(tenantId, deliveryPointId, portfolioId,
                         Instant.parse(rangeStart), Instant.parse(rangeEnd),
                         TimeGranularity.valueOf(granularity)));
+        log.info("GET /api/rollups => {} cells", cells.size());
         return ApiResponse.ok(cells.stream().map(RollupCellDto::from).toList());
     }
 
@@ -44,9 +51,12 @@ public class RollupController {
             @RequestParam String rangeStart,
             @RequestParam String rangeEnd,
             @RequestParam(defaultValue = "MONTHLY") String granularity) {
+        log.info("POST /api/rollups/materialize tenantId={} range=[{} .. {}] granularity={}",
+            tenantId, rangeStart, rangeEnd, granularity);
         txExecutor.run(() -> rollupService.materialize(tenantId,
                 Instant.parse(rangeStart), Instant.parse(rangeEnd),
                 TimeGranularity.valueOf(granularity)));
+        log.info("POST /api/rollups/materialize => completed");
         return ApiResponse.ok("Rollup materialization completed");
     }
 }

@@ -46,6 +46,7 @@ public class DefaultTradeCancelHandler implements TradeCancelHandler {
                 .deliveryStart(existing.deliveryStart())
                 .deliveryEnd(existing.deliveryEnd())
                 .quantity(existing.quantity())
+                .direction(existing.direction())
                 .volumeUnit(existing.volumeUnit())
                 .priceExpressionId(existing.priceExpressionId())
                 .portfolioId(existing.portfolioId())

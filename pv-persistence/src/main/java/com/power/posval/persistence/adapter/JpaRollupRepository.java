@@ -9,6 +9,7 @@ import jakarta.persistence.EntityManager;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -35,8 +36,8 @@ public class JpaRollupRepository implements RollupRepository {
             .createNativeQuery("""
                 SELECT tenant_id, delivery_point_id, portfolio_id,
                        interval_start, interval_end, granularity,
-                       net_mw, net_mwh, is_peak, settled_value,
-                       market_value, pnl, forward_mark_value,
+                       net_mw, net_mwh, is_peak, price, market_price,
+                       settled_value, market_value, pnl, forward_mark_value,
                        calendar_version, version_hash, currency
                 FROM volume_series.rollup_cell
                 WHERE tenant_id = :tenantId
@@ -74,17 +75,26 @@ public class JpaRollupRepository implements RollupRepository {
     @Override
     public void saveAll(String tenantId, List<RollupCell> cells) {
         var em = emProvider.get();
-        for (RollupCell cell : cells) {
+        // Sort by unique key to guarantee deterministic lock acquisition order
+        // and prevent deadlocks when concurrent consumers upsert overlapping rows.
+        var sorted = cells.stream()
+                .sorted(Comparator.comparing(RollupCell::deliveryPointId)
+                        .thenComparing(RollupCell::portfolioId)
+                        .thenComparing(RollupCell::periodStart)
+                        .thenComparing(c -> c.granularity().name())
+                        .thenComparing(RollupCell::isPeak))
+                .toList();
+        for (RollupCell cell : sorted) {
             em.createNativeQuery("""
                 INSERT INTO volume_series.rollup_cell
                   (tenant_id, delivery_point_id, portfolio_id,
                    interval_start, interval_end, granularity,
-                   net_mw, net_mwh, is_peak,
+                   net_mw, net_mwh, is_peak, price, market_price,
                    settled_value, market_value, pnl, forward_mark_value,
                    currency, calendar_version, version_hash, refreshed_at)
                 VALUES (:tenantId, :dpId, :portId,
                         :start, :end, :granularity,
-                        :netMw, :netMwh, :isPeak,
+                        :netMw, :netMwh, :isPeak, :price, :mktPrice,
                         :settledValue, :marketValue, :pnl, :fmv,
                         :currency, :calVer, :vHash, NOW())
                 ON CONFLICT (tenant_id, delivery_point_id, portfolio_id,
@@ -92,6 +102,8 @@ public class JpaRollupRepository implements RollupRepository {
                 DO UPDATE SET
                     net_mw = EXCLUDED.net_mw,
                     net_mwh = EXCLUDED.net_mwh,
+                    price = EXCLUDED.price,
+                    market_price = EXCLUDED.market_price,
                     settled_value = EXCLUDED.settled_value,
                     market_value = EXCLUDED.market_value,
                     pnl = EXCLUDED.pnl,
@@ -108,6 +120,8 @@ public class JpaRollupRepository implements RollupRepository {
                 .setParameter("netMw", cell.netMw())
                 .setParameter("netMwh", cell.netMwh())
                 .setParameter("isPeak", cell.isPeak())
+                .setParameter("price", cell.price())
+                .setParameter("mktPrice", cell.marketPrice())
                 .setParameter("settledValue", cell.settledValue())
                 .setParameter("marketValue", cell.marketValue())
                 .setParameter("pnl", cell.pnl())
@@ -119,24 +133,73 @@ public class JpaRollupRepository implements RollupRepository {
         }
     }
 
+    /**
+     * Q-1: Rollup cells for a portfolio across ALL delivery points.
+     * Uses index {@code idx_rollup_portfolio_granularity_time} (§7.1).
+     * Pattern #18, §6.1.
+     */
+    @Override
+    public List<RollupCell> findByPortfolio(String tenantId,
+                                              String portfolioId,
+                                              Instant rangeStart,
+                                              Instant rangeEnd,
+                                              TimeGranularity granularity) {
+        return emProvider.get()
+            .createNativeQuery("""
+                SELECT tenant_id, delivery_point_id, portfolio_id,
+                       interval_start, interval_end, granularity,
+                       net_mw, net_mwh, is_peak, price, market_price,
+                       settled_value, market_value, pnl, forward_mark_value,
+                       calendar_version, version_hash, currency
+                FROM volume_series.rollup_cell
+                WHERE tenant_id = :tenantId
+                  AND portfolio_id = :portfolioId
+                  AND interval_start < :rangeEnd
+                  AND interval_end > :rangeStart
+                  AND granularity = :granularity
+                ORDER BY interval_start
+                """)
+            .setParameter("tenantId", tenantId)
+            .setParameter("portfolioId", portfolioId)
+            .setParameter("rangeStart", rangeStart)
+            .setParameter("rangeEnd", rangeEnd)
+            .setParameter("granularity", granularity.name())
+            .getResultList()
+            .stream()
+            .map(row -> mapToRollupCell((Object[]) row))
+            .toList();
+    }
+
     private RollupCell mapToRollupCell(Object[] row) {
+        // Column order matches SELECT: tenant_id[0], delivery_point_id[1], portfolio_id[2],
+        // interval_start[3], interval_end[4], granularity[5], net_mw[6], net_mwh[7],
+        // is_peak[8], price[9], market_price[10], settled_value[11], market_value[12],
+        // pnl[13], forward_mark_value[14], calendar_version[15], version_hash[16], currency[17]
         return new RollupCell(
-            ((java.sql.Timestamp) row[3]).toInstant(),          // periodStart
-            ((java.sql.Timestamp) row[4]).toInstant(),          // periodEnd
+            toInstant(row[3]),                                  // periodStart
+            toInstant(row[4]),                                  // periodEnd
             TimeGranularity.valueOf((String) row[5]),           // granularity
             (String) row[1],                                    // deliveryPointId
             (String) row[2],                                    // portfolioId
             (Boolean) row[8],                                   // isPeak
             (BigDecimal) row[6],                                // netMw
             (BigDecimal) row[7],                                // netMwh
-            toBigDecimal(row[9]),                               // settledValue
-            toBigDecimal(row[10]),                              // marketValue
-            toBigDecimal(row[11]),                              // pnl
-            toBigDecimal(row[12]),                              // forwardMarkValue
-            row[15] != null ? (String) row[15] : "EUR",        // currency
-            (String) row[13],                                   // calendarVersion
-            (String) row[14]                                    // versionHash
+            toBigDecimal(row[9]),                               // price
+            toBigDecimal(row[10]),                              // marketPrice
+            toBigDecimal(row[11]),                              // settledValue
+            toBigDecimal(row[12]),                              // marketValue
+            toBigDecimal(row[13]),                              // pnl
+            toBigDecimal(row[14]),                              // forwardMarkValue
+            row[17] != null ? (String) row[17] : "EUR",        // currency
+            (String) row[15],                                   // calendarVersion
+            (String) row[16]                                    // versionHash
         );
+    }
+
+    private static Instant toInstant(Object v) {
+        if (v instanceof Instant i) return i;
+        if (v instanceof java.sql.Timestamp ts) return ts.toInstant();
+        throw new IllegalArgumentException("Cannot convert " + v.getClass().getName() + " to Instant");
     }
 
     private static BigDecimal toBigDecimal(Object v) {

@@ -46,9 +46,9 @@ V2.0 is a **complete rewrite**, not an incremental patch. The V1.3 document was 
 | RDS PostgreSQL + TimescaleDB | **Removed** | Aurora PostgreSQL 16 mandated (§12, context doc). TimescaleDB is not available on Aurora. |
 | `bucket_type` enum (CONTRACTUAL / PLAN / ACTUAL) | **Removed** | Replaced by `series_type` (FORECAST / PROFILE) on `volume_series` + separate `metered_actual_volume_series` table |
 | `cascade_tier` enum (NEAR_TERM / MEDIUM_TERM / LONG_TERM) | **Removed** | V3.0 stores intervals as-uploaded; no cascade tiers |
-| Wide-table scalars (14 named columns + JSONB `custom_scalars`) | **Removed** | These belong in the valuation layer (S5a/S5b/S5c), not in volume intervals |
+| Wide-table scalars (14 named columns + JSONB `custom_scalars`) | **Removed** | These belong in the valuation layer (S5a — Settlement Cells / S5b — Forward Marks / S5c — EOD Struck Marks), not in volume intervals |
 | BAV continuous aggregate (§11 in V1.3) | **Removed** | Replaced by `VolumeReference × multiplier` resolution (D-11) |
-| Position as continuous aggregate (§18 in V1.3) | **Removed** | Position Ledger (S1) is a bitemporal source-of-truth entity (D-1, D-8) |
+| Position as continuous aggregate (§18 in V1.3) | **Removed** | S1 (Position Ledger) is a bitemporal source-of-truth entity (D-1, D-8) |
 | Cross-cluster integration (§3.4 in V1.3) | **Removed** | Single Aurora cluster; no separate TimescaleDB cluster |
 | `net_position` continuous aggregate | **Removed** | Owned by position/valuation module, not volume series |
 | `hypertable`, `drop_chunks`, `compress_chunk` | **Removed** | All TimescaleDB-specific DDL replaced by pg_partman equivalents |
@@ -65,7 +65,7 @@ V2.0 is a **complete rewrite**, not an incremental patch. The V1.3 document was 
 | `asset_id` XOR `trade_leg_id` constraint | V3.0: FORECAST per-asset, PROFILE per-trade-leg |
 | Separate `metered_actual_volume_series` + `metered_actual_interval` | V3.0: meter data is a distinct aggregate |
 | pg_partman monthly partitions | Aurora-compatible replacement for TimescaleDB chunks |
-| `trade_interval_cache` (S6b) | D-12: optional pre-multiplied reporting cache |
+| `trade_interval_cache` (S6b — Trade Interval Cache) | D-12: optional pre-multiplied reporting cache |
 
 ### 1.3 What Is Preserved from V1.3
 
@@ -153,7 +153,7 @@ No row-level DELETE at scale. Retention is achieved by dropping entire monthly p
 
 | Tier | Window | Characteristics |
 |---|---|---|
-| HOT | Today → T+60d + current delivery month | Slot cache + S6b populated; forward marks live; event-driven updates; Redis-cached |
+| HOT | Today → T+60d + current delivery month | Slot cache (S6) + S6b (Trade Interval Cache) populated; forward marks live; event-driven updates; Redis-cached |
 | WARM | Delivered months within 12–14 month regulatory window | Settlement cells durable; no slot cache; no forward marks; audit/recon/disputes |
 | COLD | Beyond regulatory window, within 7-year retention | Archived to S3/Glacier; derived layers re-derivable from archived S1/S2/S4 |
 | PURGE | >7 years post-settlement | Monthly partitions dropped; no data retained (GDPR) |
@@ -866,7 +866,7 @@ CREATE POLICY tenant_isolation ON volume_series.materialization_chunk_status
     USING (tenant_id = current_setting('app.tenant_id', true)::uuid);
 ```
 
-### 5.13 trade_interval_cache (S6b — Optional)
+### 5.13 trade_interval_cache (S6b — Trade Interval Cache — Optional)
 
 ```sql
 CREATE TABLE volume_series.trade_interval_cache (
@@ -1497,8 +1497,8 @@ Redis outage degrades latency, not correctness. Strong consistency reads bypass 
 
 | Event | Trigger | Payload (per V3.0 §8) | Consumers |
 |---|---|---|---|
-| `VolumePublished` | New series version created | `series_key`, `layer`, `series_type`, `version_id`, `delivery_range`, `granularity`, `quality_state`, `scope` (FULL/PARTIAL), `event_time` | Position/valuation, slot cache, S6b |
-| `VolumeSuperseded` | Existing volume replaced | `series_key`, `layer`, `series_type`, `affected_range`, `old_version_id`, `new_version_id`, `quality_state`, `event_time` | Revaluation trigger, dependency index (S8), S6b rebuild |
+| `VolumePublished` | New series version created | `series_key`, `layer`, `series_type`, `version_id`, `delivery_range`, `granularity`, `quality_state`, `scope` (FULL/PARTIAL), `event_time` | Position/valuation, slot cache (S6), S6b (Trade Interval Cache) |
+| `VolumeSuperseded` | Existing volume replaced | `series_key`, `layer`, `series_type`, `affected_range`, `old_version_id`, `new_version_id`, `quality_state`, `event_time` | Revaluation trigger, dependency index (S8 — Dependency Index), S6b rebuild |
 | `VolumeChunkMaterialized` | Chunk materialization completes | `series_key`, `chunk_month`, `chunk_status`, `materialized_count`, `event_time` | Monitoring, materialization dashboard |
 
 **VolumeSuperseded** is the primary revaluation trigger. Its `event_time` becomes `known_from` on the resulting valuation-cell versions.

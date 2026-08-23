@@ -85,6 +85,25 @@ public class DataSeeder implements ApplicationRunner {
                     mktCounts[0], mktCounts[1], mktCounts[2], mktCounts[3]);
         }
 
+        // --- Phase 2b: Forward curves for expression series (EPEX_DA15, NORDPOOL_SYS) ---
+        // These may be missing on existing DBs where only EEX_BASE_DE was seeded.
+        boolean epexCurvesExist = txExecutor.execute(
+                () -> marketDataRepo.findForwardCurve(TENANT_ID, "EPEX_DA15",
+                        YearMonth.of(2026, 8), Instant.parse("2026-08-01T00:00:00Z")).isPresent());
+        if (epexCurvesExist) {
+            log.info("EPEX_DA15 + NORDPOOL_SYS forward curves already seeded, skipping");
+        } else {
+            log.info("Seeding forward curves for EPEX_DA15 + NORDPOOL_SYS...");
+            txExecutor.run(() -> {
+                var now = java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC);
+                var fixingEnd = now.withMinute((now.getMinute() / 15) * 15).withSecond(0).withNano(0);
+                var seriesEnd = java.time.ZonedDateTime.of(2028, 7, 1, 0, 0, 0, 0, java.time.ZoneOffset.UTC);
+                int epex = MarketDataSeriesSeeder.seedForwardCurvesPublic(marketDataRepo, "EPEX_DA15", fixingEnd, seriesEnd, 456);
+                int nordpool = MarketDataSeriesSeeder.seedForwardCurvesPublic(marketDataRepo, "NORDPOOL_SYS", fixingEnd, seriesEnd, 789);
+                log.info("Seeded {} EPEX_DA15 + {} NORDPOOL_SYS forward curve points", epex, nordpool);
+            });
+        }
+
         // --- Phase 3: Volume series (wind + solar, Jul 2026 → Jul 2028, 15-min UTC) ---
         boolean volumeExists = txExecutor.execute(
                 () -> volumeSeriesRepo.findCurrentBySeriesKey(TENANT_ID,
@@ -92,9 +111,10 @@ public class DataSeeder implements ApplicationRunner {
         if (volumeExists) {
             log.info("Volume series already seeded, skipping");
         } else {
-            log.info("Seeding volume series (Jul 2026 → Jul 2028, 15-min UTC)...");
-            int[] volCounts = txExecutor.execute(() -> VolumeSeriesSeeder.seed(volumeSeriesRepo));
-            log.info("Seeded {} wind intervals, {} solar intervals", volCounts[0], volCounts[1]);
+            log.info("Seeding volume series (15-min, 30-min, 60-min, daily, monthly)...");
+            int[] vc = txExecutor.execute(() -> VolumeSeriesSeeder.seed(volumeSeriesRepo));
+            log.info("Seeded wind-15m={}, solar-15m={}, wind-30m={}, solar-60m={}, wind-daily={}, solar-monthly={}",
+                vc[0], vc[1], vc[2], vc[3], vc[4], vc[5]);
         }
     }
 

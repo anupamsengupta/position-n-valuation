@@ -9,6 +9,7 @@ import jakarta.inject.Provider;
 import jakarta.persistence.EntityManager;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -86,6 +87,47 @@ public class JpaTradeIntervalCache implements TradeIntervalCache {
             return entity;
         }).toList();
         batchWriter.writeAll(entities);
+    }
+
+    /**
+     * Q-7: Bulk-fetch S6b records for multiple trade-legs within an interval range.
+     * Batches the IN clause into chunks of 100 to avoid PostgreSQL parameter limits.
+     * Uses existing index {@code idx_tic_trade_leg_time}.
+     * Pattern #18, §6.3.
+     */
+    @Override
+    public List<TradeIntervalRecord> getForTradeLegIds(String tenantId,
+                                                        List<String> tradeLegIds,
+                                                        Instant rangeStart,
+                                                        Instant rangeEnd) {
+        if (tradeLegIds == null || tradeLegIds.isEmpty()) {
+            return List.of();
+        }
+
+        List<TradeIntervalRecord> result = new ArrayList<>();
+        // Batch into chunks of 100 to avoid PostgreSQL IN clause parameter limits
+        int chunkSize = 100;
+        for (int i = 0; i < tradeLegIds.size(); i += chunkSize) {
+            List<String> chunk = tradeLegIds.subList(i, Math.min(i + chunkSize, tradeLegIds.size()));
+            List<TradeIntervalRecord> chunkResult = emProvider.get()
+                .createQuery("""
+                    SELECT e FROM TradeIntervalCacheEntity e
+                    WHERE e.tenantId   = :tenantId
+                      AND e.tradeLegId IN :tradeLegIds
+                      AND e.intervalStart < :rangeEnd
+                      AND e.intervalEnd > :rangeStart
+                    ORDER BY e.tradeLegId, e.intervalStart
+                    """, TradeIntervalCacheEntity.class)
+                .setParameter("tenantId", tenantId)
+                .setParameter("tradeLegIds", chunk)
+                .setParameter("rangeStart", rangeStart)
+                .setParameter("rangeEnd", rangeEnd)
+                .getResultStream()
+                .map(this::toDomain)
+                .toList();
+            result.addAll(chunkResult);
+        }
+        return result;
     }
 
     private TradeIntervalRecord toDomain(TradeIntervalCacheEntity e) {

@@ -2,17 +2,17 @@
 
 ## Overview
 
-Nine enhancements implemented on branch `spring-app-3`, covering the settlement valuation subsystem (S5a), Kafka async pipeline, materialization observability, price evaluation strategy, rollup materialization, query-time aggregation, service layer abstraction, and S8 dependency-index-based blast-radius optimization:
+Nine enhancements implemented on branch `spring-app-3`, covering the settlement valuation subsystem (S5a — Settlement Cells), Kafka async pipeline, materialization observability, price evaluation strategy, rollup materialization, query-time aggregation, service layer abstraction, and S8 dependency-index-based blast-radius optimization:
 
 1. **Kafka Listener Refactor & Per-Entry Event Model** — Replace daemon-thread poll loop with Spring `@KafkaListener`; change from one event per trade to one per position entry
 2. **Materialization Execution Timing** — Thread-safe instrumentation separating volume resolution, market data lookup, expression compute, and flush timings
 3. **Strategy Pattern: Rule-Engine-Based Price Evaluator** — MVEL-backed alternative `PriceEvaluator` switchable via `pv.pricing.strategy`
 4. **Market Price Expression & PnL** — Per-trade mark-to-market price with PnL at materialization time
 5. **Interval-Level Settlement Revaluation** — Event-driven recomputation of settlement cells at sub-month granularity
-6. **S7 Rollup Materialization & PositionMonthSummary** — Materialized rollups from settlement cells with market value/PnL; query-time monthly aggregation
+6. **S7 (Rollup Aggregates) Rollup Materialization & PositionMonthSummary** — Materialized rollups from settlement cells with market value/PnL; query-time monthly aggregation
 7. **Service Layer Abstraction** — Controllers decoupled from repository ports via service interfaces
 8. **Appendix: System Flow Diagrams & Test Trigger APIs** — API and Kafka event flow reference with sample payloads; REST endpoints for triggering events through the full outbox → Kafka pipeline
-9. **S8 Dependency-Index Blast-Radius Optimization** — `MarketDataUpdatedConsumer` uses dependency index instead of brute-force position scan
+9. **S8 (Dependency Index) Blast-Radius Optimization** — `MarketDataUpdatedConsumer` uses dependency index instead of brute-force position scan
 
 All changes are backward-compatible.
 
@@ -703,7 +703,7 @@ See per-enhancement file tables for complete lists.
 
 ---
 
-## Enhancement 6: S7 Rollup Materialization & PositionMonthSummary
+## Enhancement 6: S7 (Rollup Aggregates) Rollup Materialization & PositionMonthSummary
 
 ### 6.1 Problem
 
@@ -713,7 +713,7 @@ The existing `RollupRepository` only supported `REFRESH MATERIALIZED VIEW CONCUR
 
 | Decision | Rationale |
 |----------|-----------|
-| Two complementary approaches | Materialized rollup (S7) for cross-position aggregation; query-time summary for per-position monthly view |
+| Two complementary approaches | Materialized rollup (S7 — Rollup Aggregates) for cross-position aggregation; query-time summary for per-position monthly view |
 | `RollupMaterializationService` in domain layer | Keeps aggregation logic testable without a database |
 | Upsert semantics (ON CONFLICT DO UPDATE) | Incremental refresh — re-derive from settlement cells idempotently |
 | `PositionMonthSummary` computed via SQL GROUP BY | Avoids loading millions of 15-min cells into memory for aggregation |
@@ -734,7 +734,7 @@ Full record: `periodStart, periodEnd, granularity, deliveryPointId, portfolioId,
 
 **New:** `pv-domain/.../service/RollupMaterializationService.java`
 
-Aggregates settlement cells (S5a) into rollup cells (S7) per `(deliveryPoint, portfolio) × period` at configurable granularity (HOURLY, DAILY, MONTHLY).
+Aggregates settlement cells (S5a — Settlement Cells) into rollup cells (S7 — Rollup Aggregates) per `(deliveryPoint, portfolio) × period` at configurable granularity (HOURLY, DAILY, MONTHLY).
 
 **`materialize(tenantId, rangeStart, rangeEnd, granularity)`:**
 1. Load all positions in delivery range via `PositionLedgerRepository`
@@ -1365,7 +1365,7 @@ GET /api/settlements?tenantId=TN_0042&positionId=a1b2c3d4-...&rangeStart=2025-03
 
 ---
 
-## Enhancement 9: S8 Dependency-Index Blast-Radius Optimization
+## Enhancement 9: S8 (Dependency Index) Blast-Radius Optimization
 
 ### 9.1 Problem
 
@@ -1533,7 +1533,7 @@ The `PositionLedgerRepository` dependency is removed entirely — position IDs c
 
 ---
 
-## Enhancement 10: S8 input_series_key Bug Fix, Volume Kafka Listeners & S6b Cache Purge
+## Enhancement 10: S8 (Dependency Index) input_series_key Bug Fix, Volume Kafka Listeners & S6b (Trade Interval Cache) Cache Purge
 
 ### 10.1 Problem
 
@@ -1702,7 +1702,7 @@ This ensures the S6b cache is always a clean re-derive from source, consistent w
 
 ---
 
-## Enhancement 11 — Volume resolver tenant bug, VolumeReference date fix, scoped S6b rebuild
+## Enhancement 11 — Volume resolver tenant bug, VolumeReference date fix, scoped S6b (Trade Interval Cache) rebuild
 
 **Date:** 2026-08-09
 

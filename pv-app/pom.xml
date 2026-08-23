@@ -74,6 +74,13 @@
             <artifactId>pv-guice</artifactId>
         </dependency>
 
+        <!-- Caffeine L1 cache — simulator-scope (D-14) -->
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+            <version>3.1.8</version>
+        </dependency>
+
         <!-- Jakarta -->
         <dependency>
             <groupId>jakarta.inject</groupId>

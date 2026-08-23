@@ -1,5 +1,6 @@
 package com.power.posval.domain.command;
 
+import com.power.posval.domain.model.TradeDirection;
 import com.power.posval.domain.model.VolumeUnit;
 import com.power.posval.domain.model.value.DeliveryPeriod;
 import com.power.posval.domain.model.value.SeriesKey;
@@ -11,7 +12,10 @@ import java.util.UUID;
 /**
  * Captures a new trade position. Creates PositionLedgerEntry blocks
  * and VolumeReference(s) for volume resolution.
- * Pattern #17, FR-001–FR-005, S1.
+ *
+ * <p>{@code direction} is mandatory. The handler computes
+ * {@code signedQuantity = abs(quantity) * direction.sign()} before persisting.
+ * Pattern #17, FR-001–FR-005, FR-034, S1.
  */
 public record TradeCapture(
     String tradeId,
@@ -20,6 +24,7 @@ public record TradeCapture(
     String tenantId,
     DeliveryPeriod deliveryPeriod,
     BigDecimal quantity,
+    TradeDirection direction,
     VolumeUnit volumeUnit,
     UUID priceExpressionId,
     UUID marketPriceExpressionId,  // nullable — market-to-market price expression

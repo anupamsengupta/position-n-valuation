@@ -32,6 +32,12 @@ public class SettlementPublishedConsumer extends IdempotentConsumer<SettlementCo
                 event.positionId(),
                 event.intervalStart().toInstant(),
                 event.intervalEnd().toInstant());
+            // Materialize trade-leg rollup alongside portfolio rollup (S8.2)
+            rollupService.materializeTradeLegRollup(
+                event.tenantId(),
+                event.positionId(),
+                event.intervalStart().toInstant(),
+                event.intervalEnd().toInstant());
         }
     }
 }

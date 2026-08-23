@@ -4,6 +4,7 @@ import com.power.posval.domain.command.TradeCapture;
 import com.power.posval.domain.event.PositionEntryCaptured;
 import com.power.posval.domain.event.SettlementComputed;
 import com.power.posval.domain.model.*;
+import com.power.posval.domain.model.TradeDirection;
 import com.power.posval.domain.model.value.DeliveryPeriod;
 import com.power.posval.domain.model.value.DeliveryRange;
 import com.power.posval.domain.model.value.SeriesKey;
@@ -106,6 +107,28 @@ class TradeToSettlementIntegrationTest {
                     String t, String k, java.time.Instant rs, java.time.Instant re, String f) { return java.util.List.of(); }
                 @Override public void prune(String t, com.power.posval.domain.service.PrunePolicy p) {}
             };
+        com.power.posval.domain.port.repository.MarketDataRepository noOpMarketDataRepo =
+            new com.power.posval.domain.port.repository.MarketDataRepository() {
+                @Override public java.util.Optional<com.power.posval.domain.port.marketdata.MarketDataLookup> findFixing(String t, String s, java.time.Instant i) { return java.util.Optional.empty(); }
+                @Override public java.util.Optional<com.power.posval.domain.port.marketdata.MarketDataLookup> findIndex(String t, String s, String r) { return java.util.Optional.empty(); }
+                @Override public java.util.Optional<com.power.posval.domain.port.marketdata.MarketDataLookup> findForwardCurve(String t, String s, java.time.YearMonth p, java.time.Instant a) { return java.util.Optional.empty(); }
+                @Override public java.util.Optional<com.power.posval.domain.port.marketdata.MarketDataLookup> findFxRate(String t, String s, java.time.Instant r) { return java.util.Optional.empty(); }
+                @Override public java.util.Optional<com.power.posval.domain.port.marketdata.MarketDataLookup> findSpread(String t, String s, java.time.Instant i) { return java.util.Optional.empty(); }
+                @Override public java.util.Optional<com.power.posval.domain.port.marketdata.VolSurfaceLookup> findVolSurface(String t, String s, double d, String e, java.time.Instant a) { return java.util.Optional.empty(); }
+                @Override public java.util.Optional<com.power.posval.domain.port.marketdata.MarketDataLookup> findAtVersion(String t, String s, java.time.Instant i, long v) { return java.util.Optional.empty(); }
+                @Override public void saveFixing(String t, String s, java.time.Instant i, com.power.posval.domain.port.marketdata.MarketDataLookup l) {}
+                @Override public void saveForwardCurve(String t, String s, java.time.YearMonth p, java.time.Instant a, com.power.posval.domain.port.marketdata.MarketDataLookup l) {}
+                @Override public void saveFxRate(String t, String s, java.time.Instant r, com.power.posval.domain.port.marketdata.MarketDataLookup l) {}
+                @Override public void saveIndex(String t, String s, String r, com.power.posval.domain.port.marketdata.MarketDataLookup l) {}
+                @Override public void saveSpread(String t, String s, java.time.Instant i, com.power.posval.domain.port.marketdata.MarketDataLookup l) {}
+                @Override public void saveVolSurface(String t, String s, double d, String e, java.time.Instant a, com.power.posval.domain.port.marketdata.VolSurfaceLookup l) {}
+            };
+        com.power.posval.domain.port.tenant.TenantContext stubTenantContext =
+            new com.power.posval.domain.port.tenant.TenantContext() {
+                @Override public String currentTenantId() { return "test-tenant"; }
+                @Override public void setTenant(String tenantId) {}
+                @Override public void clear() {}
+            };
         var settlementJob = new SettlementMaterializationJob(
             volumeResolver, priceEvaluator, marketData, exprRepo,
             cellRepo, eventPublisher, new DefaultNumericPrecision(), noOpIndex);
@@ -201,11 +224,11 @@ class TradeToSettlementIntegrationTest {
         assertEquals(1, settlementStore.size());
         SettlementCell cell = settlementStore.get(0);
 
-        // EPEX_DA15_SETTLE @ 2025-03-01T00:00:00Z = 24.86, + premium 3.20 = 28.06
+        // EPEX_DA15_SETTLE @ 2025-03-01T00:00:00Z = 83.90, + premium 3.20 = 87.10
         // Price evaluator uses 8-decimal scale, so compare with tolerance
-        assertTrue(cell.price().subtract(new BigDecimal("28.06")).abs()
+        assertTrue(cell.price().subtract(new BigDecimal("87.10")).abs()
             .compareTo(new BigDecimal("0.01")) < 0,
-            "Index + spread: ~24.86 + 3.20 ≈ 28.06, got " + cell.price());
+            "Index + spread: ~83.90 + 3.20 ≈ 87.10, got " + cell.price());
         assertTrue(cell.activeLeaves().contains("EPEX_DA15"));
         assertTrue(cell.activeLeaves().contains("PREMIUM_3_20"));
         assertFalse(cell.inputVersionSet().isEmpty(),
@@ -248,7 +271,7 @@ class TradeToSettlementIntegrationTest {
             new DeliveryPeriod(
                 ZonedDateTime.of(2025, 3, 1, 0, 0, 0, 0, CET),
                 ZonedDateTime.of(2025, 6, 1, 0, 0, 0, 0, CET), CET),
-            new BigDecimal("50.0"), VolumeUnit.MW_CAPACITY, exprId,
+            new BigDecimal("50.0"), TradeDirection.BUY, VolumeUnit.MW_CAPACITY, exprId,
             null,
             "PORTFOLIO-1", "DE_LU", "BILATERAL_TRADE",
             Instant.parse("2025-02-15T00:00:00Z"),
@@ -276,7 +299,7 @@ class TradeToSettlementIntegrationTest {
     void fullPipeline_dualExpressions_producesPnl() {
         // EXPR-1: ConstantLeaf(85.00) — trade price
         UUID tradePriceExprId = UUID.fromString("00000000-0000-0000-0000-000000000001");
-        // EXPR-2: Add(EPEX_DA15_SETTLE + 3.20) — market price (~28.06)
+        // EXPR-2: Add(EPEX_DA15_SETTLE + 3.20) — market price (~87.10)
         UUID marketPriceExprId = UUID.fromString("00000000-0000-0000-0000-000000000002");
 
         TradeCapture command = tradeCapture("T-5555", tradePriceExprId, marketPriceExprId);
@@ -295,18 +318,18 @@ class TradeToSettlementIntegrationTest {
         assertEquals(0, new BigDecimal("85.00").compareTo(cell.price()),
             "Trade price should be 85.00");
 
-        // Market price ≈ 28.06 (EPEX 24.86 + premium 3.20)
+        // Market price ≈ 87.10 (EPEX 83.90 + premium 3.20)
         assertNotNull(cell.marketPrice(), "Market price should be set");
-        assertTrue(cell.marketPrice().subtract(new BigDecimal("28.06")).abs()
+        assertTrue(cell.marketPrice().subtract(new BigDecimal("87.10")).abs()
             .compareTo(new BigDecimal("0.01")) < 0,
-            "Market price ≈ 28.06, got " + cell.marketPrice());
+            "Market price ≈ 87.10, got " + cell.marketPrice());
 
         // Market amount and PnL
         assertNotNull(cell.marketAmount(), "Market amount should be set");
         assertNotNull(cell.pnl(), "PnL should be set");
-        // PnL = marketAmount - tradeAmount (should be negative since market < trade)
-        assertTrue(cell.pnl().compareTo(BigDecimal.ZERO) < 0,
-            "PnL should be negative (market < trade), got " + cell.pnl());
+        // PnL = marketAmount - tradeAmount (positive since market 87.10 > trade 85.00)
+        assertTrue(cell.pnl().compareTo(BigDecimal.ZERO) > 0,
+            "PnL should be positive (market > trade), got " + cell.pnl());
     }
 
     // ===== Helpers =====
@@ -322,7 +345,7 @@ class TradeToSettlementIntegrationTest {
             new DeliveryPeriod(
                 ZonedDateTime.of(2025, 3, 1, 0, 0, 0, 0, CET),
                 ZonedDateTime.of(2025, 4, 1, 0, 0, 0, 0, CET), CET),
-            new BigDecimal("50.0"), VolumeUnit.MW_CAPACITY, priceExpressionId,
+            new BigDecimal("50.0"), TradeDirection.BUY, VolumeUnit.MW_CAPACITY, priceExpressionId,
             marketPriceExpressionId,
             "PORTFOLIO-1", "DE_LU", "BILATERAL_TRADE",
             Instant.parse("2025-02-15T00:00:00Z"),

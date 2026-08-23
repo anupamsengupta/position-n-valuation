@@ -36,4 +36,32 @@ public interface RollupRepository {
     default void saveAll(String tenantId, List<RollupCell> cells) {
         throw new UnsupportedOperationException("saveAll not implemented");
     }
+
+    /**
+     * Q-1: Rollup cells for a portfolio across ALL delivery points within a
+     * date range at the specified granularity.
+     *
+     * <p>Distinct from {@link #findByRange} which requires a specific
+     * {@code deliveryPointId}. This method queries across all delivery points
+     * belonging to the portfolio, using index
+     * {@code idx_rollup_portfolio_granularity_time}.
+     *
+     * <p>Pattern #18 (Repository Port + Adapter), §5.2.
+     *
+     * @param tenantId    tenant identifier (D-14, Pattern #32)
+     * @param portfolioId portfolio identifier
+     * @param rangeStart  interval start filter (UTC, exclusive upper bound on
+     *                    interval_end)
+     * @param rangeEnd    interval end filter (UTC, exclusive lower bound on
+     *                    interval_start)
+     * @param granularity DAILY | WEEKLY | MONTHLY | YEARLY
+     * @return rollup cells ordered by intervalStart
+     */
+    default List<RollupCell> findByPortfolio(String tenantId,
+                                               String portfolioId,
+                                               Instant rangeStart,
+                                               Instant rangeEnd,
+                                               TimeGranularity granularity) {
+        throw new UnsupportedOperationException("findByPortfolio not implemented");
+    }
 }

@@ -116,35 +116,36 @@ public class SettlementRevaluationService {
 
         cellRepo.saveAll(newCells);
 
-        // 3b. S8: upsert dependency edges at cell interval precision (FR-102–104)
+        // 3b. S8: batch upsert dependency edges at cell interval precision (FR-102–104)
         Instant now = Instant.now();
+        List<DependencyEdge> edges = new ArrayList<>();
         for (SettlementCell cell : newCells) {
             for (String seriesKey : cell.inputVersionSet().keySet()) {
-                dependencyIndex.upsert(new DependencyEdge(
+                edges.add(new DependencyEdge(
                     position.tenantId(), cell.cellId(), "SETTLEMENT",
                     seriesKey, "PRICE_LEAF",
                     cell.intervalStart(), cell.intervalEnd(),
                     cell.activeLeaves(), now, null));
             }
         }
+        dependencyIndex.upsertAll(edges);
 
-        // 4. Publish SettlementComputed events
-        Instant eventTime = Instant.now();
-        List<Object> events = newCells.stream()
-            .<Object>map(cell -> new SettlementComputed(
-                position.tenantId(),
-                position.id(),
-                ZonedDateTime.ofInstant(cell.intervalStart(),
-                    position.deliveryRange().deliveryTimezone()),
-                ZonedDateTime.ofInstant(cell.intervalEnd(),
-                    position.deliveryRange().deliveryTimezone()),
-                new Money(cell.amount(), Currency.getInstance("EUR")),
-                "PROVISIONAL",
-                cell.activeLeaves(),
-                cell.inputVersionSet(),
-                eventTime))
-            .toList();
-        eventPublisher.publishAll(events);
+        // 4. Publish a single SettlementComputed event spanning the full range
+        // rather than one per cell, to avoid N rollup materializations + SSE pushes.
+        SettlementCell first = newCells.getFirst();
+        SettlementCell last = newCells.getLast();
+        eventPublisher.publish(new SettlementComputed(
+            position.tenantId(),
+            position.id(),
+            ZonedDateTime.ofInstant(first.intervalStart(),
+                position.deliveryRange().deliveryTimezone()),
+            ZonedDateTime.ofInstant(last.intervalEnd(),
+                position.deliveryRange().deliveryTimezone()),
+            new Money(last.amount(), Currency.getInstance("EUR")),
+            "PROVISIONAL",
+            last.activeLeaves(),
+            last.inputVersionSet(),
+            Instant.now()));
 
         log.info("Revaluation: saved {} new cells for position {} in [{}, {})",
             newCells.size(), position.id(), effectiveStart, effectiveEnd);
@@ -164,8 +165,14 @@ public class SettlementRevaluationService {
     private SettlementCell buildSettlementCell(PositionLedgerEntry position,
                                                 VolumeRecord volume,
                                                 PriceResolution price) {
+        // OQ-1, OQ-6, S14: sign energy at the settlement cell build site using quantity signum.
+        // signum(quantity) works for legacy entries that predate the direction field. FR-034.
+        int directionSign = position.quantity().signum();
+        BigDecimal signedEnergy = volume.energy().multiply(BigDecimal.valueOf(directionSign));
+        BigDecimal signedVolume = volume.volume().multiply(BigDecimal.valueOf(directionSign));
+
         BigDecimal tradeAmount = np.round(
-            price.value().multiply(volume.energy()), NumericPrecision.Domain.MONETARY);
+            price.value().multiply(signedEnergy), NumericPrecision.Domain.MONETARY);
 
         BigDecimal marketPrice = null;
         BigDecimal marketAmount = null;
@@ -186,7 +193,7 @@ public class SettlementRevaluationService {
 
             marketPrice = marketRes.value();
             marketAmount = np.round(
-                marketPrice.multiply(volume.energy()), NumericPrecision.Domain.MONETARY);
+                marketPrice.multiply(signedEnergy), NumericPrecision.Domain.MONETARY);
             pnl = np.round(
                 marketAmount.subtract(tradeAmount), NumericPrecision.Domain.MONETARY);
 
@@ -208,8 +215,8 @@ public class SettlementRevaluationService {
             "SETTLEMENT",
             "PROVISIONAL",
             price.value(),
-            volume.volume(),
-            volume.energy(),
+            signedVolume,
+            signedEnergy,
             tradeAmount,
             marketPrice,
             marketAmount,
