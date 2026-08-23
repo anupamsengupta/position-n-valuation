@@ -25,7 +25,7 @@ public class TradeIntervalCacheEntity {
     @Column(name = "tenant_id", nullable = false)
     private String tenantId;
 
-    @Column(name = "trade_leg_id", length = 64, nullable = false)
+    @Column(name = "trade_leg_id", length = 255, nullable = false)
     private String tradeLegId;
 
     @Column(name = "interval_start", nullable = false)

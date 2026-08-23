@@ -166,8 +166,12 @@ public class FiveYearSettlementBenchmark {
                         new IndexLeaf("HICP_DE_CURRENT", "HICP-DE", "deliveryYear-1:November"),
                         new ConstantLeaf("HICP_DE_BASE_2023", new BigDecimal("108.70"), "INDEX")))));
 
-        PriceExpressionRepository exprRepo = id ->
-            id.equals(priceExprId) ? Optional.of(expr4) : Optional.empty();
+        PriceExpressionRepository exprRepo = new PriceExpressionRepository() {
+            @Override public Optional<PriceExpression> findById(java.util.UUID id) {
+                return id.equals(priceExprId) ? Optional.of(expr4) : Optional.empty();
+            }
+            @Override public void save(java.util.UUID id, PriceExpression expression) { /* benchmark no-op */ }
+        };
 
         // --- Wire the job ---
         var priceEvaluator = new PriceExpressionBasedEvaluator(new DefaultNumericPrecision());

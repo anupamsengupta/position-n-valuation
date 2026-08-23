@@ -12,11 +12,16 @@ import com.power.posval.domain.service.*;
 
 /**
  * Guice module for domain service bindings. §16.1.
+ *
+ * <p>Installs {@link DaExchangeModule} as a focused submodule for DA-specific
+ * bindings (S9.1). All DA service, parser, and strategy bindings live there.
  */
 public class DomainModule extends AbstractModule {
 
     @Override
     protected void configure() {
+        // DA Exchange Spot feature — service, strategy, and parser bindings. S9.1.
+        install(new DaExchangeModule());
         bind(NumericPrecision.class)
             .to(DefaultNumericPrecision.class)
             .in(Singleton.class);

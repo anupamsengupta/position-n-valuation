@@ -39,7 +39,10 @@
       "Bash(npx vite:*)",
       "Bash(pnpm typecheck:*)",
       "Bash(pnpm test:*)",
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "Bash(echo Exit: $?:*)",
+      "Bash(rm:*)",
+      "Bash(grep:*)"
     ]
   }
 }

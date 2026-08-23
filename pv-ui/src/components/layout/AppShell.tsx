@@ -7,7 +7,9 @@ export interface AppShellProps {
 }
 
 /**
- * Application shell with sidebar nav and header.
+ * Application shell with collapsible sidebar nav and header.
+ * Sidebar width transitions are handled by the Sidebar component itself
+ * via CSS transition on width (220px expanded, 48px collapsed).
  */
 export function AppShell({ children }: AppShellProps) {
   return (

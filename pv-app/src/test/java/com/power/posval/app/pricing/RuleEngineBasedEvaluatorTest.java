@@ -357,9 +357,10 @@ class RuleEngineBasedEvaluatorTest {
 
     @Test
     void unknownExpressionThrows() {
-        // An expression tree not in the reverse map
-        var unknownExpr = new com.power.posval.domain.model.expression.ConstantLeaf(
-            "unknown", new BigDecimal("99"), "EUR/MWh");
+        // An expression tree not in the reverse map (use MarketDataLeaf, not ConstantLeaf
+        // which now has a fast-path that bypasses the rule engine — D-2)
+        var unknownExpr = new com.power.posval.domain.model.expression.MarketDataLeaf(
+            "unknown-leaf", "UNKNOWN_SERIES", null, 0, null);
 
         assertThrows(IllegalArgumentException.class,
             () -> ruleEngineEvaluator.evaluate(

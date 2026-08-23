@@ -62,3 +62,73 @@ export async function apiFetch<T>(
 
   return response.json() as Promise<T>;
 }
+
+/**
+ * Typed fetch wrapper for POST/PUT/DELETE mutations with tenant injection.
+ *
+ * Body is serialized as JSON. For multipart uploads, use `apiFetchMultipart`.
+ */
+export async function apiFetchMutation<T>(
+  path: string,
+  method: 'POST' | 'PUT' | 'DELETE',
+  body: unknown | null,
+  tenantId: string,
+): Promise<T> {
+  const url = new URL(`${BASE_URL}${path}`, window.location.origin);
+  url.searchParams.set('tenantId', tenantId);
+
+  const response = await fetch(url.toString(), {
+    method,
+    headers: {
+      'Accept': 'application/json',
+      ...(body !== null ? { 'Content-Type': 'application/json' } : {}),
+    },
+    ...(body !== null ? { body: JSON.stringify(body) } : {}),
+  });
+
+  if (!response.ok) {
+    let errorBody: unknown = null;
+    try {
+      errorBody = await response.json();
+    } catch {
+      // Response body may not be JSON
+    }
+    throw new ApiError(response.status, response.statusText, errorBody);
+  }
+
+  return response.json() as Promise<T>;
+}
+
+/**
+ * Typed fetch wrapper for multipart/form-data uploads with tenant injection.
+ *
+ * Do NOT set Content-Type manually — the browser sets it with the boundary.
+ */
+export async function apiFetchMultipart<T>(
+  path: string,
+  formData: FormData,
+  tenantId: string,
+): Promise<T> {
+  const url = new URL(`${BASE_URL}${path}`, window.location.origin);
+  url.searchParams.set('tenantId', tenantId);
+
+  const response = await fetch(url.toString(), {
+    method: 'POST',
+    headers: {
+      'Accept': 'application/json',
+    },
+    body: formData,
+  });
+
+  if (!response.ok) {
+    let errorBody: unknown = null;
+    try {
+      errorBody = await response.json();
+    } catch {
+      // Response body may not be JSON
+    }
+    throw new ApiError(response.status, response.statusText, errorBody);
+  }
+
+  return response.json() as Promise<T>;
+}

@@ -1,0 +1,1 @@
+import{R as d}from"./index-CkBhN1K_.js";const s=d(l=>({selectedSessionId:null,selectedAlertId:null,expandedAlertId:null,setSelectedSession:e=>l({selectedSessionId:e}),setSelectedAlert:e=>l({selectedAlertId:e}),setExpandedAlert:e=>l({expandedAlertId:e}),clearAll:()=>l({selectedSessionId:null,selectedAlertId:null,expandedAlertId:null})}));export{s as u};

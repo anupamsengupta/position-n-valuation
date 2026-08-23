@@ -1,0 +1,10 @@
+/functional-spec Section 1 "Day-Ahead (DA) — Exchange Spot" from docs/requirements/instrument-calculation-requirements-v1_1.md
+
+/tech-spec  @docs/functional-spec/claude-gen/day-ahead-exchange-spot.functional.md
+
+@sv-implementation-engineer @day-ahead-exchange-spot-v1.0.md
+
+@sv-code-reviewer @docs/technical-spec/claude-gen/day-ahead-exchange-spot-v1.0.md
+
+/ui-feature @docs/technical-spec/claude-gen/day-ahead-exchange-spot-v1.0.md
+

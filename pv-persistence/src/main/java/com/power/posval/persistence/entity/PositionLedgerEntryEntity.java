@@ -34,10 +34,10 @@ public class PositionLedgerEntryEntity {
     @Column(name = "tenant_id", nullable = false)
     private String tenantId;
 
-    @Column(name = "trade_id", length = 64, nullable = false)
+    @Column(name = "trade_id", length = 255, nullable = false)
     private String tradeId;
 
-    @Column(name = "trade_leg_id", length = 64, nullable = false)
+    @Column(name = "trade_leg_id", length = 255, nullable = false)
     private String tradeLegId;
 
     @Column(name = "trade_version", nullable = false)

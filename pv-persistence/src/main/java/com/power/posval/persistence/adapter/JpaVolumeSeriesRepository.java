@@ -90,7 +90,7 @@ public class JpaVolumeSeriesRepository implements VolumeSeriesRepository {
                 SELECT e FROM VolumeSeriesEntity e
                 WHERE e.tenantId  = :tenantId
                   AND e.seriesKey = :seriesKey
-                  AND e.qualityState IN ('CURRENT', 'EFFECTIVE')
+                  AND e.qualityState IN ('CURRENT', 'EFFECTIVE', 'VALIDATED')
                 ORDER BY e.versionId DESC
                 """, VolumeSeriesEntity.class)
             .setParameter("tenantId", tenantId)

@@ -15,11 +15,14 @@ import com.ctrm.ruleengine.mvel.MvelEvaluator;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.inject.AbstractModule;
+import com.google.inject.Provides;
 import com.google.inject.Singleton;
 import com.google.inject.name.Names;
+import com.power.posval.app.calendar.StubMarketCalendarAdapter;
 import com.power.posval.app.pricing.PriceRuleDefinition;
 import com.power.posval.app.pricing.RuleEngineBasedEvaluator;
 import com.power.posval.domain.model.expression.PriceExpression;
+import com.power.posval.domain.port.MarketCalendarPort;
 import com.power.posval.domain.port.NumericPrecision;
 import com.power.posval.domain.port.cache.MarketDataCache;
 import com.power.posval.domain.port.cache.TradeIntervalCache;
@@ -34,16 +37,28 @@ import com.power.posval.domain.service.PriceEvaluator;
 import com.power.posval.domain.service.stub.JsonMeteredActualRepository;
 import com.power.posval.domain.service.stub.JsonPriceExpressionRepository;
 import com.power.posval.persistence.adapter.*;
+import com.power.posval.domain.port.repository.AuctionImportSessionRepository;
+import com.power.posval.domain.port.repository.BalancingGroupRepository;
+import com.power.posval.domain.port.repository.BlockDefinitionRepository;
+import com.power.posval.domain.port.repository.ExchangeFeeScheduleRepository;
+import com.power.posval.domain.port.repository.HolidayCalendarRepository;
+import com.power.posval.domain.port.repository.ImbalanceRecordRepository;
+import com.power.posval.domain.port.repository.NominationRepository;
+import com.power.posval.domain.port.repository.OperationalAlertRepository;
+import com.power.posval.domain.port.repository.TARGET2CalendarRepository;
 import com.power.posval.persistence.batch.BatchWriter;
 import com.power.posval.persistence.batch.UnitOfWork;
 import com.power.posval.persistence.event.OutboxDomainEventPublisher;
 import jakarta.inject.Provider;
 import jakarta.persistence.EntityManager;
 
+import com.power.posval.domain.model.value.AuctionFolderPollerConfig;
+
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -116,6 +131,33 @@ public class ConfigModule extends AbstractModule {
         // --- Market data port (cache-through decorator) ---
         bind(MarketDataPort.class).to(CachingMarketDataPort.class).in(Singleton.class);
 
+        // --- DA Exchange Spot repository adapters (S9.2) ---
+        // These mirror PersistenceModule's DA bindings; ConfigModule is the active
+        // binding source in pv-app because GuiceConfig does not install PersistenceModule.
+        bind(AuctionImportSessionRepository.class)
+            .to(JpaAuctionImportSessionRepository.class).in(Singleton.class);
+        bind(NominationRepository.class)
+            .to(JpaNominationRepository.class).in(Singleton.class);
+        bind(ImbalanceRecordRepository.class)
+            .to(JpaImbalanceRecordRepository.class).in(Singleton.class);
+        bind(OperationalAlertRepository.class)
+            .to(JpaOperationalAlertRepository.class).in(Singleton.class);
+        bind(ExchangeFeeScheduleRepository.class)
+            .to(JpaExchangeFeeScheduleRepository.class).in(Singleton.class);
+        bind(HolidayCalendarRepository.class)
+            .to(JpaHolidayCalendarRepository.class).in(Singleton.class);
+        bind(BlockDefinitionRepository.class)
+            .to(JpaBlockDefinitionRepository.class).in(Singleton.class);
+        bind(BalancingGroupRepository.class)
+            .to(JpaBalancingGroupRepository.class).in(Singleton.class);
+        bind(TARGET2CalendarRepository.class)
+            .to(JpaTargetCalendarRepository.class).in(Singleton.class);
+
+        // --- MarketCalendarPort: simulator stub (D-14, A-1, S9.3) ---
+        // Production host must bind a real adapter with HolidayCalendar support.
+        bind(MarketCalendarPort.class)
+            .to(StubMarketCalendarAdapter.class).in(Singleton.class);
+
         // --- Stub services (swap for real adapters when available) ---
         bind(PriceExpressionRepository.class).to(JsonPriceExpressionRepository.class).in(Singleton.class);
         bind(MeteredActualRepository.class).to(JsonMeteredActualRepository.class).in(Singleton.class);
@@ -131,6 +173,32 @@ public class ConfigModule extends AbstractModule {
                 .in(Singleton.class);
         }
         // When "expression" (default), DomainModule's binding stands — no override needed.
+    }
+
+    /**
+     * Provides {@link AuctionFolderPollerConfig} with simulator-scope defaults (D-14).
+     *
+     * <p>Directories default to {@code ./da-import/{inbox,processed,failed}} relative to the
+     * working directory. The {@code defaultTenantId} is {@code "default"} (simulator
+     * single-tenant, D-14). Production hosts must supply a real
+     * {@code AuctionFolderPollerConfig} derived from their configuration source (SSM, etc.)
+     * and must derive the tenant from the filename convention or out-of-band config.
+     *
+     * <p>The poller is only started when {@code pv.da.poller.enabled=true} is set in
+     * application.yml (see {@code DaPollerConfig} in pv-app). S9.4, S6.3.
+     */
+    @Provides
+    @Singleton
+    AuctionFolderPollerConfig auctionFolderPollerConfig() {
+        Path daImportRoot = Path.of("da-import");
+        return new AuctionFolderPollerConfig(
+            daImportRoot.resolve("inbox"),
+            daImportRoot.resolve("processed"),
+            daImportRoot.resolve("failed"),
+            AuctionFolderPollerConfig.DEFAULT_POLL_INTERVAL,
+            AuctionFolderPollerConfig.DEFAULT_FILE_PATTERN,
+            "default"   // simulator single-tenant (D-14); production host overrides this
+        );
     }
 
     /**

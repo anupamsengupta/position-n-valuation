@@ -827,6 +827,400 @@ Then zero alerts are displayed
 
 ---
 
+## DA-UI: User Interface Requirements
+
+### DA-UI-01: Auction Import Status Panel
+
+**Purpose:** Operations triggers a DA batch import and needs to track progress, see validation results, and review any errors — all from a single panel.
+
+**Scenario 1: Import in progress**
+
+```
+Given Operations has triggered a DA batch import for DE_LU, delivery day 2026-09-16
+When the import status panel is displayed
+Then the panel shows:
+  - Exchange: EPEX SPOT
+  - Bidding zone: DE_LU
+  - Delivery day: 16 Sep 2026
+  - Status: a progress indicator cycling through PENDING → VALIDATING → IMPORTING → IMPORTED
+  - Progress bar or step indicator showing the current phase
+  And the panel auto-refreshes (poll every 2 seconds) until a terminal state is reached
+```
+
+**Scenario 2: Import completed successfully**
+
+```
+Given a DA import for DE_LU, 2026-09-16 has completed with status IMPORTED
+When the import status panel is displayed
+Then the panel shows:
+  - Status: IMPORTED (green badge)
+  - Trade count: 96
+  - Exchange reported total: 12,450.00 MWh
+  - Imported total: 12,450.00 MWh (matching = green, mismatch = red)
+  - Import duration: 3.2s
+  - File reference: epex_da_20260916_delu.csv
+  And a "View Trades" link navigates to the DA position grid filtered for this delivery day
+```
+
+**Scenario 3: Import validation failed**
+
+```
+Given a DA import for DE_LU, 2026-09-16 has failed validation
+When the import status panel is displayed
+Then the panel shows:
+  - Status: VALIDATION_FAILED (red badge)
+  - Error list displayed in a scrollable area:
+    - "Volume mismatch: expected 12,450.00 MWh, got 12,440.00 MWh (delta: -10.00 MWh)"
+    - "Contract C-042: delivery period 02:00-03:00 CET does not exist on spring-forward day"
+  And a "Retry Import" button is available (triggers a new import with the same file)
+  And no trade IDs are shown (no trades were created)
+```
+
+**Scenario 4: Import history list**
+
+```
+Given Operations navigates to the DA import history view
+Then a table shows all import sessions for the current tenant, sorted newest first:
+  | Delivery Day | Zone  | Status           | Trades | Total MWh   | Imported At         |
+  | 16 Sep 2026  | DE_LU | IMPORTED         | 96     | 12,450.00   | 2026-09-15 12:45 UTC|
+  | 15 Sep 2026  | DE_LU | IMPORTED         | 96     | 11,830.50   | 2026-09-14 12:43 UTC|
+  | 15 Sep 2026  | FR    | VALIDATION_FAILED| 0      | —           | 2026-09-14 12:44 UTC|
+  And each row is clickable to open the detail panel (Scenarios 2/3)
+  And the list supports filtering by status, zone, and date range
+```
+
+### DA-UI-02: DA Settlement Grid (Interval-Level)
+
+**Purpose:** Trading and Back Office view the settlement detail for a DA delivery day — every interval's price, volume, and settlement amount.
+
+**Scenario 1: Standard delivery day view**
+
+```
+Given the user selects delivery day 2026-09-16, zone DE_LU
+When the DA settlement grid is displayed
+Then the grid shows one row per quarter-hour interval (96 rows on a normal day):
+  | Interval (CET)   | Price (EUR/MWh) | Volume (MW) | Dir | Energy (MWh) | Amount (EUR) | Status  |
+  | 00:00 - 00:15     | 45.20           | 30.0        | BUY | 7.50         | 339.00       | SETTLED |
+  | 00:15 - 00:30     | 44.80           | 30.0        | BUY | 7.50         | 336.00       | SETTLED |
+  | ...               | ...             | ...         | ... | ...          | ...          | ...     |
+  | 23:45 - 00:00     | 52.10           | 25.0        | BUY | 6.25         | 325.63       | SETTLED |
+  And a summary row at the bottom shows:
+    - Total energy: 720.00 MWh
+    - Total settlement: 45,230.50 EUR
+    - VWAP (volume-weighted avg price): 62.82 EUR/MWh
+  And the Direction column uses colored badges (green BUY, red SELL) matching the existing PositionLedger pattern
+```
+
+**Scenario 2: Negative price highlighting**
+
+```
+Given interval 14:00-14:15 has a clearing price of -25.50 EUR/MWh
+When the DA settlement grid is displayed
+Then the price cell for 14:00-14:15 shows "-25.50" in a distinct warning color (amber/orange text)
+  And the amount cell shows the correct signed value:
+    - BUY 50 MW: -318.75 EUR (credit — displayed in green with "CR" suffix)
+    - SELL 30 MW: +191.25 EUR (debit — displayed in standard text)
+  And a tooltip on the price cell reads "Negative clearing price — buyer receives credit"
+```
+
+**Scenario 3: DST spring-forward day**
+
+```
+Given delivery day 2027-03-28 (spring-forward, CET → CEST)
+When the DA settlement grid is displayed
+Then the grid shows 92 rows (23 hours × 4 QH)
+  And the interval 01:45-02:00 CET is followed by 03:00-03:15 CEST
+  And a visual separator row between 01:45 and 03:00 displays "⏭ DST spring-forward: 02:00-03:00 CET skipped"
+  And the day summary shows total hours = 23
+```
+
+**Scenario 4: DST fall-back day**
+
+```
+Given delivery day 2026-10-25 (fall-back, CEST → CET)
+When the DA settlement grid is displayed
+Then the grid shows 100 rows (25 hours × 4 QH)
+  And the duplicate hour 02:00-03:00 is displayed as:
+    - 02:00 CEST, 02:15 CEST, 02:30 CEST, 02:45 CEST (first occurrence, summer time)
+    - 02:00 CET,  02:15 CET,  02:30 CET,  02:45 CET  (second occurrence, winter time)
+  And a visual separator row between the two occurrences displays "⏮ DST fall-back: 02:00-03:00 repeated"
+  And the day summary shows total hours = 25
+```
+
+**Scenario 5: Multiple trades per interval**
+
+```
+Given interval 10:00-10:15 has two trades:
+  - Trade A: BUY 50 MW at 72.50 EUR/MWh
+  - Trade B: SELL 20 MW at 72.50 EUR/MWh
+When the DA settlement grid is displayed
+Then each trade is shown as a separate row (per gross per-trade-leg settlement)
+  And the interval column groups both rows under "10:00 - 10:15"
+  And Trade A shows amount +906.25 EUR (pay)
+  And Trade B shows amount -362.50 EUR (receive)
+  And the day summary shows the net across all trades
+```
+
+### DA-UI-03: Nomination Workbench
+
+**Purpose:** Operations views nominated vs traded volumes side-by-side to identify deviations before and after delivery.
+
+**Scenario 1: Nomination comparison view**
+
+```
+Given DA trades have been captured for delivery day 2026-09-16 DE_LU
+  And nominations have been recorded for BG-DE-001
+When the nomination workbench is displayed
+Then the grid shows one row per quarter-hour interval:
+  | Interval (CET)   | Traded (MW) | Nominated (MW) | Deviation (MW) | Status    |
+  | 00:00 - 00:15     | 30.0        | 30.0           | 0.0            | OK        |
+  | 00:15 - 00:30     | 30.0        | 28.0           | -2.0           | DEVIATION |
+  | ...               | ...         | ...            | ...            | ...       |
+  And deviation cells are color-coded:
+    - 0.0: no highlight (OK)
+    - ±0.1 to ±5.0: amber (minor deviation)
+    - > ±5.0: red (significant deviation)
+  And a summary bar shows:
+    - Total traded: 720.00 MWh
+    - Total nominated: 712.50 MWh
+    - Net deviation: -7.50 MWh
+    - Intervals with deviation: 3 of 96
+```
+
+**Scenario 2: Nomination not yet submitted**
+
+```
+Given DA trades exist for delivery day 2026-09-17
+  And no nominations have been recorded for that day
+When the nomination workbench is displayed for 2026-09-17
+Then the "Nominated" column shows "—" for all intervals
+  And a banner at the top reads "Nominations not yet submitted for 17 Sep 2026"
+  And the banner severity is:
+    - INFO if nomination gate closure is > 1 hour away
+    - WARNING if nomination gate closure is < 1 hour away
+    - CRITICAL if gate closure has passed
+```
+
+**Scenario 3: Balancing group filter**
+
+```
+Given the tenant has two balancing groups: BG-DE-001 and BG-DE-002
+When the nomination workbench is displayed
+Then a dropdown allows selecting the balancing group
+  And the grid filters to show only nominations for the selected BG
+  And "All BGs" shows an aggregated view with BG as a grouping column
+```
+
+### DA-UI-04: Imbalance Settlement View
+
+**Purpose:** Back Office and Risk view imbalance settlement results per interval and at monthly aggregation level.
+
+**Scenario 1: Daily imbalance detail**
+
+```
+Given imbalance settlement has been computed for delivery day 2026-09-16, BG-DE-001
+When the daily imbalance view is displayed
+Then the grid shows one row per quarter-hour interval:
+  | Interval (CET)   | Nominated (MW) | Actual (MW) | Imbalance (MW) | reBAP (EUR/MWh) | Amount (EUR) |
+  | 00:00 - 00:15     | 30.0           | 30.5        | +0.5           | 85.00            | +10.63       |
+  | 00:15 - 00:30     | 28.0           | 27.0        | -1.0           | 92.00            | -23.00       |
+  | ...               | ...            | ...         | ...            | ...              | ...          |
+  And positive imbalance (over-delivery) amounts are green (receipt from TSO)
+  And negative imbalance (under-delivery) amounts are red (payment to TSO)
+  And a summary bar shows:
+    - Net imbalance energy: -12.50 MWh
+    - Net imbalance cost: -1,450.00 EUR (net payment to TSO)
+    - Max interval imbalance: -3.0 MW at 18:15-18:30
+```
+
+**Scenario 2: Monthly aggregation view**
+
+```
+Given the user selects month view for September 2026, BG-DE-001
+When the monthly imbalance view is displayed
+Then the view shows one row per delivery day:
+  | Delivery Day | Net Imbalance (MWh) | Net Cost (EUR) | Max Deviation (MW) | Intervals w/ Imbalance |
+  | 01 Sep 2026  | -5.25               | -620.00        | -2.0               | 12 of 96               |
+  | 02 Sep 2026  | +3.00               | +245.50        | +1.5               | 8 of 96                |
+  | ...          | ...                 | ...            | ...                | ...                    |
+  And a monthly summary row shows:
+    - Total net imbalance: -42.75 MWh
+    - Total net cost: -5,230.00 EUR
+  And this view is used for reconciliation against the TSO monthly invoice
+  And each day row is clickable to drill into the daily interval detail (Scenario 1)
+```
+
+**Scenario 3: TSO data correction indicator**
+
+```
+Given TSO has issued a correction for delivery day 2026-09-05
+  And the imbalance records have recordVersion = 2
+When the daily imbalance view is displayed for 2026-09-05
+Then a banner reads "TSO data corrected on 2026-09-12 (version 2)"
+  And the original values (version 1) are available via a "Show original" toggle
+  And delta between original and corrected amounts is shown in a separate column when toggled
+```
+
+### DA-UI-05: Exchange Fee Summary
+
+**Purpose:** Back Office views exchange fees per delivery day for reconciliation against ECC invoices.
+
+**Scenario 1: Daily fee breakdown**
+
+```
+Given exchange fees have been computed for delivery day 2026-09-16
+When the exchange fee view is displayed
+Then the view shows:
+  | Fee Type | Rate (EUR/MWh) | Gross Volume (MWh) | Fee Amount (EUR) |
+  | Trading  | 0.05           | 700.00             | 35.00            |
+  | Clearing | 0.02           | 700.00             | 14.00            |
+  | **Total**| —              | —                  | **49.00**        |
+  And a note reads "Fees computed on gross (absolute) volume: BUY 500 MWh + SELL 200 MWh = 700 MWh"
+  And the fee schedule effective date and member tier are displayed
+```
+
+### DA-UI-06: Operational Alerts Dashboard
+
+**Purpose:** All desks view a consolidated, categorized list of DA operational alerts. See DA-OPS-01 for the alert taxonomy and lifecycle.
+
+**Scenario 1: Dashboard layout**
+
+```
+Given the user navigates to the DA Alerts dashboard
+When the dashboard loads
+Then a category strip shows badge counts per category:
+  [Auction Ingestion (2)] [DA Clearing Prices (1)] [Nomination (3)] [Imbalance (0)] [Fees (0)] [Settlement (0)]
+  And clicking a category badge filters the alert list to that category
+  And the default view shows all open alerts sorted by severity (CRITICAL first), then by timestamp (newest first)
+```
+
+**Scenario 2: Alert row content**
+
+```
+Given an alert exists: CRITICAL / AUCTION_INGESTION / "Import validation failed: volume mismatch -10 MWh"
+When the alert is displayed in the list
+Then each alert row shows:
+  | Severity | Category           | Message                                                | Delivery Day | Zone  | Time (UTC)          | Status |
+  | 🔴 CRIT  | Auction Ingestion  | Import validation failed: volume mismatch -10 MWh     | 16 Sep 2026  | DE_LU | 2026-09-15 12:45:00 | OPEN   |
+  And severity is indicated by color:
+    - CRITICAL: red background/border
+    - WARNING: amber background/border
+    - INFO: blue or neutral background
+  And clicking the row expands to show:
+    - Source event ID (correlation)
+    - Full error details
+    - "Acknowledge" button (if OPEN)
+    - "Resolve" button (if ACKNOWLEDGED)
+```
+
+**Scenario 3: Alert filtering**
+
+```
+Given the dashboard shows 15 alerts across 4 categories
+When the user applies filters:
+  - Severity: CRITICAL + WARNING (exclude INFO)
+  - Date range: last 7 days
+  - Status: OPEN only
+Then only matching alerts are displayed
+  And the category badge counts update to reflect filtered results
+  And a "Clear filters" link restores the default view
+```
+
+**Scenario 4: Keyboard navigation**
+
+```
+Given the alerts list is focused
+When the user presses:
+  - Arrow Down / Arrow Up: move focus between alert rows
+  - Enter: expand/collapse the focused alert detail
+  - A: acknowledge the focused alert (if OPEN)
+  - R: resolve the focused alert (if ACKNOWLEDGED)
+  - Escape: collapse detail / clear selection
+Then all actions are keyboard-accessible (WCAG 2.2 AA)
+  And a screen reader announces alert severity, category, and message on focus
+```
+
+### DA-UI-07: DA Summary KPI Tiles
+
+**Purpose:** A compact overview strip at the top of any DA view showing key daily aggregates.
+
+**Scenario 1: KPI tile content**
+
+```
+Given the user is viewing DA data for delivery day 2026-09-16, zone DE_LU
+When the KPI tile strip is displayed
+Then it shows the following tiles (reusing the existing KpiTile component):
+  | Tile Label          | Value        | Unit     | Color logic                          |
+  | Net Volume          | +300.00      | MWh      | Green if net BUY, red if net SELL    |
+  | VWAP                | 62.82        | EUR/MWh  | Neutral                              |
+  | Settlement Total    | 45,230.50    | EUR      | Neutral                              |
+  | Exchange Fees       | 49.00        | EUR      | Neutral                              |
+  | Imbalance Cost      | -1,450.00    | EUR      | Green if receipt, red if payment     |
+  | Open Alerts         | 2            | —        | Red if CRITICAL, amber if WARNING    |
+  And each tile is clickable to navigate to its corresponding detail view
+```
+
+### DA-UI-08: Navigation and Integration
+
+**Scenario 1: DA section in main navigation**
+
+```
+Given the user is on the main dashboard
+When the user navigates to the DA section
+Then a sidebar or tab group shows:
+  - Import (DA-UI-01)
+  - Settlement (DA-UI-02)
+  - Nominations (DA-UI-03)
+  - Imbalance (DA-UI-04)
+  - Fees (DA-UI-05)
+  - Alerts (DA-UI-06)
+  And the currently active section is highlighted
+  And the URL updates to reflect the active section (deep-linkable)
+```
+
+**Scenario 2: Cross-navigation from existing dashboard**
+
+```
+Given the user is on the existing portfolio rollup grid (S7)
+  And a rollup cell shows DA trades contributing to the period
+When the user clicks on a rollup cell and drills into the position ledger (L3)
+  And selects a DA trade (originType = "EXCHANGE_FILL")
+Then a "View DA Settlement" action is available
+  And clicking it navigates to DA-UI-02 filtered for that trade's delivery day and zone
+```
+
+**Scenario 3: Shared components**
+
+```
+The DA UI reuses the following existing primitives:
+  - NumericCell: for all monetary, MW, MWh, and price values
+  - StatusBadge: for import status, delivery status, alert severity
+  - KpiTile: for DA-UI-07 summary tiles
+  - SkeletonTable: for loading states
+  - EmptyState: for empty grids
+  - HideZeroToggle: for filtering zero-value rows in settlement and imbalance grids
+  - SelectAllCheckbox / RowCheckbox: for multi-select in settlement grid
+  - GranularityToggle: for switching between QH and hourly aggregation in settlement grid
+
+New primitives needed:
+  - ProgressStepper: multi-step progress indicator for import status (PENDING → VALIDATING → IMPORTING → IMPORTED)
+  - DeviationCell: numeric cell with threshold-based coloring (OK / minor / significant)
+  - CategoryBadgeStrip: horizontal row of category badges with counts (for alerts dashboard)
+  - DST separator row: visual row indicating skipped or repeated hours
+```
+
+### DA-UI-09: Accessibility Requirements
+
+All DA screens must meet WCAG 2.2 AA, consistent with the existing dashboard:
+
+1. **Grid navigation:** Arrow keys move between rows, Enter activates/drills, Space toggles selection, Escape closes detail panels. Tab order follows logical reading order.
+2. **Screen reader:** All grids use `role="grid"` with `aria-rowcount`, `aria-colcount`, `aria-label`. Alert severity is announced on focus. Status transitions are announced via `aria-live="polite"` regions.
+3. **Color independence:** Severity and direction indicators use text labels or icons in addition to color (e.g., "CRIT" text, "BUY"/"SELL" text, "CR" suffix for credits). Negative prices show text "(neg)" alongside color.
+4. **Focus management:** When navigating between panels (e.g., import history → import detail), focus moves to the heading of the new panel. When a modal or detail panel closes, focus returns to the trigger element.
+5. **Keyboard shortcuts:** Documented in a help tooltip accessible via `?` key. All shortcuts have visible affordances (e.g., underlined first letter on buttons).
+
+---
+
 ## Open Questions
 
 | # | Question | Impact | Suggested owner |

@@ -9,7 +9,10 @@ type ChangeType =
   | 'ROLLUP_MATERIALIZED'
   | 'MARKET_DATA_REVALUED'
   | 'POSITION_CAPTURED'
-  | 'VOLUME_REVALUED';
+  | 'VOLUME_REVALUED'
+  | 'DA_IMPORT_COMPLETED'
+  | 'DA_ALERT_RAISED'
+  | 'DA_SETTLEMENT_UPDATED';
 
 interface DashboardUpdateEvent {
   changeType: ChangeType;
@@ -27,6 +30,9 @@ const INVALIDATION_MAP: Record<ChangeType, string[]> = {
   MARKET_DATA_REVALUED: ['summary', 'rollups', 'forward-day'],
   POSITION_CAPTURED: ['portfolios', 'summary', 'rollups', 'positions'],
   VOLUME_REVALUED: ['summary', 'rollups', 'positions', 'daily', 'settled-day'],
+  DA_IMPORT_COMPLETED: ['da'],
+  DA_ALERT_RAISED: ['da'],
+  DA_SETTLEMENT_UPDATED: ['da'],
 };
 
 /**

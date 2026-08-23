@@ -23,6 +23,14 @@ pv:
     relay-interval-ms: 500
   seed:
     enabled: true
+  da:
+    poller:
+      enabled: false              # set to true to activate the auction folder poller (S9.4, D-14)
+      inbox-directory: ./da-import/inbox
+      processed-directory: ./da-import/processed
+      failed-directory: ./da-import/failed
+      interval-ms: 60000          # fixed-delay in milliseconds between polls (default: 60s)
+      file-pattern: "*.csv"       # glob pattern for auction result files
   cache:
     l1:
       max-size: 2000000
